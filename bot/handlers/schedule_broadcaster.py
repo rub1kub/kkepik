@@ -179,6 +179,17 @@ async def process_and_broadcast(
     except Exception as e:
         return False, f"Ошибка сохранения файла: {e}"
 
+    # Обновляем кэш API-процесса (он работает в отдельном процессе)
+    try:
+        import aiohttp as _aiohttp
+        api_port = config.get_api_port()
+        async with _aiohttp.ClientSession() as _session:
+            async with _session.post(f"http://127.0.0.1:{api_port}/schedule/reload") as _resp:
+                if _resp.status == 200:
+                    print(f"[broadcast] API кэш обновлён")
+    except Exception:
+        pass  # API может быть недоступен — не критично
+
     if not broadcast:
         return True, f"Файл '{file_name}' обработан и сохранён (без рассылки)."
 

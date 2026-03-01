@@ -23,6 +23,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+async def _load_cache_on_startup():
+    """Загружает последние файлы расписания в кэш при старте API."""
+    global_schedules.reload_cache()
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Модели данных
 # ──────────────────────────────────────────────────────────────────────────────
@@ -506,6 +513,20 @@ async def get_teachers_by_department():
         return {"teachers_by_department": parser_all.get_teachers_by_department(teachers)}
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/schedule/reload")
+async def reload_schedule_cache():
+    """Перезагружает кэш расписаний из DATA_DIR (вызывается ботом после загрузки файла)."""
+    try:
+        global_schedules.reload_cache()
+        return {
+            "ok": True,
+            "groups_date": global_schedules.last_groups_date,
+            "teachers_date": global_schedules.last_teachers_date,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

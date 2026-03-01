@@ -100,32 +100,7 @@ async def main():
         # Загружаем последние файлы расписания в кэш
         try:
             import global_schedules as gs
-            from schedules.parser_all import _find_latest_schedule_file, _load_df_from_file
-
-            for stype in ("groups", "teachers"):
-                fpath = _find_latest_schedule_file(stype)
-                if not fpath:
-                    continue
-                _df = _load_df_from_file(fpath)
-                if _df is None:
-                    continue
-
-                ext = os.path.splitext(fpath)[1].lower()
-                if ext == ".pdf":
-                    from schedules.pdf_to_df import extract_date_from_pdf_content
-                    _date = extract_date_from_pdf_content(fpath)
-                else:
-                    m = re.search(r'(\d{1,2}[._]\d{1,2}[._]\d{4})', fpath)
-                    _date = m.group(1).replace('_', '.') if m else None
-
-                if stype == "groups":
-                    gs.last_groups_df = _df
-                    gs.last_groups_date = _date
-                else:
-                    gs.last_teachers_df = _df
-                    gs.last_teachers_date = _date
-
-                print(f"[startup] Загружено {stype} на {_date} из {os.path.basename(fpath)}")
+            gs.reload_cache()
         except Exception as e:
             print(f"[startup] Ошибка загрузки кэша: {e}")
 
