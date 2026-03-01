@@ -133,8 +133,9 @@ def load_schedule_df(file_path: str, schedule_date: str) -> tuple[pd.DataFrame |
 async def process_and_broadcast(
     file_path: str,
     file_name: str,
-    bot: Bot,
+    bot: Bot = None,
     log_fn=None,
+    broadcast: bool = True,
 ) -> tuple[bool, str]:
     """
     Обрабатывает файл расписания и рассылает через Telegram.
@@ -177,6 +178,9 @@ async def process_and_broadcast(
         shutil.copy2(file_path, data_file_path)
     except Exception as e:
         return False, f"Ошибка сохранения файла: {e}"
+
+    if not broadcast:
+        return True, f"Файл '{file_name}' обработан и сохранён (без рассылки)."
 
     # 5. Получаем пользователей
     conn = sqlite3.connect(config.DB_PATH)
