@@ -179,6 +179,14 @@ async def process_and_broadcast(
     except Exception as e:
         return False, f"Ошибка сохранения файла: {e}"
 
+    # 5. Обновляем глобальный кэш (бот-процесс)
+    if schedule_type == "groups":
+        global_schedules.last_groups_df = df
+        global_schedules.last_groups_date = schedule_date
+    else:
+        global_schedules.last_teachers_df = df
+        global_schedules.last_teachers_date = schedule_date
+
     # Обновляем кэш API-процесса (он работает в отдельном процессе)
     try:
         import aiohttp as _aiohttp
@@ -208,13 +216,6 @@ async def process_and_broadcast(
         changed_user_ids = {row[0] for row in rows}
         await _log(f"Новое расписание: отправляем {len(changed_user_ids)} пользователям")
 
-    # 7. Обновляем глобальный кэш
-    if schedule_type == "groups":
-        global_schedules.last_groups_df = df
-        global_schedules.last_groups_date = schedule_date
-    else:
-        global_schedules.last_teachers_df = df
-        global_schedules.last_teachers_date = schedule_date
 
     # 8. Рассылка
     success_count = 0
