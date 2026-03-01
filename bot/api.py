@@ -381,6 +381,8 @@ async def get_user_schedule(user_id: int, request: ScheduleRequest):
             )
         else:
             raise HTTPException(status_code=400, detail="Неизвестная роль пользователя")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
