@@ -224,7 +224,12 @@ async def get_group_schedule(request: GroupScheduleRequest):
                 schedule_date = request.date
 
     if df is None:
-        # Fallback: кэш → сегодняшнее → последнее
+        if request.date:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Расписание на дату {request.date} не найдено",
+            )
+        # Без даты: кэш → сегодняшнее → последнее
         if global_schedules.last_groups_df is not None:
             df = global_schedules.last_groups_df
             schedule_date = global_schedules.last_groups_date
@@ -278,7 +283,12 @@ async def get_teacher_schedule(request: TeacherScheduleRequest):
                     print(f"Расписание на дату {request.date} не найдено")
 
     if df is None:
-        # Fallback: кэш → сегодняшнее → последнее (teachers → groups)
+        if request.date:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Расписание на дату {request.date} не найдено",
+            )
+        # Без даты: кэш → сегодняшнее → последнее (teachers → groups)
         if global_schedules.last_teachers_df is not None:
             df = global_schedules.last_teachers_df
             schedule_date = global_schedules.last_teachers_date
