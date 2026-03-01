@@ -16,6 +16,8 @@ async def handle_document(message: types.Message, bot: Bot):
     """
     Обработка загруженного XLSX/PDF файла расписания.
     Доступ только админам из config.ADMINS.
+
+    Если подпись файла (caption) равна /silent — загрузка без рассылки.
     """
     user_id = message.from_user.id
     if user_id not in config.ADMINS:
@@ -29,6 +31,9 @@ async def handle_document(message: types.Message, bot: Bot):
         await message.reply("⚠️ Требуется файл .xlsx или .pdf.")
         return
 
+    caption = (message.caption or "").strip()
+    silent = caption.lower() == "/silent"
+
     try:
         file_info = await bot.get_file(doc.file_id)
 
@@ -36,9 +41,11 @@ async def handle_document(message: types.Message, bot: Bot):
             temp_file_path = os.path.join(temp_dir, file_name)
             await bot.download_file(file_info.file_path, temp_file_path)
 
-            await message.reply("⚙️ Принято. Обработка...")
+            if silent:
+                await message.reply("⚙️ Тихая загрузка...")
+            else:
+                await message.reply("⚙️ Принято. Обработка...")
 
-            # Рассылка через общий broadcaster
             async def log_fn(text):
                 await message.reply(text)
 
@@ -47,6 +54,7 @@ async def handle_document(message: types.Message, bot: Bot):
                 file_name=file_name,
                 bot=bot,
                 log_fn=log_fn,
+                broadcast=not silent,
             )
 
             if success:

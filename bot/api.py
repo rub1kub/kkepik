@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Response, UploadFile, File
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import sqlite3
@@ -504,42 +504,6 @@ async def get_teachers_by_department():
         if not teachers:
             raise HTTPException(status_code=404, detail="Список преподавателей не найден")
         return {"teachers_by_department": parser_all.get_teachers_by_department(teachers)}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/schedule/load")
-async def load_schedule_silent(file: UploadFile = File(...)):
-    """
-    Тихая загрузка файла расписания: парсит, сохраняет в DATA_DIR и обновляет кэш.
-    Рассылка пользователям НЕ выполняется.
-    Имя файла должно содержать дату (25.02.2026) и тип (ГРУППЫ/ПРЕПОДАВАТЕЛИ).
-    """
-    import tempfile
-    from handlers.schedule_broadcaster import process_and_broadcast
-
-    file_name = file.filename or "schedule.pdf"
-    if not (file_name.lower().endswith(".pdf") or file_name.lower().endswith(".xlsx")):
-        raise HTTPException(status_code=400, detail="Требуется .pdf или .xlsx файл")
-
-    try:
-        content = await file.read()
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = os.path.join(tmp, file_name)
-            with open(tmp_path, "wb") as f:
-                f.write(content)
-
-            success, msg = await process_and_broadcast(
-                file_path=tmp_path,
-                file_name=file_name,
-                broadcast=False,
-            )
-
-        if not success:
-            raise HTTPException(status_code=422, detail=msg)
-        return {"ok": True, "message": msg}
     except HTTPException:
         raise
     except Exception as e:
