@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="HandheldFriendly" content="true">
+    <meta name="MobileOptimized" content="width">
+    <title>Казино | KKEPIK Games</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/casino.css') }}">
+</head>
+<body>
+    <div class="casino-container">
+        <h2 class="casino-title">Казино</h2>
+        <div class="casino-balance-block">
+            <span>Ваш баланс:</span>
+            <span class="casino-balance" id="casinoBalance">—</span>
+        </div>
+        
+        <!-- Слот-машина -->
+        <div class="casino-slot-machine" id="casinoSlotMachine">
+            <div class="casino-slot-reel" id="reel1">
+                <div class="casino-slot-symbol">🍒</div>
+                <div class="casino-slot-symbol">🍊</div>
+                <div class="casino-slot-symbol">🍋</div>
+            </div>
+            <div class="casino-slot-reel" id="reel2">
+                <div class="casino-slot-symbol">🍇</div>
+                <div class="casino-slot-symbol">🍉</div>
+                <div class="casino-slot-symbol">🍎</div>
+            </div>
+            <div class="casino-slot-reel" id="reel3">
+                <div class="casino-slot-symbol">🍓</div>
+                <div class="casino-slot-symbol">🍍</div>
+                <div class="casino-slot-symbol">🍌</div>
+            </div>
+        </div>
+        
+        <form class="casino-bet-form" id="casinoBetForm" autocomplete="off">
+            <input type="number" min="1" step="1" id="casinoBetInput" placeholder="Ставка" required>
+            <button type="submit" class="casino-bet-btn">Сделать ставку</button>
+        </form>
+        <div class="casino-result" id="casinoResult"></div>
+        <div class="casino-rating-block">
+            <h3>Топ игроков</h3>
+            <ol class="casino-rating-list" id="casinoRatingList"></ol>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/casino.js') }}?v={{ STATIC_VERSION }}"></script>
+</body>
+</html> 

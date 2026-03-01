@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Мои группы | Учет посещаемости</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/attendance.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Мои группы</h1>
+        <div class="groups-list" id="groupsList">
+            <!-- Группы будут добавлены через JavaScript -->
+        </div>
+    </div>
+    <div class="create-group-button-wrapper">
+        <div class="create-group-button-inner">
+            <a href="{{ url_for('attendance_create', tgWebAppData=request.args.get('tgWebAppData')) }}" class="create-group-button">
+                <span class="create-group-icon">+</span>
+                <span class="create-group-text">Создать новую группу</span>
+            </a>
+        </div>
+    </div>
+    <script>
+        // Добавляем глобальную переменную с initData
+        window.tgWebAppData = "{{ request.args.get('tgWebAppData', '') }}";
+    </script>
+    <script src="{{ url_for('static', filename='js/list_groups.js') }}"></script>
+</body>
+</html> 

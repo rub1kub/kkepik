@@ -1,0 +1,893 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap');
+
+:root {
+    --tg-theme-bg-color: #ffffff;
+    --tg-theme-text-color: #000000;
+    --tg-theme-hint-color: #999999;
+    --tg-theme-link-color: #2481cc;
+    --tg-theme-button-color: #2481cc;
+    --tg-theme-button-text-color: #ffffff;
+    --tg-theme-secondary-bg-color: #f0f0f0;
+    --primary-color: #3498db;
+    --secondary-color: #e74c3c;
+    --accent-color: #2ecc71;
+    --text-color: #2c3e50;
+    --border-radius: 12px;
+    --box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    --transition: all 0.3s ease;
+    
+    /* Цвета для игры */
+    --board-bg: #e8f4f8;
+    --cell-border: #b3d4e0;
+    --ship-color: #3498db;
+    --hit-color: #e74c3c;
+    --miss-color: #95a5a6;
+    --selected-ship: #2ecc71;
+    --invalid-placement: #e74c3c;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Montserrat', sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    touch-action: manipulation;
+}
+
+body {
+    background: var(--tg-theme-bg-color);
+    color: var(--tg-theme-text-color);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 16px;
+}
+
+.screen {
+    width: 100%;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 16px;
+    animation: fadeIn 0.3s ease-out;
+}
+
+.header {
+    position: relative;
+    text-align: center;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--tg-theme-secondary-bg-color);
+    animation: fadeInDown 0.5s ease-out;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.status-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 15px;
+    width: 100%;
+}
+
+.logo {
+    font-size: 28px;
+    font-weight: bold;
+    color: var(--tg-theme-text-color);
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Кнопки */
+.btn {
+    display: inline-block;
+    padding: 12px 24px;
+    border-radius: var(--border-radius);
+    border: none;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+    text-align: center;
+    width: 100%;
+    margin-bottom: 12px;
+}
+
+.btn.primary {
+    background-color: var(--tg-theme-button-color);
+    color: var(--tg-theme-button-text-color);
+}
+
+.btn.secondary {
+    background-color: var(--tg-theme-secondary-bg-color);
+    color: var(--tg-theme-text-color);
+}
+
+.btn.small {
+    padding: 8px 16px;
+    font-size: 14px;
+    width: auto;
+}
+
+.btn:active {
+    transform: scale(0.95);
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Лобби */
+.lobby-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px 0;
+}
+
+.divider {
+    margin: 20px 0;
+    position: relative;
+    width: 100%;
+    text-align: center;
+    color: var(--tg-theme-hint-color);
+}
+
+.divider::before,
+.divider::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    width: 40%;
+    height: 1px;
+    background-color: var(--tg-theme-secondary-bg-color);
+}
+
+.divider::before {
+    left: 0;
+}
+
+.divider::after {
+    right: 0;
+}
+
+.join-game-container {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+#game-id-input {
+    padding: 12px;
+    border-radius: var(--border-radius);
+    border: 1px solid var(--tg-theme-secondary-bg-color);
+    font-size: 16px;
+    text-align: center;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
+
+/* Ожидание соперника */
+.waiting-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px 0;
+}
+
+.game-id-container {
+    background-color: var(--tg-theme-secondary-bg-color);
+    padding: 16px;
+    border-radius: var(--border-radius);
+    margin-bottom: 24px;
+    text-align: center;
+    width: 100%;
+}
+
+.game-id {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: var(--tg-theme-button-color);
+}
+
+.loading-animation {
+    display: flex;
+    justify-content: center;
+    margin: 24px 0;
+}
+
+.dot {
+    width: 12px;
+    height: 12px;
+    background-color: var(--tg-theme-button-color);
+    border-radius: 50%;
+    margin: 0 6px;
+    animation: bounce 1.5s infinite ease-in-out;
+}
+
+.dot:nth-child(1) {
+    animation-delay: 0s;
+}
+
+.dot:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.dot:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+.waiting-text {
+    margin-bottom: 24px;
+    color: var(--tg-theme-hint-color);
+}
+
+/* Расстановка кораблей */
+.placement-container {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.ships-container {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.ship-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 12px;
+    border-radius: var(--border-radius);
+    background-color: var(--tg-theme-secondary-bg-color);
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.ship-item.selected {
+    background-color: var(--selected-ship);
+    color: white;
+}
+
+.ship-preview {
+    display: flex;
+    margin-bottom: 8px;
+}
+
+.ship-cell {
+    width: 20px;
+    height: 20px;
+    background-color: var(--ship-color);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+.ship-count {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.board-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.board-label {
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.board {
+    display: grid;
+    grid-template-columns: repeat(10, 1fr);
+    grid-template-rows: repeat(10, 1fr);
+    gap: 1px;
+    background-color: var(--cell-border);
+    border: 2px solid var(--cell-border);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    width: 100%;
+    max-width: 350px;
+    aspect-ratio: 1/1;
+}
+
+/* Увеличенный размер доски в игровом экране */
+#game .board {
+    max-width: 100%;
+    width: 100%;
+}
+
+.cell {
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--cell-border);
+    background-color: var(--board-bg);
+    cursor: pointer;
+    transition: transform 0.1s ease, background-color 0.2s ease;
+    position: relative;
+    box-sizing: border-box;
+}
+
+.cell:active {
+    transform: scale(0.95);
+}
+
+.cell.ship {
+    background-color: var(--ship-color);
+}
+
+.cell.ship.selected {
+    background-color: #4CAF50;
+    border: 2px solid #388E3C;
+}
+
+.cell.ship.selected:hover {
+    background-color: #66BB6A;
+}
+
+.cell.hit {
+    background-color: var(--hit-color);
+    animation: hitAnimation 0.3s ease;
+}
+
+.cell.miss {
+    background-color: var(--miss-color);
+    animation: missAnimation 0.3s ease;
+}
+
+.cell.invalid {
+    background-color: var(--invalid-placement);
+    animation: shake 0.5s;
+}
+
+.cell::before {
+    content: "";
+    display: block;
+    padding-top: 100%;
+}
+
+.placement-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* Игровой экран */
+.game-container {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.boards-container {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.board-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.game-status {
+    background-color: var(--tg-theme-secondary-bg-color);
+    color: var(--tg-theme-text-color);
+    padding: 8px 16px;
+    border-radius: var(--border-radius);
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+    text-align: center;
+    transition: var(--transition);
+}
+
+#game-status-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+#turn-timer {
+    background-color: var(--primary-color);
+    color: white;
+    padding: 8px 16px;
+    border-radius: var(--border-radius);
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0;
+    text-align: center;
+    transition: var(--transition);
+}
+
+#turn-timer.warning {
+    background-color: #f39c12;
+}
+
+#turn-timer.danger {
+    background-color: var(--secondary-color);
+    animation: pulse 1s infinite;
+}
+
+.game-info {
+    background-color: var(--tg-theme-secondary-bg-color);
+    border-radius: var(--border-radius);
+}
+
+.ships-info {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.player-ships, .opponent-ships {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.player-ships h3, .opponent-ships h3 {
+    font-size: 16px;
+    margin-bottom: 8px;
+}
+
+.ship-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ship-status-indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background-color: var(--ship-color);
+}
+
+.ship-status-indicator.sunk {
+    background-color: var(--hit-color);
+}
+
+/* Результат игры */
+.result-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px 0;
+}
+
+.result-message {
+    font-size: 24px;
+    font-weight: 700;
+    margin-bottom: 24px;
+    text-align: center;
+}
+
+.result-stats {
+    display: flex;
+    justify-content: space-around;
+    width: 100%;
+    margin-bottom: 24px;
+}
+
+.stat-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.stat-label {
+    font-size: 14px;
+    color: var(--tg-theme-hint-color);
+}
+
+.stat-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--tg-theme-button-color);
+}
+
+/* Анимации */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes fadeInDown {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes bounce {
+    0%, 80%, 100% {
+        transform: scale(0.6);
+    }
+    40% {
+        transform: scale(1);
+    }
+}
+
+/* Стили для перетаскивания */
+.cell.dragging {
+    opacity: 0.7;
+    background-color: rgba(0, 255, 0, 0.3);
+    border: 2px dashed #00ff00;
+}
+
+.cell.drag-over {
+    background-color: rgba(0, 255, 0, 0.2);
+    border: 2px dashed #00ff00;
+}
+
+/* Стили для кнопки "Назад" */
+.back-button {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: none;
+    border: none;
+    color: var(--text-color);
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.back-button:hover {
+    color: var(--accent-color);
+}
+
+/* Адаптивность */
+@media (min-width: 768px) {
+    .boards-container {
+        flex-direction: row;
+        justify-content: space-around;
+    }
+    
+    .placement-container {
+        flex-direction: row;
+        align-items: flex-start;
+    }
+    
+    .ships-container {
+        flex-direction: column;
+        width: 30%;
+    }
+    
+    .board-container {
+        width: 60%;
+    }
+    
+    .placement-controls {
+        width: 100%;
+    }
+    
+    .ships-info {
+        flex-direction: row;
+        justify-content: space-around;
+    }
+    
+    .board {
+        max-width: 400px;
+    }
+}
+
+@media (max-width: 480px) {
+    .logo {
+        font-size: 24px;
+    }
+
+    
+    .cell {
+        width: 28px;
+        height: 28px;
+    }
+    
+    .board {
+        max-width: 100%;
+    }
+}
+
+.selected-ship {
+    border: 2px solid #2ecc40 !important;
+    background: rgba(46,204,64,0.12) !important;
+    box-shadow: 0 0 8px 2px #2ecc4033;
+}
+
+/* Модальное окно ожидания соперника */
+#waiting-modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0; top: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.35);
+    align-items: center;
+    justify-content: center;
+}
+#waiting-modal .modal-content {
+    background: var(--tg-theme-bg-color);
+    color: var(--tg-theme-text-color);
+    border-radius: 16px;
+    padding: 24px 30px;
+    font-size: 1.1em;
+    box-shadow: 0 4px 32px 0 rgba(0,0,0,0.2);
+    text-align: center;
+    min-width: 200px;
+    max-width: 80%;
+}
+
+/* Анимации для тактильного отклика */
+@keyframes hitAnimation {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.2); }
+    100% { transform: scale(1); }
+}
+
+@keyframes missAnimation {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); }
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+    20%, 40%, 60%, 80% { transform: translateX(5px); }
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
+
+/* Стили для модального окна подтверждения выхода */
+#confirm-exit-modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0; top: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5);
+    align-items: center;
+    justify-content: center;
+}
+
+#confirm-exit-modal .modal-content {
+    background: var(--tg-theme-bg-color);
+    color: var(--tg-theme-text-color);
+    border-radius: 16px;
+    padding: 20px;
+    width: 85%;
+    max-width: 320px;
+    text-align: center;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+}
+
+#confirm-exit-modal .modal-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 14px;
+}
+
+#confirm-exit-modal .modal-buttons {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 20px;
+}
+
+#confirm-exit-modal .btn {
+    width: 48%;
+    margin-bottom: 0;
+    padding: 10px 16px;
+    font-size: 14px;
+}
+
+/* Улучшенные стили для выбранных кораблей */
+.ship-item.selected-ship {
+    border: 2px solid #2ecc40;
+    background: rgba(46,204,64,0.12);
+    box-shadow: 0 0 8px 2px #2ecc4033;
+    animation: pulse 1.5s infinite;
+}
+
+/* Стили для кнопки поворота корабля */
+#rotate-ship {
+    position: relative;
+    overflow: hidden;
+}
+
+#rotate-ship:active {
+    transform: scale(0.95);
+    background-color: var(--tg-theme-button-color);
+    color: var(--tg-theme-button-text-color);
+}
+
+#rotate-ship:active::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 5px;
+    height: 5px;
+    background: rgba(255, 255, 255, 0.5);
+    opacity: 0;
+    border-radius: 100%;
+    transform: scale(1, 1) translate(-50%, -50%);
+    transform-origin: 50% 50%;
+    animation: ripple 0.6s ease-out;
+}
+
+@keyframes ripple {
+    0% {
+        transform: scale(0, 0);
+        opacity: 0.5;
+    }
+    100% {
+        transform: scale(20, 20);
+        opacity: 0;
+    }
+}
+
+/* Стили для таймера хода */
+.turn-timer {
+    font-size: 1.2rem;
+    font-weight: bold;
+    margin-top: 10px;
+    padding: 5px 10px;
+    border-radius: 5px;
+    background-color: #f0f0f0;
+    color: #333;
+    transition: color 0.3s ease;
+}
+
+.turn-timer.warning {
+    color: #ff9800;
+}
+
+.turn-timer.danger {
+    color: #f44336;
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.7; }
+    100% { opacity: 1; }
+}
+
+/* Анимация поворота корабля */
+.cell.rotating {
+    transform-origin: center;
+}
+
+.cell.rotated {
+    animation: appear-animation 0.5s ease-in-out;
+}
+
+@keyframes appear-animation {
+    0% {
+        transform: scale(0.5);
+        opacity: 0;
+    }
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+/* Стили для списка доступных игр */
+.available-games-container {
+    margin-top: 20px;
+    width: 100%;
+}
+
+.available-games-title {
+    font-size: 18px;
+    font-weight: bold;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+.available-games-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 5px;
+}
+
+.game-item {
+    display: flex;
+    justify-content: space-between;
+    background-color: var(--tg-theme-secondary-bg-color);
+    align-items: center;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+    padding: 15px 20px;
+    gap: 40px;
+}
+
+.btn.primary.small {
+    margin-bottom: 0;
+}
+
+.game-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.game-info {
+    flex: 1;
+}
+
+.game-id {
+    font-weight: bold;
+    font-size: 16px;
+    margin-bottom: 5px;
+}
+
+.game-time {
+    font-size: 14px;
+    color: var(--tg-theme-hint-color, #999999);
+}
+
+.btn.primary.small {
+    background-color: var(--tg-theme-button-color, #2481cc);
+    color: var(--tg-theme-button-text-color, #ffffff);
+    border: none;
+    border-radius: 8px;
+    padding: 8px 15px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.btn.primary.small:hover {
+    background-color: var(--tg-theme-button-color, #2481cc);
+    opacity: 0.9;
+}
+
+.no-games-message {
+    text-align: center;
+    padding: 20px;
+    color: var(--tg-theme-hint-color, #999999);
+    font-style: italic;
+}
+
+#refresh-games-btn {
+    margin-top: 8px;
+} 

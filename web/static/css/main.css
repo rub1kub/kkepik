@@ -1,0 +1,2262 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap');
+
+:root {
+    --tg-theme-bg-color: #ffffff;
+    --tg-theme-text-color: #000000;
+    --tg-theme-hint-color: #999999;
+    --tg-theme-link-color: #2481cc;
+    --tg-theme-button-color: #2481cc;
+    --tg-theme-button-text-color: #ffffff;
+    --tg-theme-secondary-bg-color: #f0f0f0;
+    --primary-color: #3498db;
+    --secondary-color: #e74c3c;
+    --accent-color: #2ecc71;
+    --text-color: #2c3e50;
+    --border-radius: 12px;
+    --box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    --transition: all 0.3s ease;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Montserrat', sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    touch-action: manipulation;
+}
+
+body {
+    background: var(--tg-theme-bg-color);
+    color: var(--tg-theme-text-color);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 16px;
+    display: grid;
+}
+
+.menu-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 27px;
+}
+
+.header {
+    position: relative;
+    text-align: center;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--tg-theme-secondary-bg-color);
+    animation: fadeInDown 0.5s ease-out;
+}
+
+.logo {
+    font-size: 28px;
+    font-weight: bold;
+    color: var(--tg-theme-text-color);
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.games-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    max-width: 600px;
+    margin: 0 auto;
+    box-sizing: border-box;
+}
+
+.game-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    color: var(--tg-theme-text-color);
+    background: var(--tg-theme-secondary-bg-color);
+    border-radius: 22px !important;
+    box-shadow: 0 6px 32px 0 rgba(0,0,0,0.16), 0 1.5px 4px rgba(0,0,0,0.08);
+    padding: 28px 18px 24px 18px;
+    margin-bottom: 18px;
+    border: none !important;
+    position: relative;
+    overflow: visible;
+    min-height: 120px;
+    opacity: 0;
+    animation: fadeInUpScale 0.7s cubic-bezier(.23,1.01,.32,1) forwards;
+    text-decoration: none !important;
+}
+
+.vpn-card,
+.attendance-card {
+    width: 100%;
+}
+
+.games-container {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-top: 12px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.games-container .game-card {
+    aspect-ratio: 1;
+    padding: 8px;
+    justify-content: center;
+    width: 100%;
+    box-sizing: border-box;
+    max-width: 100%;
+    overflow: hidden;
+}
+
+.game-card:nth-child(1) { animation-delay: 0.1s; }
+.game-card:nth-child(2) { animation-delay: 0.2s; }
+.game-card:nth-child(3) { animation-delay: 0.3s; }
+.game-card:nth-child(4) { animation-delay: 0.4s; }
+
+.game-card:active {
+    transform: scale(0.95);
+}
+
+.game-icon {
+    font-size: 2.7rem;
+    margin-bottom: 14px;
+    filter: drop-shadow(0 2px 8px rgba(36,129,204,0.10));
+}
+
+.game-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+    letter-spacing: 0.01em;
+}
+
+.game-description {
+    font-size: 0.92rem;
+    color: var(--tg-theme-hint-color);
+    line-height: 1.4;
+    margin-bottom: 0;
+}
+
+.games-container .game-description {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    max-width: 100%;
+}
+
+@keyframes fadeInDown {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (max-width: 480px) {
+    .games-container {
+        gap: 8px;
+    }
+
+    .games-container .game-card {
+        padding: 12px;
+    }
+
+    .games-container .game-icon {
+        font-size: 2rem;
+        margin-bottom: 8px;
+    }
+
+    .games-container .game-title {
+        font-size: 0.9rem;
+        margin-bottom: 4px;
+    }
+
+    .games-container .game-description {
+        font-size: 0.75rem;
+    }
+}
+
+@media (max-width: 320px) {
+    .game-icon {
+        font-size: 1.75rem;
+    }
+
+    .game-title {
+        font-size: 0.8rem;
+    }
+
+    .game-description {
+        font-size: 0.7rem;
+    }
+}
+
+button {
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    color: var(--tg-theme-button-text-color);
+    border: none;
+    padding: 12px 24px;
+    border-radius: var(--border-radius);
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: var(--transition);
+    -webkit-tap-highlight-color: transparent;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+button:hover {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+button:active {
+    animation: buttonTap 0.18s cubic-bezier(.4,0,.2,1);
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    backdrop-filter: blur(5px);
+}
+
+.modal-content {
+    background: var(--tg-theme-bg-color);
+    padding: 28px 18px;
+    border-radius: 20px !important;
+    text-align: center;
+    max-width: 90%;
+    width: 300px;
+    box-shadow: 0 8px 40px 0 rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.10);
+    animation: modal-appear 0.3s ease;
+}
+
+@keyframes modal-appear {
+    from {
+        transform: scale(0.8);
+        opacity: 0;
+    }
+    to {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+.modal h2 {
+    margin-bottom: 20px;
+    color: var(--tg-theme-text-color);
+    font-size: 24px;
+    font-weight: bold;
+}
+
+@media (max-width: 360px) {
+    .logo {
+        font-size: 24px;
+    }
+
+    .game-icon {
+        font-size: 32px;
+    }
+
+    .game-title {
+        font-size: 18px;
+    }
+
+    .game-description {
+        font-size: 12px;
+    }
+
+    button {
+        padding: 10px 20px;
+        font-size: 14px;
+    }
+}
+
+#progressBox {
+    background: var(--tg-theme-bg-color, #fff);
+    border-radius: 16px;
+    margin-bottom: 15px;
+    box-shadow: 0 6px 32px 0 rgba(0,0,0,0.16), 0 1.5px 4px rgba(0,0,0,0.08);
+    width: 100%;
+}
+
+#progress_bar {
+    position: relative;
+    height: 80px;
+    border-radius: 16px;
+    overflow: hidden;
+    width: 100%;
+    background: linear-gradient(to right, #fb41a2, #007fe0, #01cb56);
+}
+
+#progress_line {
+    position: absolute;
+    right: 0;
+    top: 0;
+    height: 100%;
+    background: var(--tg-theme-bg-color, rgba(0, 0, 0, 0.7));
+    transition: width 1s linear;
+    width: 100%;
+    z-index: 1;
+    opacity: 0.4;
+    animation: progressGlow 1.2s cubic-bezier(.4,0,.2,1);
+}
+
+[data-theme="dark"] #progress_line {
+    background: rgba(255, 255, 255, 0.7);
+}
+
+#timeBox {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    width: 100%;
+    z-index: 2;
+    pointer-events: none;
+}
+
+#timeBox .text {
+    line-height: 1.2;
+    font-weight: 600;
+    color: #ffffff;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    -webkit-font-smoothing: antialiased;
+}
+
+#pairs_block {
+    border-radius: 12px;
+    margin-bottom: 15px;
+    width: 100%;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    position: relative;
+    z-index: 1;
+}
+
+.schedule-container {
+    display: flex;
+    gap: 18px;
+    margin-top: 18px;
+    position: relative;
+    min-width: 0;
+    width: 100%;
+    flex-wrap: wrap;
+    border: none !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    animation: slideInFade 0.5s cubic-bezier(.23,1.01,.32,1);
+}
+
+.row-container .row {
+    background: var(--tg-theme-secondary-bg-color);
+    border-radius: 18px;
+    /* box-shadow: 0 6px 32px 0 rgba(0,0,0,0.13), 0 1.5px 4px rgba(0,0,0,0.08); */
+    box-shadow: 0 6px 32px 0 rgba(0, 0, 0, 0.122), 0 1.5px 4px rgba(0, 0, 0, 0.534);
+    padding: 18px 14px;
+    margin-bottom: 14px;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 12px;
+    align-items: center;
+    cursor: pointer;
+    border: none;
+    opacity: 0;
+    animation: fadeInUp 0.5s cubic-bezier(.23,1.01,.32,1) forwards;
+    transition: box-shadow 0.2s, transform 0.2s;
+}
+
+.row-container .row:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.15);
+}
+
+.row-container .row:active {
+    transform: translateY(0px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+.row-container .row:last-child {
+    margin-bottom: 0;
+}
+
+.schedule-column {
+    flex: 1 1 0;
+    min-width: 180px;
+    max-width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+}
+
+.schedule-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--tg-theme-hint-color);
+    margin-bottom: 8px;
+    text-align: center;
+    letter-spacing: 0.01em;
+    position: relative;
+}
+
+.schedule-title.has-prev::before {
+    content: '←';
+    position: absolute;
+    top: 50%;
+    left: 5px;
+    transform: translateY(-50%);
+    opacity: 0.7;
+    cursor: pointer;
+    user-select: none;
+    background: none;
+    border: none;
+    z-index: 2;
+}
+
+.schedule-title.has-next::after {
+    content: '→';
+    position: absolute;
+    top: 50%;
+    right: 5px;
+    transform: translateY(-50%);
+    opacity: 0.7;
+    cursor: pointer;
+    user-select: none;
+    background: none;
+    border: none;
+    z-index: 2;
+}
+
+.schedule-title.has-prev.has-next::before {
+    left: 0;
+}
+.schedule-title.has-prev.has-next::after {
+    right: 0;
+}
+
+/* Убираем старое центрирование стрелок */
+.schedule-title::before,
+.schedule-title::after {
+    /* left/right теперь только через has-prev/has-next */
+}
+
+.wrap.list::before, .wrap.list.active::before {
+    display: none !important;
+}
+
+.wrap.list .row-container {
+    background: transparent;
+    border-radius: 15px;
+    overflow: visible;
+    transition: transform 0.3s ease-out;
+}
+
+.wrap.list:not(.active) {
+    opacity: 1;
+}
+
+.wrap.list.active::before {
+    background: linear-gradient(45deg, #fb41a2, #007fe0, #01cb56);
+    background-size: 200% 200%;
+    animation: gradient 3s ease infinite;
+}
+
+@keyframes gradient {
+    0% {
+        background-position: 0% 50%;
+    }
+    50% {
+        background-position: 100% 50%;
+    }
+    100% {
+        background-position: 0% 50%;
+    }
+}
+
+.row {
+    background: var(--tg-theme-secondary-bg-color);
+    border-radius: 12px;
+    margin-bottom: 14px;
+    padding: 14px 10px;
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+}
+
+.row:last-child {
+    margin-bottom: 0;
+}
+
+.row:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.15);
+}
+
+.row:active {
+    transform: translateY(0px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+.row > div:first-child,
+.row > div:last-child {
+    font-size: 15px;
+    color: var(--tg-theme-text-color);
+    text-align: center;
+}
+
+.lesson-name {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-size: 15px;
+    color: var(--tg-theme-hint-color);
+}
+
+.lesson-name .group {
+    font-size: 14px;
+    color: var(--tg-theme-text-color);
+    margin-bottom: 4px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+
+.notlast {
+    border-bottom: 1px solid var(--tg-theme-hint-color, rgba(0,0,0,0.1));
+}
+
+#confetti-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 9999;
+}
+
+@keyframes celebrate {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); }
+}
+
+.celebrate {
+    animation: celebrate 0.5s ease;
+}
+
+.coming-soon-label {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: linear-gradient(45deg, #fb41a2, #007fe0, #01cb56);
+    color: white;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: bold;
+    transform-origin: top right;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    z-index: 10;
+}
+
+.control-cards {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 20px;
+    position: relative;
+}
+
+.control-card {
+    flex: 1;
+    background: var(--tg-theme-bg-color, #fff);
+    border-radius: 16px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    overflow: hidden;
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+.control-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(45deg, #fb41a2, #007fe0, #01cb56);
+    opacity: 0.2;
+    z-index: 0;
+}
+
+.control-card-content {
+    padding: 20px;
+    position: relative;
+    z-index: 1;
+}
+
+.control-card-icon {
+    width: 40px;
+    height: 40px;
+    margin-bottom: 10px;
+    color: #007fe0;
+}
+
+.control-card-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--tg-theme-text-color, #333);
+}
+
+.section-divider {
+    border: none;
+    height: 2px;
+    margin: 20px 0 20px 0;
+    background: var(--tg-theme-secondary-bg-color, rgba(0,0,0,0.12));
+    border-radius: 2px;
+    opacity: 1;
+}
+
+.rating-section {
+    margin-top: 32px;
+    background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+    border-radius: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+    padding: 20px 10px 10px 10px;
+    max-width: 500px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.rating-title {
+    text-align: center;
+    font-size: 1.2rem;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--tg-theme-text-color, #222);
+}
+
+.rating-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: transparent;
+    border: none !important;
+    border-radius: 18px !important;
+    box-shadow: 0 2px 16px rgba(0,0,0,0.08);
+    overflow: hidden;
+}
+
+.rating-table th, .rating-table td {
+    padding: 16px 12px;
+    text-align: center;
+    font-size: 1rem;
+    border: none !important;
+}
+
+.rating-table th {
+    background: var(--tg-theme-bg-color, #fff);
+    color: var(--tg-theme-hint-color, #888);
+    font-weight: 700;
+    border-bottom: 2px solid var(--tg-theme-hint-color, #eee);
+}
+
+.rating-table tr:nth-child(even) {
+    background: rgba(0,0,0,0.03);
+}
+
+.rating-table td {
+    border-bottom: 1px solid var(--tg-theme-hint-color, #eee);
+    color: var(--tg-theme-text-color, #222);
+}
+
+.rating-table tr:last-child td {
+    border-bottom: none;
+}
+
+.rating-table td:first-child {
+    font-weight: bold;
+    color: #fb41a2;
+}
+
+.rating-table td:nth-child(3) {
+    color: #007fe0;
+}
+
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes slideInLeft {
+    from {
+        opacity: 0;
+        transform: translateX(-30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Анимация для разных направлений свайпа */
+.row.slide-left {
+    animation: slideInLeft 0.3s ease-out forwards;
+}
+
+.row.slide-right {
+    animation: slideInRight 0.3s ease-out forwards;
+}
+
+/* Добавляем задержку для каждой следующей пары */
+.row:nth-child(1) { animation-delay: 0s; }
+.row:nth-child(2) { animation-delay: 0.2s; }
+.row:nth-child(3) { animation-delay: 0.4s; }
+.row:nth-child(4) { animation-delay: 0.6s; }
+.row:nth-child(5) { animation-delay: 0.8s; }
+.row:nth-child(6) { animation-delay: 1s; }
+
+/* Добавляем тень для активной таблицы */
+.wrap.list.active {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+.row.combined {
+    opacity: 0.8;
+    background: var(--tg-theme-secondary-bg-color);
+}
+
+.row.combined .lesson-name {
+    color: var(--tg-theme-hint-color);
+}
+
+.row.combined .teacher,
+.row.combined .group {
+    font-size: 12px;
+    color: var(--tg-theme-hint-color);
+}
+
+.schedule-divider {
+    grid-column: 1 / -1;
+    margin: 5px 0;
+    position: relative;
+    text-align: center;
+    color: var(--tg-theme-hint-color);
+    font-size: 14px;
+}
+
+.schedule-divider::before,
+.schedule-divider::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    width: 30%;
+    height: 1px;
+    background: var(--tg-theme-hint-color);
+}
+
+.schedule-divider::before {
+    left: 0;
+}
+
+.schedule-divider::after {
+    right: 0;
+}
+
+.schedule-row.combined {
+    opacity: 0.8;
+    background: var(--secondary-bg);
+}
+
+/* Стили для блока с реакциями */
+#schedule-reactions {
+    position: relative;
+    margin-top: 0;
+    margin-left: auto;
+    margin-right: 0;
+    width: fit-content;
+    background: transparent;
+    border-radius: var(--border-radius);
+    padding: 0;
+    transition: var(--transition);
+    z-index: 10;
+    box-shadow: none;
+}
+
+/* Стили для списка реакций */
+.reactions-list {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    opacity: 0;
+    max-width: 100%;
+}
+
+/* Стили для элемента реакции */
+.reaction-item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: auto;
+    height: 28px;
+    border-radius: 14px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: var(--tg-theme-secondary-bg-color);
+    border: 1px solid transparent;
+    padding: 0 8px;
+    opacity: 0;
+    transform: translateY(20px) scale(0.8);
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(36,129,204,0.13), 0 1.5px 4px rgba(0,0,0,0.08);
+}
+
+/* Ограничиваем количество отображаемых реакций */
+.reaction-item:nth-child(n+4) {
+    display: none;
+}
+
+.reaction-item:hover {
+    background-color: var(--tg-theme-secondary-bg-color);
+    transform: none;
+    box-shadow: none;
+}
+
+.reaction-item.selected {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+.reaction-item.selected .reaction-emoji,
+.reaction-item.selected .reaction-count {
+    color: var(--tg-theme-button-text-color);
+}
+
+/* Стили для эмодзи */
+.reaction-emoji {
+    font-size: 14px;
+    margin-right: 4px;
+    color: var(--tg-theme-text-color);
+}
+
+/* Стили для счетчика */
+.reaction-count {
+    font-size: 10px;
+    color: var(--tg-theme-hint-color);
+    min-width: 12px;
+    text-align: center;
+    position: static;
+    background: transparent;
+    border-radius: 0;
+    width: auto;
+    height: auto;
+    display: inline-block;
+    border: none;
+}
+
+/* Стили для нулевого количества реакций */
+.reaction-count:empty::after {
+    content: "0";
+}
+
+/* Стили для кнопки "еще" */
+.reaction-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--tg-theme-secondary-bg-color);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 1px solid transparent;
+    box-shadow: 0 2px 8px rgba(36,129,204,0.13), 0 1.5px 4px rgba(0,0,0,0.08);
+}
+
+.reaction-more span {
+    font-size: 14px;
+    color: var(--tg-theme-text-color);
+    font-weight: bold;
+}
+
+                 /* Стили для модального окна с деталями пары */
+.lesson-details-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    opacity: 0;
+    animation: fadeInModal 0.3s cubic-bezier(.23,1.01,.32,1) forwards;
+    backdrop-filter: blur(5px);
+}
+
+.lesson-details-content {
+    background: var(--tg-theme-bg-color);
+    border-radius: 20px;
+    padding: 24px 20px 20px;
+    width: 90%;
+    max-width: 380px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.18), 0 3px 12px rgba(0,0,0,0.12);
+    position: relative;
+    transform: scale(0.85) translateY(20px);
+    opacity: 0;
+    animation: slideInModalContent 0.35s cubic-bezier(.23,1.01,.32,1) forwards;
+    animation-delay: 0.1s;
+}
+
+.lesson-details-close {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--tg-theme-secondary-bg-color);
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.lesson-details-close::before {
+    content: '✕';
+    font-size: 16px;
+    line-height: 1;
+    color: var(--tg-theme-hint-color);
+    font-weight: 500;
+    display: block;
+    transform: translateY(1px);
+}
+
+.lesson-details-header {
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.lesson-details-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--tg-theme-text-color);
+    margin-bottom: 4px;
+    line-height: 1.3;
+}
+
+.lesson-details-subtitle {
+    font-size: 14px;
+    color: var(--tg-theme-hint-color);
+    font-weight: 400;
+}
+
+.lesson-details-info {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.lesson-info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--tg-theme-secondary-bg-color);
+    border-radius: 12px;
+    transition: all 0.2s ease;
+}
+
+.lesson-info-label {
+    font-size: 14px;
+    color: var(--tg-theme-hint-color);
+    font-weight: 500;
+}
+
+.lesson-info-value {
+    font-size: 14px;
+    color: var(--tg-theme-text-color);
+    font-weight: 600;
+    text-align: right;
+    max-width: 60%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lesson-hours-section {
+    background: var(--tg-theme-secondary-bg-color);
+    border-radius: 16px;
+    padding: 18px;
+    margin-bottom: 16px;
+    position: relative;
+}
+
+.lesson-hours-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.lesson-hours-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--tg-theme-text-color);
+}
+
+.lesson-hours-inputs {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.lesson-hours-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+}
+
+.lesson-hours-label {
+    font-size: 14px;
+    color: var(--tg-theme-hint-color);
+    font-weight: 500;
+    min-width: 70px;
+    flex-shrink: 0;
+}
+
+.lesson-hours-input {
+    width: 70px;
+    padding: 6px 8px;
+    border: 2px solid transparent;
+    border-radius: 8px;
+    background: var(--tg-theme-bg-color);
+    color: var(--tg-theme-text-color);
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    text-align: center;
+    flex-shrink: 0;
+    -moz-appearance: textfield;
+    max-width: 70px;
+    min-width: 70px;
+}
+
+/* Убираем стрелки в Chrome, Safari, Edge */
+.lesson-hours-input::-webkit-outer-spin-button,
+.lesson-hours-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.lesson-hours-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+}
+
+/* Полностью скрываем плейсхолдер при фокусе и когда есть значение */
+.lesson-hours-input:focus::placeholder,
+.lesson-hours-input:not(:placeholder-shown)::placeholder {
+    opacity: 0 !important;
+    visibility: hidden !important;
+    color: transparent !important;
+}
+
+/* Дополнительно скрываем плейсхолдер при фокусе */
+.lesson-hours-input:focus {
+    color: var(--tg-theme-text-color);
+}
+
+/* Скрываем плейсхолдер когда есть значение */
+.lesson-hours-input:not(:placeholder-shown) {
+    color: var(--tg-theme-text-color);
+}
+
+/* Принудительно скрываем плейсхолдер при фокусе */
+.lesson-hours-input[data-focused="true"]::placeholder {
+    opacity: 0 !important;
+    visibility: hidden !important;
+    color: transparent !important;
+}
+
+/* Дополнительные правила для разных браузеров */
+.lesson-hours-input:focus::-webkit-input-placeholder {
+    opacity: 0 !important;
+    color: transparent !important;
+}
+
+.lesson-hours-input:focus::-moz-placeholder {
+    opacity: 0 !important;
+    color: transparent !important;
+}
+
+.lesson-hours-input:focus:-ms-input-placeholder {
+    opacity: 0 !important;
+    color: transparent !important;
+}
+
+/* Дополнительное правило для скрытия плейсхолдера */
+.lesson-hours-input:focus {
+    background-color: var(--tg-theme-bg-color);
+}
+
+/* Принудительное скрытие плейсхолдера через JavaScript */
+.lesson-hours-input.placeholder-hidden::placeholder {
+    opacity: 0 !important;
+    visibility: hidden !important;
+    color: transparent !important;
+}
+
+/* Скрываем значение "0" при фокусе если поле пустое */
+.lesson-hours-input:focus:not(:placeholder-shown) {
+    color: var(--tg-theme-text-color);
+}
+
+/* Стили для пустого поля при фокусе */
+.lesson-hours-input:focus[value="0"] {
+    color: var(--tg-theme-text-color);
+}
+
+/* Стили для пустого поля */
+.lesson-hours-input:not(:placeholder-shown) {
+    color: var(--tg-theme-text-color);
+}
+
+/* Анимация очистки поля */
+.lesson-hours-input:focus {
+    transition: all 0.2s ease;
+}
+
+.lesson-hours-help-btn {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--tg-theme-hint-color);
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+    opacity: 0.9;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.lesson-hours-help-btn::before {
+    content: '?';
+    font-size: 11px;
+    line-height: 1;
+    color: var(--tg-theme-bg-color);
+    font-weight: 600;
+    display: block;
+}
+
+.lesson-hours-remaining {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+    background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+    border-radius: 10px;
+    margin-top: 12px;
+}
+
+.lesson-hours-remaining-text {
+    font-size: 14px;
+    font-weight: 600;
+    color: white;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
+.lesson-tooltip {
+    position: absolute;
+    background: var(--tg-theme-secondary-bg-color);
+    color: var(--tg-theme-text-color);
+    padding: 12px 16px;
+    border-radius: 16px;
+    font-size: 12px;
+    white-space: normal;
+    max-width: 220px;
+    line-height: 1.4;
+    z-index: 1001;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+    border: 1px solid var(--tg-theme-hint-color);
+}
+
+.lesson-tooltip.show {
+    opacity: 1;
+}
+
+/* Стили для модального окна с реакциями */
+.reaction-picker-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    animation: fadeIn 0.2s ease forwards;
+}
+
+.reaction-picker {
+    background-color: var(--tg-theme-bg-color);
+    border-radius: 12px;
+    padding: 16px;
+    width: 90%;
+    max-width: 320px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    animation: scaleIn 0.2s ease forwards;
+}
+
+.reaction-picker-header {
+    padding: 16px;
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--tg-theme-text-color);
+    text-align: center;
+}
+
+.emoji-list {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    padding: 16px;
+    overflow-y: auto;
+    max-height: 60vh;
+}
+
+.emoji-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+    opacity: 0;
+    transform: translateY(20px) scale(0.8);
+}
+
+.emoji-item.exploding {
+    animation: explode 0.3s ease forwards;
+}
+
+.emoji-item:hover {
+    background-color: var(--tg-theme-secondary-bg-color);
+}
+
+.emoji-item.selected {
+    background-color: var(--primary-color);
+}
+
+.emoji-item .emoji {
+    font-size: 24px;
+    margin-bottom: 4px;
+}
+
+.emoji-item .count {
+    font-size: 10px;
+    color: var(--tg-theme-hint-color);
+    background-color: var(--tg-theme-secondary-bg-color);
+    padding: 2px 6px;
+    border-radius: 10px;
+    position: absolute;
+    top: 4px;
+    right: 4px;
+}
+
+.emoji-item.selected .count {
+    color: var(--tg-theme-bg-color);
+    background-color: rgba(255, 255, 255, 0.2);
+}
+
+.reaction-picker-close {
+    padding: 12px;
+    text-align: center;
+    color: var(--tg-theme-hint-color);
+    cursor: pointer;
+    font-size: 18px;
+}
+
+/* Адаптивные стили для пикера реакций */
+@media (max-width: 480px) {
+    .reaction-picker {
+        width: 95%;
+    }
+    
+    .emoji-list {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        padding: 12px;
+    }
+    
+    .emoji-item .emoji {
+        font-size: 20px;
+    }
+}
+
+/* Анимация взрыва при выборе реакции */
+@keyframes explode {
+    0% {
+        opacity: 1;
+        background-color: var(--tg-theme-secondary-bg-color);
+    }
+    100% {
+        opacity: 1;
+        background-color: var(--primary-color);
+    }
+}
+
+@keyframes confetti {
+    0% {
+        transform: translate(0, 0) rotate(0deg) scale(1);
+        opacity: 1;
+    }
+    30% {
+        opacity: 1;
+    }
+    100% {
+        transform: translate(var(--tx), var(--ty)) rotate(var(--tr)) scale(0.7);
+        opacity: 0;
+    }
+}
+
+.reaction-item.exploding {
+    animation: explode 0.3s ease forwards;
+}
+
+.emoji-item.exploding {
+    animation: explode 0.3s ease forwards;
+}
+
+.confetti {
+    position: absolute;
+    width: auto;
+    height: auto;
+    pointer-events: none;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transform-origin: center;
+}
+
+/* Удаляем псевдоэлементы, которые использовались для цветных частиц */
+.confetti::before,
+.confetti::after {
+    display: none;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes fadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+
+@keyframes scaleIn {
+    from { transform: scale(0.9); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
+
+@keyframes scaleOut {
+    from { transform: scale(1); opacity: 1; }
+    to { transform: scale(0.9); opacity: 0; }
+}
+
+/* Анимация для плавного появления реакций */
+@keyframes fadeInReactions {
+    0% {
+        opacity: 0;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+@keyframes fadeInReactionItem {
+    0% {
+        opacity: 0;
+        transform: translateY(20px) scale(0.8);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.reactions-list.animate {
+    animation: fadeInReactions 0.3s ease-out forwards;
+}
+
+.reaction-item.animate {
+    animation: fadeInReactionItem 0.3s ease-out forwards;
+}
+
+/* Добавляем задержку для каждой следующей реакции */
+.reaction-item.animate:nth-child(1) { animation-delay: 0s; }
+.reaction-item.animate:nth-child(2) { animation-delay: 0.2s; }
+.reaction-item.animate:nth-child(3) { animation-delay: 0.4s; }
+
+.emoji-item.animate {
+    animation: fadeInEmojiItem 0.3s ease-out forwards;
+}
+
+@keyframes fadeInEmojiItem {
+    0% {
+        opacity: 0;
+        transform: translateY(20px) scale(0.8);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* === Оценка приложения === */
+.review-invite-block {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    background: var(--tg-theme-secondary-bg-color);
+    border-radius: 12px;
+    box-shadow: var(--box-shadow);
+    padding: 16px 20px;
+    margin-bottom: 18px;
+    margin-top: 10px;
+    gap: 0;
+    position: relative;
+    overflow: visible;
+    cursor: pointer;
+    transition: box-shadow 0.2s, background 0.2s;
+    animation: pulse-invite 2.2s infinite cubic-bezier(.4,0,.6,1);
+}
+
+.review-invite-text {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--tg-theme-text-color);
+    flex: 1;
+    z-index: 3;
+    padding-right: 40%;
+}
+.review-invite-sub {
+    font-size: 0.9rem;
+    color: var(--tg-theme-hint-color);
+    font-weight: 400;
+}
+.review-invite-img {
+    position: absolute;
+    right: 5%;
+    top: -20%;
+    height: 120%;
+    width: auto;
+    max-width: 50%;
+    z-index: 2;
+    object-fit: contain;
+    pointer-events: none;
+}
+.review-invite-btn {
+    background: var(--primary-color);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+    margin-left: 12px;
+}
+.review-invite-btn:hover {
+    background: var(--secondary-color);
+}
+
+/* Модальное окно для отзыва */
+#reviewModal {
+    display: none;
+    position: fixed;
+    z-index: 10000;
+    left: 0; top: 0; width: 100vw; height: 100vh;
+    background: rgba(0,0,0,0.25);
+    justify-content: center;
+    align-items: center;
+    animation: fadeIn 0.2s;
+}
+#reviewModal .modal-content {
+    background: var(--tg-theme-bg-color);
+    border-radius: 16px;
+    padding: 28px 22px 22px 22px;
+    max-width: 350px;
+    width: 90vw;
+    margin: 60px auto 0 auto;
+    box-shadow: var(--box-shadow);
+    position: relative;
+    animation: modal-appear 0.3s;
+}
+#reviewModal .close {
+    position: absolute;
+    top: 12px;
+    right: 18px;
+    font-size: 1.5rem;
+    color: var(--tg-theme-hint-color);
+    cursor: pointer;
+}
+.review-mark-group {
+    margin-bottom: 16px;
+}
+.review-marks {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+}
+.mark-btn {
+    background: var(--tg-theme-secondary-bg-color);
+    border: none;
+    border-radius: 6px;
+    padding: 7px 12px;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--tg-theme-text-color);
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+}
+.mark-btn.selected, .mark-btn:active {
+    background: var(--primary-color);
+    color: #fff;
+}
+.review-text-group {
+    margin-bottom: 16px;
+}
+#reviewText {
+    width: 100%;
+    min-height: 60px;
+    border-radius: 8px;
+    border: 1px solid var(--tg-theme-secondary-bg-color);
+    padding: 8px;
+    font-size: 1rem;
+    resize: vertical;
+    background: var(--tg-theme-secondary-bg-color);
+    color: var(--tg-theme-text-color);
+}
+.review-send-btn {
+    background: var(--primary-color);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+    width: 100%;
+    margin-top: 8px;
+}
+.review-send-btn:hover {
+    background: var(--secondary-color);
+}
+.review-status {
+    margin-top: 10px;
+    font-size: 0.95rem;
+    text-align: center;
+}
+@media (max-width: 600px) {
+    .review-invite-block {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    .review-invite-img {
+        margin-left: 0;
+    }
+    .review-invite-btn {
+        margin-left: 0;
+        margin-top: 8px;
+    }
+}
+@keyframes pulse-invite {
+    0% {
+        transform: scale(1);
+        box-shadow: var(--box-shadow);
+    }
+    50% {
+        transform: scale(1.025);
+        box-shadow: 0 8px 28px rgba(52,152,219,0.18);
+    }
+    100% {
+        transform: scale(1);
+        box-shadow: var(--box-shadow);
+    }
+}
+.review-invite-block:hover,
+.review-invite-block:focus {
+    animation: none;
+    transform: scale(1.03);
+    box-shadow: 0 6px 20px rgba(52,152,219,0.13);
+}
+
+.download-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    border-radius: 14px;
+    background: var(--tg-theme-secondary-bg-color);
+    color: var(--tg-theme-hint-color);
+    font-size: 14px;
+    padding: 0 12px;
+    border: 1px solid transparent;
+    text-decoration: none;
+    transition: all 0.2s ease;
+    margin-right: 6px;
+    cursor: pointer;
+    min-width: 60px;
+    box-sizing: border-box;
+    box-shadow: 0 4px 16px rgba(36,129,204,0.13), 0 1.5px 4px rgba(0,0,0,0.10);
+}
+.download-btn:hover {
+    background: var(--tg-theme-secondary-bg-color);
+    filter: brightness(0.97);
+}
+
+@keyframes fade-slide-up {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.download-btn.fade-slide-up {
+    animation: fadeInReactionItem 0.3s ease-out forwards;
+    animation-delay: 0s;
+}
+.reaction-item.animate:nth-child(1) { animation-delay: 0.2s; }
+.reaction-item.animate:nth-child(2) { animation-delay: 0.4s; }
+.reaction-item.animate:nth-child(3) { animation-delay: 0.6s; }
+.reaction-item.animate:nth-child(4) { animation-delay: 0.8s; }
+.reaction-item.animate:nth-child(5) { animation-delay: 1s; }
+
+.fade-slide-up {
+    animation: fade-slide-up 0.5s cubic-bezier(0.4,0,0.2,1);
+}
+
+/* === Выбор группы/ФИО и выпадающий список === */
+.group-selector-container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    margin-bottom: 15px;
+    position: relative;
+}
+.group-selector-current {
+    font-size: 20px;
+    font-weight: 400;
+    color: var(--tg-theme-hint-color);
+    margin-right: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1 1 auto;
+    text-align: left;
+}
+.group-selector-arrow {
+    font-size: 24px;
+    color: var(--tg-theme-hint-color);
+    cursor: pointer;
+    user-select: none;
+    display: inline-block;
+    vertical-align: middle;
+    transition: transform 0.25s cubic-bezier(.4,0,.2,1), color 0.2s;
+    transform: rotate(0deg);
+}
+.group-selector-arrow.open {
+    transform: rotate(90deg);
+}
+
+.group-selector-dropdown {
+    display: block;
+    position: absolute;
+    z-index: 1000;
+    background: var(--tg-theme-bg-color);
+    border: 1px solid var(--tg-theme-secondary-bg-color);
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    min-width: 220px;
+    max-width: 90vw;
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 0;
+    opacity: 0;
+    transform: translateY(10px);
+    pointer-events: none;
+    transition: opacity 0.25s cubic-bezier(.4,0,.2,1), transform 0.25s cubic-bezier(.4,0,.2,1);
+    visibility: hidden;
+}
+.group-selector-dropdown.open {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+    visibility: visible;
+}
+.group-selector-dropdown .dropdown-item {
+    padding: 12px 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--tg-theme-secondary-bg-color);
+    font-size: 16px;
+    font-weight: 400;
+    color: var(--tg-theme-hint-color);
+    background: none;
+    transition: background 0.2s;
+}
+.group-selector-dropdown .dropdown-item:last-child {
+    border-bottom: none;
+}
+.group-selector-dropdown .dropdown-item:hover {
+    /* background: var(--tg-theme-secondary-bg-color); */
+}
+.group-selector-dropdown .dropdown-del-btn {
+    /* color: var(--tg-theme-link-color); */
+    margin-left: 14px;
+    font-size: 18px;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+.group-selector-dropdown .dropdown-del-btn:hover {
+    /* color: var(--tg-theme-link-color); */
+}
+.group-selector-dropdown .dropdown-add-btn {
+    width: 100%;
+    background: var(--tg-theme-secondary-bg-color);
+    border: none;
+    border-radius: 0 0 12px 12px;
+    color: var(--tg-theme-link-color);
+    font-size: 16px;
+    font-weight: 400;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+/* --- Анимация закрытия выпадающего списка --- */
+.group-selector-dropdown.closing {
+    opacity: 0;
+    transform: translateY(10px);
+    pointer-events: none;
+    visibility: hidden;
+    transition: opacity 0.25s cubic-bezier(.4,0,.2,1), transform 0.25s cubic-bezier(.4,0,.2,1);
+}
+
+/* --- Модальное окно в стиле schedule_search --- */
+.modal {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.25);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    animation: fadeIn 0.2s;
+}
+.modal-content {
+    background: var(--tg-theme-bg-color);
+    border-radius: var(--border-radius);
+    padding: 24px 20px 16px 20px;
+    box-shadow: var(--box-shadow);
+    min-width: 280px;
+    max-width: 90vw;
+    position: relative;
+    text-align: center;
+    animation: modal-appear 0.3s ease;
+}
+.modal .close {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    font-size: 22px;
+    color: var(--tg-theme-hint-color);
+    cursor: pointer;
+    transition: color 0.2s;
+}
+.modal .close:hover {
+    color: var(--tg-theme-link-color);
+}
+
+/* --- Инпут и кнопка как в schedule_search --- */
+.modal .search-input {
+    width: 100%;
+    padding: 12px 40px 12px 12px;
+    border: 2px solid var(--tg-theme-hint-color);
+    border-radius: var(--border-radius);
+    background: var(--tg-theme-bg-color);
+    color: var(--tg-theme-text-color);
+    font-size: 16px;
+    transition: var(--transition);
+    margin-bottom: 8px;
+    box-sizing: border-box;
+}
+.modal .search-input:focus {
+    outline: none;
+    border: 2px solid var(--tg-theme-button-color);
+}
+.modal .search-button {
+    width: 100%;
+    padding: 12px;
+    background: var(--tg-theme-button-color);
+    color: var(--tg-theme-button-text-color);
+    border: none;
+    border-radius: var(--border-radius);
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+    margin-top: 8px;
+}
+
+/* --- Autocomplete dropdown с анимацией --- */
+.autocomplete-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--tg-theme-secondary-bg-color);
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 1000;
+    display: none;
+    margin-top: 4px;
+    opacity: 0;
+    transform: translateY(10px);
+    pointer-events: none;
+    transition: opacity 0.2s, transform 0.2s;
+}
+.autocomplete-dropdown.open {
+    display: block;
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+/* --- Граница инпуту hint-цветом --- */
+.modal .search-input {
+    width: 100%;
+    padding: 12px 40px 12px 12px;
+    border: 2px solid var(--tg-theme-hint-color);
+    border-radius: var(--border-radius);
+    background: var(--tg-theme-bg-color);
+    color: var(--tg-theme-text-color);
+    font-size: 16px;
+    transition: var(--transition);
+    margin-bottom: 8px;
+    box-sizing: border-box;
+}
+.modal .search-input:focus {
+    outline: none;
+    border: 2px solid var(--tg-theme-button-color);
+}
+
+/* --- Анимация закрытия модального окна --- */
+.modal.closing {
+    animation: fadeOut 0.2s forwards;
+}
+.modal-content.closing {
+    animation: scaleOut 0.2s forwards;
+}
+
+/* --- Autocomplete dropdown с анимацией --- */
+.autocomplete-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--tg-theme-secondary-bg-color);
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 1000;
+    display: none;
+    margin-top: 4px;
+    opacity: 0;
+    transform: translateY(10px);
+    pointer-events: none;
+    transition: opacity 0.2s, transform 0.2s;
+}
+.autocomplete-dropdown.open {
+    display: block;
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+/* --- Граница инпуту hint-цветом --- */
+.modal .search-input {
+    width: 100%;
+    padding: 12px 40px 12px 12px;
+    border: 2px solid var(--tg-theme-hint-color);
+    border-radius: var(--border-radius);
+    background: var(--tg-theme-bg-color);
+    color: var(--tg-theme-text-color);
+    font-size: 16px;
+    transition: var(--transition);
+    margin-bottom: 8px;
+    box-sizing: border-box;
+}
+.modal .search-input:focus {
+    outline: none;
+    border: 2px solid var(--tg-theme-button-color);
+}
+
+.modal .addTypeSelect {
+    width: 100%;
+    padding: 12px 40px 12px 12px;
+    border: 2px solid var(--tg-theme-hint-color);
+    border-radius: var(--border-radius);
+    background: var(--tg-theme-bg-color);
+    color: var(--tg-theme-text-color);
+    font-size: 16px;
+    margin-bottom: 8px;
+    transition: var(--transition);
+    box-sizing: border-box;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url('data:image/svg+xml;utf8,<svg fill="%23999999" height="18" viewBox="0 0 24 24" width="18" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
+    background-repeat: no-repeat;
+    background-position: right 16px center;
+    background-size: 18px 18px;
+}
+.modal .addTypeSelect:focus {
+    outline: none;
+    border: 2px solid var(--tg-theme-button-color);
+}
+.modal .addTypeSelect::-ms-expand {
+    display: none;
+}
+/* Удаляю ::after, чтобы не мешал */
+
+/* Для корректного отображения стрелки поверх select */
+.modal .addTypeSelect {
+    background: var(--tg-theme-bg-color);
+    background-repeat: no-repeat;
+    background-position: right 16px center;
+}
+
+/* Одинаковый padding для инпута */
+.modal .search-input {
+    padding: 12px 40px 12px 12px;
+}
+
+.select-wrapper {
+    position: relative;
+    width: 100%;
+}
+.select-wrapper .addTypeSelect {
+    width: 100%;
+    padding-right: 40px;
+}
+.select-arrow {
+    position: absolute;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-50%) rotate(90deg);
+    font-size: 22px;
+    color: var(--tg-theme-hint-color);
+    pointer-events: none;
+    user-select: none;
+    transition: color 0.2s;
+    z-index: 2;
+}
+.select-wrapper .addTypeSelect:focus + .select-arrow {
+    color: var(--tg-theme-button-color);
+}
+
+.autocomplete-dropdown .dropdown-item {
+    padding: 12px 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    font-size: 16px;
+    font-weight: 400;
+    color: var(--tg-theme-hint-color);
+    background: none;
+    border-bottom: 1px solid var(--tg-theme-secondary-bg-color);
+    transition: background 0.2s;
+}
+.autocomplete-dropdown .dropdown-item:last-child {
+    border-bottom: none;
+}
+
+/* Больше "воздуха" между карточками */
+.games-grid, .games-container {
+    gap: 12px !important;
+}
+
+.row, .row-container .row {
+    box-shadow: 0 6px 32px 0 rgba(0,0,0,0.16), 0 1.5px 4px rgba(0,0,0,0.08) !important;
+}
+
+/* --- Микро- и макро-анимации --- */
+
+@keyframes fadeInUpScale {
+  0% { opacity: 0; transform: translateY(30px) scale(0.97); }
+  60% { opacity: 1; transform: translateY(-6px) scale(1.03); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes fadeInModal {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+@keyframes slideInModalContent {
+  0% { 
+    opacity: 0; 
+    transform: scale(0.85) translateY(20px); 
+  }
+  60% { 
+    opacity: 1; 
+    transform: scale(1.02) translateY(-2px); 
+  }
+  100% { 
+    opacity: 1; 
+    transform: scale(1) translateY(0); 
+  }
+}
+
+@keyframes fadeOutModal {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes slideOutModalContent {
+  0% { 
+    opacity: 1; 
+    transform: scale(1) translateY(0); 
+  }
+  100% { 
+    opacity: 0; 
+    transform: scale(0.85) translateY(20px); 
+  }
+}
+
+.game-card {
+  animation: fadeInUpScale 0.7s cubic-bezier(.23,1.01,.32,1) forwards;
+}
+
+@keyframes buttonTap {
+  0% { transform: scale(1); }
+  50% { transform: scale(0.94); }
+  100% { transform: scale(1); }
+}
+
+button:active {
+  animation: buttonTap 0.18s cubic-bezier(.4,0,.2,1);
+}
+
+@keyframes bounceIn {
+  0% { opacity: 0; transform: scale(0.7); }
+  60% { opacity: 1; transform: scale(1.15); }
+  80% { transform: scale(0.95); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.reaction-item.animate {
+  animation: bounceIn 0.35s cubic-bezier(.4,0,.2,1) forwards;
+}
+
+@keyframes modalScaleIn {
+  0% { opacity: 0; transform: scale(0.85); }
+  60% { opacity: 1; transform: scale(1.05); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.modal-content {
+  animation: modalScaleIn 0.35s cubic-bezier(.4,0,.2,1);
+}
+
+@keyframes slideInFade {
+  0% { opacity: 0; transform: translateY(40px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.schedule-container {
+  animation: slideInFade 0.5s cubic-bezier(.23,1.01,.32,1);
+}
+
+@keyframes progressGlow {
+  0% { box-shadow: 0 0 0 0 rgba(36,129,204,0.18); }
+  50% { box-shadow: 0 0 16px 4px rgba(36,129,204,0.22); }
+  100% { box-shadow: 0 0 0 0 rgba(36,129,204,0.18); }
+}
+
+#progress_line {
+  animation: progressGlow 1.2s cubic-bezier(.4,0,.2,1);
+}
+
+.row .corner-image {
+    position: absolute;
+    right: -24px;
+    bottom: -40px;
+    width: 100px;
+    height: 100px;
+    opacity: 0.7;
+    transform: rotate(-20deg);
+    pointer-events: none;
+    z-index: 1;
+}
+
+.row-time {
+    position: relative;
+    z-index: 2;
+}
+
+/* CTA Поздравлятор в стиле игры */
+.mini-cta {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 12px 16px;
+    margin: 8px 0 12px;
+    background: var(--tg-theme-secondary-bg-color);
+    color: var(--tg-theme-text-color);
+    border-radius: 22px;
+    border: none;
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    touch-action: manipulation;
+    cursor: pointer;
+    box-shadow: 0 6px 32px 0 rgba(0,0,0,0.16), 0 1.5px 4px rgba(0,0,0,0.08);
+    transition: transform 0.1s ease;
+}
+
+.mini-cta:active { 
+    transform: scale(0.95); 
+}
+
+.mini-cta .coin-dot {
+    width: 22px;
+    height: 22px;
+    background: url('/static/img/coin.png') center center / contain no-repeat transparent;
+    filter: drop-shadow(0 1px 3px rgba(0,0,0,0.2));
+    flex-shrink: 0;
+}
+
+.mini-cta .mini-cta-title {
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 0.01em;
+    color: var(--tg-theme-text-color);
+}
+
+.mini-cta .mini-cta-badge {
+    margin-left: 2px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--tg-theme-hint-color);
+    background: var(--tg-theme-bg-color);
+    padding: 2px 6px;
+    border-radius: 10px;
+    border: 1px solid var(--tg-theme-secondary-bg-color);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.mini-cta .mini-cta-spacer { 
+    flex: 1; 
+}
+
+.mini-cta .mini-cta-arrow {
+    font-size: 20px;
+    line-height: 1;
+    color: var(--tg-theme-hint-color);
+    transform: translateY(1px);
+}

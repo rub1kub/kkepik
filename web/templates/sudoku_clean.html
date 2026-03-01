@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="HandheldFriendly" content="true">
+    <meta name="MobileOptimized" content="width">
+    <title>Судоку - KKEPIK</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/testmain.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/sudoku.css') }}">
+</head>
+<body>
+    <div class="menu-container">
+        <div class="header">
+            <h1>🧩 Судоку</h1>
+        </div>
+        
+        <div class="difficulty-modal" id="difficultyModal">
+            <div class="modal-content">
+                <h2>Выберите сложность</h2>
+                <div class="difficulty-options">
+                    <button class="difficulty-option" data-difficulty="easy">
+                        <div class="difficulty-icon">🥉</div>
+                        <div class="difficulty-name">Легкий</div>
+                        <div class="difficulty-desc">40+ клеток заполнено</div>
+                    </button>
+                    <button class="difficulty-option" data-difficulty="medium">
+                        <div class="difficulty-icon">🥈</div>
+                        <div class="difficulty-name">Средний</div>
+                        <div class="difficulty-desc">30+ клеток заполнено</div>
+                    </button>
+                    <button class="difficulty-option" data-difficulty="hard">
+                        <div class="difficulty-icon">🥇</div>
+                        <div class="difficulty-name">Сложный</div>
+                        <div class="difficulty-desc">20+ клеток заполнено</div>
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="sudoku-game-container" id="gameContainer" style="display: none;">
+            <div class="game-header">
+                <div class="timer" id="timer">00:00</div>
+                <div class="difficulty" id="difficulty">Легкий</div>
+            </div>
+            
+            <div class="game-area">
+                <div class="sudoku-board" id="sudokuBoard"></div>
+            </div>
+            
+            <div class="sudoku-controls">
+                <button class="number-btn" onclick="game.inputNumber(1)">1</button>
+                <button class="number-btn" onclick="game.inputNumber(2)">2</button>
+                <button class="number-btn" onclick="game.inputNumber(3)">3</button>
+                <button class="number-btn" onclick="game.inputNumber(4)">4</button>
+                <button class="number-btn" onclick="game.inputNumber(5)">5</button>
+                <button class="number-btn" onclick="game.inputNumber(6)">6</button>
+                <button class="number-btn" onclick="game.inputNumber(7)">7</button>
+                <button class="number-btn" onclick="game.inputNumber(8)">8</button>
+                <button class="number-btn" onclick="game.inputNumber(9)">9</button>
+            </div>
+            
+            <div class="sudoku-controls">
+                <button class="action-btn" onclick="game.clearCell()">Очистить</button>
+                <button class="action-btn" onclick="game.toggleNotes()" id="notesBtn">Заметки</button>
+                <button class="action-btn" onclick="game.getHint()">Подсказка</button>
+                <button class="action-btn danger" onclick="game.newGame()">Новая игра</button>
+            </div>
+            
+            <div class="rating-section">
+                <div class="rating-title">🏆 Рейтинг игроков</div>
+                <div class="rating-tables">
+                    <div class="rating-table-container">
+                        <h3>🥉 Легкий</h3>
+                        <table class="rating-table">
+                            <thead>
+                                <tr><th>#</th><th>Игрок</th><th>Время</th></tr>
+                            </thead>
+                            <tbody id="ratingEasyBody">
+                                <tr><td colspan="3" style="text-align: center;">Загрузка...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="rating-table-container">
+                        <h3>🥈 Средний</h3>
+                        <table class="rating-table">
+                            <thead>
+                                <tr><th>#</th><th>Игрок</th><th>Время</th></tr>
+                            </thead>
+                            <tbody id="ratingMediumBody">
+                                <tr><td colspan="3" style="text-align: center;">Загрузка...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="rating-table-container">
+                        <h3>🥇 Сложный</h3>
+                        <table class="rating-table">
+                            <thead>
+                                <tr><th>#</th><th>Игрок</th><th>Время</th></tr>
+                            </thead>
+                            <tbody id="ratingHardBody">
+                                <tr><td colspan="3" style="text-align: center;">Загрузка...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/sudoku.js') }}"></script>
+    <script>
+        let game;
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            game = new SudokuGame();
+            game.init();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ивент - В С Е</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="/static/css/main.css">
+    <style>
+        .event-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            color: white;
+        }
+        
+        .event-title {
+            font-size: 3rem;
+            font-weight: 900;
+            text-align: center;
+            margin-bottom: 2rem;
+            background: linear-gradient(45deg, #FFD700, #FFA500);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-shadow: 0 0 30px rgba(255, 215, 0, 0.5);
+        }
+        
+        .event-subtitle {
+            font-size: 1.2rem;
+            text-align: center;
+            margin-bottom: 3rem;
+            color: #ccc;
+            opacity: 0.8;
+        }
+        
+        .rating-container {
+            width: 100%;
+            max-width: 600px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 20px;
+            padding: 2rem;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 215, 0, 0.2);
+        }
+        
+        .rating-title {
+            font-size: 1.8rem;
+            font-weight: 700;
+            text-align: center;
+            margin-bottom: 1.5rem;
+            color: #FFD700;
+        }
+        
+        .rating-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem;
+            margin: 0.5rem 0;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            border: 1px solid rgba(255, 215, 0, 0.1);
+            transition: all 0.3s ease;
+        }
+        
+        .rating-item:hover {
+            background: rgba(255, 215, 0, 0.1);
+            transform: translateY(-2px);
+        }
+        
+        .rating-position {
+            font-size: 1.5rem;
+            font-weight: 900;
+            color: #FFD700;
+            min-width: 40px;
+        }
+        
+        .rating-name {
+            font-size: 1.1rem;
+            font-weight: 600;
+            flex: 1;
+            margin-left: 1rem;
+        }
+        
+        .rating-count {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #FFD700;
+        }
+        
+        .event-info {
+            margin-top: 2rem;
+            text-align: center;
+            font-size: 1rem;
+            color: #999;
+            line-height: 1.6;
+        }
+        
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 200px;
+            font-size: 1.2rem;
+            color: #FFD700;
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 215, 0, 0.2);
+            border-top: 4px solid #FFD700;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 1rem;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        @media (max-width: 768px) {
+            .event-title {
+                font-size: 2rem;
+            }
+            
+            .rating-container {
+                padding: 1.5rem;
+            }
+            
+            .rating-item {
+                padding: 0.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="event-container">
+        <h1 class="event-title">ИВЕНТ - В С Е</h1>
+        <p class="event-subtitle">Игра приостановлена для проведения специального мероприятия</p>
+        
+        <div class="rating-container">
+            <h2 class="rating-title">🏆 ФИНАЛЬНЫЙ РЕЙТИНГ</h2>
+            <div id="ratingList" class="loading">
+                <div class="spinner"></div>
+                Загрузка рейтинга...
+            </div>
+        </div>
+        
+        <div class="event-info">
+            <p>Спасибо за участие в игре!</p>
+            <p>Следите за обновлениями для новых событий.</p>
+        </div>
+    </div>
+
+    <script>
+        // Инициализация Telegram WebApp
+        if (window.Telegram && window.Telegram.WebApp) {
+            const tg = window.Telegram.WebApp;
+            tg.ready();
+            tg.expand();
+        }
+
+        // Загрузка рейтинга
+        async function loadRating() {
+            try {
+                const response = await fetch('/api/congratulate-data');
+                const data = await response.json();
+                
+                if (data.success && data.rating) {
+                    displayRating(data.rating);
+                } else {
+                    document.getElementById('ratingList').innerHTML = 
+                        '<p style="text-align: center; color: #ff6b6b;">Ошибка загрузки рейтинга</p>';
+                }
+            } catch (error) {
+                console.error('Ошибка загрузки рейтинга:', error);
+                document.getElementById('ratingList').innerHTML = 
+                    '<p style="text-align: center; color: #ff6b6b;">Ошибка соединения</p>';
+            }
+        }
+
+        function displayRating(rating) {
+            const ratingList = document.getElementById('ratingList');
+            
+            if (rating.length === 0) {
+                ratingList.innerHTML = '<p style="text-align: center; color: #ccc;">Рейтинг пуст</p>';
+                return;
+            }
+
+            let html = '';
+            rating.forEach((player, index) => {
+                const position = index + 1;
+                const medal = position === 1 ? '🥇' : position === 2 ? '🥈' : position === 3 ? '🥉' : '';
+                
+                html += `
+                    <div class="rating-item">
+                        <div class="rating-position">${medal} ${position}</div>
+                        <div class="rating-name">${player.userName || 'Аноним'}</div>
+                        <div class="rating-count">${player.count.toLocaleString()}</div>
+                    </div>
+                `;
+            });
+
+            ratingList.innerHTML = html;
+        }
+
+        // Загружаем рейтинг при загрузке страницы
+        document.addEventListener('DOMContentLoaded', loadRating);
+    </script>
+</body>
+</html>

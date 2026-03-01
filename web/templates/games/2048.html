@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="HandheldFriendly" content="true">
+    <meta name="MobileOptimized" content="width">
+    <title>2048</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/2048.css') }}?v={{ STATIC_VERSION }}">
+</head>
+<body>
+    <div class="game-container">
+        <div class="header">
+            <h1 class="title">2048</h1>
+            <div class="score">Счёт: <span id="score">0</span></div>
+        </div>
+        <div class="game-area">
+            <div class="grid" id="grid"></div>
+        </div>
+        <div class="game-controls">
+            <button id="new-game">Новая игра</button>
+        </div>
+        <div class="rating-section">
+            <h2 class="rating-title">Топ игроков</h2>
+            <table class="rating-table" id="rating-2048-table">
+                <thead>
+                    <tr><th>Место</th><th>Имя</th><th>Очки</th></tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="confirm-modal" id="confirmModal" style="display: none;">
+        <div class="confirm-modal-content">
+            <h2>Начать новую игру?</h2>
+            <p>Текущий прогресс будет потерян</p>
+            <div class="confirm-buttons">
+                <button id="confirmYes">Да</button>
+                <button id="confirmNo">Нет</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/2048.js') }}?v={{ STATIC_VERSION }}"></script>
+</body>
+</html> 

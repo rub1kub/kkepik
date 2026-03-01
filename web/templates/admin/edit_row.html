@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Редактирование записи - {{ table_name }}</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+        .back-btn {
+            background: #6c757d;
+            color: white;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+        }
+        .back-btn:hover {
+            background: #5a6268;
+        }
+        .edit-form {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #333;
+        }
+        input[type="text"],
+        input[type="number"] {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+        .save-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 0.75rem 1rem;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+            width: 100%;
+        }
+        .save-btn:hover {
+            background: #218838;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Редактирование записи</h1>
+            <a href="{{ url_for('admin_table', table_name=table_name) }}" class="back-btn">Назад</a>
+        </div>
+        
+        <form class="edit-form" method="POST">
+            {% for column in columns %}
+            <div class="form-group">
+                <label for="{{ column[1] }}">{{ column[1] }}:</label>
+                <input type="{% if column[2] == 'INTEGER' %}number{% else %}text{% endif %}"
+                       id="{{ column[1] }}"
+                       name="{{ column[1] }}"
+                       value="{{ row[loop.index0] }}"
+                       {% if column[1] in primary_keys %}readonly{% endif %}>
+            </div>
+            {% endfor %}
+            
+            <button type="submit" class="save-btn">Сохранить</button>
+        </form>
+    </div>
+</body>
+</html> 

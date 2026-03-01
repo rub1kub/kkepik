@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Админ-панель</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+        .tables-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1rem;
+        }
+        .table-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .table-card h3 {
+            margin-top: 0;
+            margin-bottom: 1rem;
+            color: #333;
+        }
+        .table-info {
+            margin-bottom: 1rem;
+        }
+        .view-table-btn {
+            background: #007bff;
+            color: white;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        .view-table-btn:hover {
+            background: #0056b3;
+        }
+        .logout-btn {
+            background: #dc3545;
+            color: white;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+        }
+        .logout-btn:hover {
+            background: #c82333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Админ-панель</h1>
+            <a href="{{ url_for('admin_logout') }}" class="logout-btn">Выйти</a>
+        </div>
+
+        <!-- Специальные разделы -->
+        <div class="tables-grid" style="margin-bottom: 2rem;">
+            <div class="table-card" style="border: 2px solid #d4af37;">
+                <h3>🎂 Поздравлятор (Кликер)</h3>
+                <div class="table-info">
+                    <p>Управление игрой "Поздравлятор": статистика игроков, настройка энергии, апгрейды, баланс системы.</p>
+                </div>
+                <a href="{{ url_for('admin_clicker') }}" class="view-table-btn" style="background: #d4af37; border-color: #d4af37;">
+                    Управлять кликером
+                </a>
+            </div>
+        </div>
+        
+        <h2 style="margin-bottom: 1rem; color: #666;">Таблицы базы данных</h2>
+        <div class="tables-grid">
+            {% for table_name, info in tables_info.items() %}
+            <div class="table-card">
+                <h3>{{ table_name }}</h3>
+                <div class="table-info">
+                    <p><strong>Записей:</strong> {{ info.count }}</p>
+                    <p><strong>Колонки:</strong></p>
+                    <ul>
+                        {% for column in info.columns %}
+                        <li>{{ column[1] }} ({{ column[2] }})</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                <a href="{{ url_for('admin_table', table_name=table_name) }}" class="view-table-btn">
+                    Просмотреть таблицу
+                </a>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html> 

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Шашки</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/checkers.css') }}">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+    <div id="main-content">
+        <div class="header">
+            <h1 class="logo">Шашки</h1>
+        </div>
+        <div id="lobby" class="screen">
+            <div class="lobby-container">
+                <button id="create-game-btn" class="btn primary">Создать игру</button>
+                <div class="divider">или</div>
+                <div class="available-games-container">
+                    <h3 class="available-games-title">Доступные игры</h3>
+                    <div class="available-games-list" id="available-games-list">
+                        <div class="no-games-message">Нет доступных игр</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="waiting" class="screen waiting-message" style="display:none;">
+            <div class="waiting-container">
+                <div class="loading-animation">
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                </div>
+                <p class="waiting-text">Ожидание подключения соперника...</p>
+                <button id="cancel-waiting" class="btn secondary">Отмена</button>
+            </div>
+        </div>
+        <div id="game" class="screen" style="display:none;">
+            <div class="game-container">
+                <div class="game-info-bar" id="game-info-bar">
+                    <!-- Счётчик съеденных шашек будет отрисован JS -->
+                </div>
+                <div class="checkers-board" id="checkers-board">
+                    <!-- Клетки доски будут отрисованы JS -->
+                </div>
+                <div id="turn-status" class="turn-status"></div>
+                <button id="exit-btn" class="btn secondary">Выйти</button>
+            </div>
+        </div>
+        <!-- Модальное окно для информации о цвете -->
+        <div id="colorModal" class="modal" style="display:none;">
+            <div class="modal-content">
+                <div id="colorModalIcon" style="font-size:2.5em;margin-bottom:12px;"></div>
+                <div id="colorModalText" style="font-size:1.2em;margin-bottom:18px;"></div>
+                <button id="colorModalOk" class="btn primary">Ок</button>
+            </div>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/checkers.js') }}?v={{ STATIC_VERSION }}"></script>
+</body>
+</html> 

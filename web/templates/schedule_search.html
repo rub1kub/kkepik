@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Поиск расписания</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_search.css') }}?v={{ STATIC_VERSION }}">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="search-container">
+            <h1>Поиск расписания</h1>
+            
+            <div class="search-form">
+                <div class="search-type-selector">
+                    <button class="type-btn active" data-type="group">Поиск по группе</button>
+                    <button class="type-btn" data-type="teacher">Поиск по преподавателю</button>
+                    <button class="type-btn" data-type="audience">Поиск по аудитории</button>
+                </div>
+
+                <div class="search-inputs">
+                    <div class="input-group group-input">
+                        <input type="text" id="group" placeholder="103-Д9-1ИНС" class="search-input">
+                    </div>
+                    <div class="input-group teacher-input" style="display: none;">
+                        <input type="text" id="teacher" placeholder="Иванов И.И." class="search-input">
+                    </div>
+                    <div class="input-group audience-input" style="display: none;">
+                        <input type="text" id="audience" placeholder="42" class="search-input">
+                    </div>
+                    <div class="input-group">
+                        <input type="date" id="date" class="search-input">
+                    </div>
+                </div>
+
+                <button id="search-btn" class="search-button">Найти расписание</button>
+            </div>
+        </div>
+
+        <div class="results-container" style="display: none;">
+            <div class="schedule-header">
+                <h2 id="schedule-title"></h2>
+                <div class="schedule-date" id="schedule-date"></div>
+            </div>
+            
+            <div class="schedule-table">
+                <div class="schedule-row header">
+                    <div class="time">Время</div>
+                    <div class="subject">Предмет</div>
+                    <div class="room">Аудитория</div>
+                </div>
+                <div id="schedule-content"></div>
+            </div>
+        </div>
+
+        <div class="error-message" style="display: none;"></div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/schedule_search.js') }}?v={{ STATIC_VERSION }}"></script>
+</body>
+</html> 

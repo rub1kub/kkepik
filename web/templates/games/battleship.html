@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Морской бой</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/battleship.css') }}">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+    <div id="main-content" style="display: none;">
+        <div id="auth-error" style="display: none;"></div>
+        
+        <!-- Лобби -->
+        <div id="lobby" class="screen">
+            <div class="header">
+                <h1 class="logo">Морской бой</h1>
+            </div>
+            
+            <div class="lobby-container">
+                <button id="create-game-btn" class="btn primary">Создать игру</button>
+                <div class="divider">или</div>
+                <div class="available-games-container">
+                    <h3 class="available-games-title">Доступные игры</h3>
+                    <div id="available-games-list" class="available-games-list">
+                        <div class="no-games-message">Нет доступных игр</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Ожидание соперника -->
+        <div id="waiting" class="screen" style="display: none;">
+            <div class="header">
+                <h1 class="logo">Ожидание соперника</h1>
+            </div>
+            
+            <div class="waiting-container">
+                
+                <div class="loading-animation">
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                </div>
+                
+                <p class="waiting-text">Ожидание подключения соперника...</p>
+                
+                <button id="cancel-waiting" class="btn secondary">Отмена</button>
+            </div>
+        </div>
+        
+        <!-- Расстановка кораблей -->
+        <div id="placement" class="screen" style="display: none;">
+            <div class="header">
+                <h1 class="logo">Расстановка кораблей</h1>
+            </div>
+            
+            <div class="placement-container">
+                <div class="ships-container">
+                    <div class="ship-item" data-ship="4" data-count="1">
+                        <div class="ship-preview">
+                            <div class="ship-cell"></div>
+                            <div class="ship-cell"></div>
+                            <div class="ship-cell"></div>
+                            <div class="ship-cell"></div>
+                        </div>
+                        <div class="ship-count">x1</div>
+                    </div>
+                    <div class="ship-item" data-ship="3" data-count="2">
+                        <div class="ship-preview">
+                            <div class="ship-cell"></div>
+                            <div class="ship-cell"></div>
+                            <div class="ship-cell"></div>
+                        </div>
+                        <div class="ship-count">x2</div>
+                    </div>
+                    <div class="ship-item" data-ship="2" data-count="3">
+                        <div class="ship-preview">
+                            <div class="ship-cell"></div>
+                            <div class="ship-cell"></div>
+                        </div>
+                        <div class="ship-count">x3</div>
+                    </div>
+                    <div class="ship-item" data-ship="1" data-count="4">
+                        <div class="ship-preview">
+                            <div class="ship-cell"></div>
+                        </div>
+                        <div class="ship-count">x4</div>
+                    </div>
+                </div>
+                
+                <div class="board-container">
+                    <div class="board-label">Ваше поле</div>
+                    <div id="placement-board" class="board"></div>
+                </div>
+                
+                <div class="placement-controls">
+                    <button id="rotate-ship" class="btn secondary">Повернуть</button>
+                    <button id="random-placement" class="btn secondary">Случайно</button>
+                    <button id="start-game" class="btn primary" disabled>Начать игру</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Игровой экран -->
+        <div id="game" class="screen" style="display: none;">
+            <div class="header">
+                <h1 class="logo">Морской бой</h1>
+                <div class="status-container">
+                    <div class="game-status" id="game-status">Ваш ход</div>
+                    <div class="game-status" id="turn-timer">2:00</div>
+                </div>
+            </div>
+            
+            <div class="game-container">
+                <div class="boards-container">
+                    <div class="board-wrapper">
+                        <div class="board-label">Поле противника</div>
+                        <div id="opponent-board" class="board"></div>
+                    </div>
+
+                    <div class="board-wrapper">
+                        <div class="board-label">Ваше поле</div>
+                        <div id="player-board" class="board"></div>
+                    </div>
+                </div>
+                
+                <div class="game-info">
+                    <div class="ships-info">
+                        <div class="player-ships">
+                            <h3>Ваши корабли</h3>
+                            <div id="player-ships-status"></div>
+                        </div>
+                        <div class="opponent-ships">
+                            <h3>Корабли противника</h3>
+                            <div id="opponent-ships-status"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Результат игры -->
+        <div id="result" class="screen" style="display: none;">
+            <div class="header">
+                <h1 class="logo">Игра окончена</h1>
+            </div>
+            
+            <div class="result-container">
+                <div class="result-message" id="result-message"></div>
+                
+                <div class="result-stats">
+                    <div class="stat-item">
+                        <div class="stat-label">Ваши попадания</div>
+                        <div class="stat-value" id="player-hits">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Попадания противника</div>
+                        <div class="stat-value" id="opponent-hits">0</div>
+                    </div>
+                </div>
+                
+                <button id="play-again" class="btn primary">Играть снова</button>
+                <button id="back-to-lobby" class="btn secondary">Вернуться в лобби</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="waiting-modal">
+        <div class="modal-content">
+            <div style="font-size:1.3em;margin-bottom:12px;">Ожидание соперника...</div>
+            <div class="loading-animation">
+                <div class="dot"></div>
+                <div class="dot"></div>
+                <div class="dot"></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Модальное окно подтверждения выхода -->
+    <div id="confirm-exit-modal">
+        <div class="modal-content">
+            <div class="modal-title">Выйти из игры?</div>
+            <p>Если вы выйдете сейчас, игра будет завершена и вы проиграете.</p>
+            <div class="modal-buttons">
+                <button id="cancel-exit" class="btn secondary">Отмена</button>
+                <button id="confirm-exit" class="btn primary">Выйти</button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/battleship.js') }}?v={{ STATIC_VERSION }}"></script>
+</body>
+</html> 

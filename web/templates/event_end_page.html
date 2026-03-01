@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="HandheldFriendly" content="true">
+    <meta name="MobileOptimized" content="width">
+    <title>Ивент завершен - KKEPIK</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@200..900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/event_end.css') }}">
+</head>
+<body>
+    <div class="menu-container">
+        <!-- Заголовок -->
+        <div class="header">
+            <div class="logo">Ивент завершен</div>
+            <div class="birthday-subtitle">Спасибо за участие в игре!</div>
+        </div>
+
+        <!-- Счетчик общего количества поздравлений -->
+        <div class="congratulations-counter">
+            <div class="counter-value" id="totalCongratulations">0</div>
+            <div class="counter-label">Всего поздравлений</div>
+        </div>
+
+        <!-- Рейтинг -->
+        <div class="rating-section">
+            <div class="rating-title">🏆 ФИНАЛЬНЫЙ РЕЙТИНГ</div>
+            <div class="rating-list" id="ratingList">
+                <div class="loading">
+                    <div class="loading-spinner"></div>
+                    Загрузка рейтинга...
+                </div>
+            </div>
+        </div>
+
+        <!-- Кнопка возврата -->
+        <button class="back-button" onclick="goBack()">Вернуться в меню</button>
+    </div>
+
+    <script>
+        // Инициализация Telegram WebApp
+        if (window.Telegram && window.Telegram.WebApp) {
+            const tg = window.Telegram.WebApp;
+            tg.ready();
+            tg.expand();
+        }
+
+        // Загрузка данных
+        async function loadData() {
+            try {
+                const response = await fetch('/api/congratulate-data');
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Обновляем общий счетчик
+                    document.getElementById('totalCongratulations').textContent = 
+                        data.total ? data.total.toLocaleString() : '0';
+                    
+                    // Обновляем рейтинг
+                    if (data.rating && data.rating.length > 0) {
+                        displayRating(data.rating);
+                    } else {
+                        showEmptyRating();
+                    }
+                } else {
+                    showError('Ошибка загрузки данных');
+                }
+            } catch (error) {
+                console.error('Ошибка загрузки данных:', error);
+                showError('Ошибка соединения');
+            }
+        }
+
+        function displayRating(rating) {
+            const ratingList = document.getElementById('ratingList');
+            
+            let html = '';
+            rating.forEach((player, index) => {
+                const position = index + 1;
+                const medal = position === 1 ? '🥇' : position === 2 ? '🥈' : position === 3 ? '🥉' : '';
+                
+                html += `
+                    <div class="rating-item">
+                        <div class="rating-position">${medal}${position}</div>
+                        <div class="rating-name">${player.userName || 'Аноним'}</div>
+                        <div class="rating-count">${player.count.toLocaleString()}</div>
+                    </div>
+                `;
+            });
+
+            ratingList.innerHTML = html;
+        }
+
+        function showEmptyRating() {
+            const ratingList = document.getElementById('ratingList');
+            ratingList.innerHTML = '<div class="loading">Рейтинг пуст</div>';
+        }
+
+        function showError(message) {
+            const ratingList = document.getElementById('ratingList');
+            ratingList.innerHTML = `<div class="loading" style="color: #e74c3c;">${message}</div>`;
+        }
+
+        function goBack() {
+            // Тактильная обратная связь
+            if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
+                Telegram.WebApp.HapticFeedback.impactOccurred('light');
+            }
+            
+            // Переход на главную страницу
+            window.location.href = '/test';
+        }
+
+        // Загружаем данные при загрузке страницы
+        document.addEventListener('DOMContentLoaded', loadData);
+    </script>
+</body>
+</html>

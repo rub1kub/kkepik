@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="HandheldFriendly" content="true">
+    <meta name="MobileOptimized" content="width">
+    <title>Крестики-нолики | KKEPIK Games</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tic-tac-toe.css') }}">
+</head>
+<body>
+    <div class="game-container">
+        <div class="header">
+            <h1 class="title">Крестики-нолики</h1>
+            <div class="score-container">
+                <div class="score-box">
+                    <div class="player-name">Крестики</div>
+                    <div class="score" id="scoreX">0</div>
+                </div>
+                <div class="score-box">
+                    <div class="player-name">Нолики</div>
+                    <div class="score" id="scoreO">0</div>
+                </div>
+            </div>
+            <div class="game-status">Ход: <span id="currentPlayer">Крестики</span></div>
+        </div>
+        <div class="game-board" id="board">
+            <div class="cell" data-index="0"></div>
+            <div class="cell" data-index="1"></div>
+            <div class="cell" data-index="2"></div>
+            <div class="cell" data-index="3"></div>
+            <div class="cell" data-index="4"></div>
+            <div class="cell" data-index="5"></div>
+            <div class="cell" data-index="6"></div>
+            <div class="cell" data-index="7"></div>
+            <div class="cell" data-index="8"></div>
+        </div>
+        <div class="game-controls">
+            <button id="resetButton">Сбросить</button>
+            <button id="newGameButton">Новая игра</button>
+        </div>
+    </div>
+    <div class="modal" id="gameModal">
+        <div class="modal-content">
+            <h2 id="modalTitle"></h2>
+            <p id="modalMessage"></p>
+            <button id="modalButton">ОК</button>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/tic-tac-toe.js') }}?v={{ STATIC_VERSION }}"></script>
+</body>
+</html> 

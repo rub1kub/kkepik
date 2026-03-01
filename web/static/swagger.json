@@ -1,0 +1,469 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "API Расписания",
+    "description": "API для работы с расписанием занятий студентов и преподавателей. Здесь вы можете получить информацию о расписании для конкретного студента, группы или преподавателя, а также скачать файлы с расписанием в формате Excel.",
+    "version": "1.0.0"
+  },
+  "host": "kkepik.ru",
+  "basePath": "/",
+  "schemes": ["https"],
+  "paths": {
+    "/api/user/{user_id}": {
+      "get": {
+        "tags": ["Расписание"],
+        "summary": "Получение информации о студенте",
+        "description": "Получение основной информации о студенте по его ID. Эта информация включает в себя группу, роль (студент/преподаватель) и другие важные данные.",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "type": "integer",
+            "description": "Уникальный идентификатор студента в системе"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Информация о студенте успешно получена",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "user_id": {
+                  "type": "integer",
+                  "description": "ID студента в системе"
+                },
+                "role": {
+                  "type": "string",
+                  "description": "Роль в системе (студент/преподаватель)"
+                },
+                "name_or_group": {
+                  "type": "string",
+                  "description": "Имя студента или название группы"
+                },
+                "is_class_teacher": {
+                  "type": "boolean",
+                  "description": "Является ли классным руководителем"
+                },
+                "class_group": {
+                  "type": "string",
+                  "description": "Классная группа, если студент является классным руководителем"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Студент с указанным ID не найден в системе"
+          },
+          "500": {
+            "description": "Произошла внутренняя ошибка сервера"
+          }
+        }
+      }
+    },
+    "/api/schedule/user/{user_id}": {
+      "post": {
+        "tags": ["Расписание"],
+        "summary": "Получение расписания студента",
+        "description": "Получение расписания занятий для конкретного студента на указанную дату. В расписании указываются все занятия, время их проведения, аудитории и преподаватели.",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "type": "integer",
+            "description": "ID студента в системе"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": ["date"],
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$",
+                  "description": "Дата, на которую нужно получить расписание. Формат: ДД.ММ.ГГГГ",
+                  "example": "22.04.2025"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Расписание успешно получено",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "group": {
+                  "type": "string",
+                  "description": "Название группы студента"
+                },
+                "teacher": {
+                  "type": "string",
+                  "description": "Имя преподавателя (если применимо)"
+                },
+                "date": {
+                  "type": "string",
+                  "description": "Дата, на которую получено расписание"
+                },
+                "schedule": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "time": {
+                        "type": "string",
+                        "description": "Время начала и окончания занятия"
+                      },
+                      "subject": {
+                        "type": "string",
+                        "description": "Название предмета"
+                      },
+                      "room": {
+                        "type": "string",
+                        "description": "Номер аудитории, где проводится занятие"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Неверный формат даты. Используйте формат ДД.ММ.ГГГГ"
+          },
+          "404": {
+            "description": "Студент не найден или расписание отсутствует"
+          },
+          "500": {
+            "description": "Произошла внутренняя ошибка сервера"
+          }
+        }
+      }
+    },
+    "/api/schedule/group": {
+      "post": {
+        "tags": ["Расписание"],
+        "summary": "Получение расписания группы",
+        "description": "Получение расписания занятий для всей группы на указанную дату. Полезно для просмотра общего расписания группы.",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": ["group"],
+              "properties": {
+                "group": {
+                  "type": "string",
+                  "description": "Название группы (например, 'ИС-21')"
+                },
+                "date": {
+                  "type": "string",
+                  "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$",
+                  "description": "Дата, на которую нужно получить расписание. Формат: ДД.ММ.ГГГГ",
+                  "example": "22.04.2025"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Расписание группы успешно получено",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "group": {
+                  "type": "string",
+                  "description": "Название группы"
+                },
+                "date": {
+                  "type": "string",
+                  "description": "Дата, на которую получено расписание"
+                },
+                "schedule": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "time": {
+                        "type": "string",
+                        "description": "Время начала и окончания занятия"
+                      },
+                      "subject": {
+                        "type": "string",
+                        "description": "Название предмета"
+                      },
+                      "room": {
+                        "type": "string",
+                        "description": "Номер аудитории, где проводится занятие"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Группа не найдена или расписание отсутствует"
+          },
+          "500": {
+            "description": "Произошла внутренняя ошибка сервера"
+          }
+        }
+      }
+    },
+    "/api/schedule/teacher": {
+      "post": {
+        "tags": ["Расписание"],
+        "summary": "Получение расписания преподавателя",
+        "description": "Получение расписания занятий для конкретного преподавателя на указанную дату. Полезно для преподавателей, чтобы видеть свои занятия.",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": ["teacher"],
+              "properties": {
+                "teacher": {
+                  "type": "string",
+                  "description": "ФИО преподавателя"
+                },
+                "date": {
+                  "type": "string",
+                  "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$",
+                  "description": "Дата, на которую нужно получить расписание. Формат: ДД.ММ.ГГГГ",
+                  "example": "22.04.2025"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Расписание преподавателя успешно получено",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "teacher": {
+                  "type": "string",
+                  "description": "ФИО преподавателя"
+                },
+                "date": {
+                  "type": "string",
+                  "description": "Дата, на которую получено расписание"
+                },
+                "schedule": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "time": {
+                        "type": "string",
+                        "description": "Время начала и окончания занятия"
+                      },
+                      "subject": {
+                        "type": "string",
+                        "description": "Название предмета"
+                      },
+                      "room": {
+                        "type": "string",
+                        "description": "Номер аудитории, где проводится занятие"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Преподаватель не найден или расписание отсутствует"
+          },
+          "500": {
+            "description": "Произошла внутренняя ошибка сервера"
+          }
+        }
+      }
+    },
+    "/api/schedule/audience": {
+      "post": {
+        "tags": ["Расписание"],
+        "summary": "Получение расписания аудитории",
+        "description": "Получение расписания занятий для конкретной аудитории на указанную дату. Полезно для проверки занятости аудитории и планирования занятий.",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": ["audience"],
+              "properties": {
+                "audience": {
+                  "type": "string",
+                  "description": "Номер аудитории (например, '42', '104', '61')"
+                },
+                "date": {
+                  "type": "string",
+                  "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$",
+                  "description": "Дата, на которую нужно получить расписание. Формат: ДД.ММ.ГГГГ",
+                  "example": "26.09.2025"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Расписание аудитории успешно получено",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "audience": {
+                  "type": "string",
+                  "description": "Номер аудитории"
+                },
+                "date": {
+                  "type": "string",
+                  "description": "Дата, на которую получено расписание"
+                },
+                "schedule": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "description": "Строка расписания в формате '▪️X пара – группа – предмет – преподаватель'"
+                  },
+                  "example": [
+                    "▪️1 пара – 65-Д9-4ССА – Основы философии – Боус О.А.",
+                    "▪️2 пара – 66-Д9-4ИНС – Основы философии – Боус О.А.",
+                    "▪️3 пара – 64-Д9-4ССА – Основы философии – Боус О.А.",
+                    "▪️4 пара – Нет"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Неверный формат даты. Используйте формат ДД.ММ.ГГГГ"
+          },
+          "404": {
+            "description": "Аудитория не найдена или расписание отсутствует"
+          },
+          "500": {
+            "description": "Произошла внутренняя ошибка сервера"
+          }
+        }
+      }
+    },
+    "/api/schedule/download/{schedule_type}/{date}": {
+      "get": {
+        "tags": ["Расписание"],
+        "summary": "Скачивание файла расписания",
+        "description": "Скачивание файла с расписанием в формате Excel. Можно получить расписание для всех групп или всех преподавателей на указанную дату.",
+        "parameters": [
+          {
+            "name": "schedule_type",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "enum": ["groups", "teachers"],
+            "description": "Тип расписания: 'groups' - для всех групп, 'teachers' - для всех преподавателей"
+          },
+          {
+            "name": "date",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$",
+            "description": "Дата, на которую нужно получить расписание. Формат: ДД.ММ.ГГГГ"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Файл Excel с расписанием успешно скачан",
+            "schema": {
+              "type": "file"
+            }
+          },
+          "400": {
+            "description": "Неверный тип расписания. Используйте 'groups' или 'teachers'"
+          },
+          "404": {
+            "description": "Файл расписания не найден"
+          },
+          "500": {
+            "description": "Произошла внутренняя ошибка сервера"
+          }
+        }
+      }
+    },
+    "/api/groups": {
+      "get": {
+        "tags": ["Расписание"],
+        "summary": "Получение списка всех групп",
+        "description": "Получение полного списка всех групп, зарегистрированных в системе. Полезно для выбора группы при поиске расписания.",
+        "responses": {
+          "200": {
+            "description": "Список групп успешно получен",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "groups": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "description": "Название группы (например, '101-Д9-1КСК')"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Список групп не найден"
+          },
+          "500": {
+            "description": "Произошла внутренняя ошибка сервера"
+          }
+        }
+      }
+    },
+    "/api/teachers": {
+      "get": {
+        "tags": ["Расписание"],
+        "summary": "Получение списка всех преподавателей",
+        "description": "Получение полного списка всех преподавателей, зарегистрированных в системе. Полезно для выбора преподавателя при поиске расписания.",
+        "responses": {
+          "200": {
+            "description": "Список преподавателей успешно получен",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "teachers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "description": "ФИО преподавателя (например, 'Андропов Д.В.')"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Список преподавателей не найден"
+          },
+          "500": {
+            "description": "Произошла внутренняя ошибка сервера"
+          }
+        }
+      }
+    }
+  }
+} 

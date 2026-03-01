@@ -1,0 +1,567 @@
+.sudoku-game-container {
+    max-width: 500px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.game-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding: 15px;
+    background: var(--tg-theme-secondary-bg-color);
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    min-height: 60px;
+}
+
+.timer {
+    font-size: 18px;
+    font-weight: bold;
+    color: var(--primary-color);
+    min-width: 80px;
+    text-align: center;
+    font-family: 'Courier New', monospace;
+}
+
+.difficulty {
+    font-size: 16px;
+    color: var(--tg-theme-hint-color);
+    min-width: 80px;
+    text-align: center;
+}
+
+.lives-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 120px;
+    justify-content: center;
+}
+
+.lives-label {
+    font-size: 14px;
+    color: var(--tg-theme-hint-color);
+    font-weight: 500;
+}
+
+.lives {
+    display: flex;
+    gap: 4px;
+}
+
+.life {
+    font-size: 18px;
+    transition: all 0.3s ease;
+}
+
+.life.lost {
+    opacity: 0.3;
+    transform: scale(0.8);
+}
+
+.life.lost::before {
+    content: '💔';
+    position: absolute;
+    animation: lifeLost 0.5s ease-out;
+}
+
+@keyframes lifeLost {
+    0% { 
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% { 
+        transform: scale(1.2);
+        opacity: 0.8;
+    }
+    100% { 
+        transform: scale(0.8);
+        opacity: 0.3;
+    }
+}
+
+.game-area {
+    background: var(--tg-theme-bg-color);
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    padding: 0;
+    margin-bottom: 20px;
+    position: relative;
+}
+
+.sudoku-board {
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    grid-template-rows: repeat(9, 1fr);
+    gap: 2px;
+    background: var(--tg-theme-secondary-bg-color);
+    padding: 10px;
+    border-radius: var(--border-radius);
+    width: 100%;
+    height: 100%;
+    aspect-ratio: 1;
+}
+
+.sudoku-cell {
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--tg-theme-bg-color);
+    border: 1px solid var(--tg-theme-hint-color);
+    font-size: 18px;
+    font-weight: bold;
+    color: var(--tg-theme-text-color);
+    cursor: pointer;
+    transition: var(--transition);
+    position: relative;
+    border-radius: 4px;
+}
+
+/* Границы для зон 3x3 */
+.sudoku-cell:nth-child(3n) {
+    border-right: 3px solid var(--tg-theme-text-color);
+}
+
+.sudoku-cell:nth-child(n+19):nth-child(-n+27),
+.sudoku-cell:nth-child(n+46):nth-child(-n+54) {
+    border-bottom: 3px solid var(--tg-theme-text-color);
+}
+
+.sudoku-cell:hover {
+    background: var(--primary-color);
+    color: white;
+    transform: scale(1.05);
+}
+
+.sudoku-cell.selected {
+    background: var(--accent-color);
+    color: white;
+    box-shadow: 0 0 10px rgba(46, 204, 113, 0.5);
+}
+
+.sudoku-cell.given {
+    background: var(--tg-theme-secondary-bg-color);
+    color: var(--tg-theme-text-color);
+    font-weight: bold;
+    cursor: default;
+}
+
+.sudoku-cell.given:hover {
+    background: var(--tg-theme-secondary-bg-color);
+    color: var(--tg-theme-text-color);
+    transform: none;
+}
+
+.sudoku-cell.error {
+    background: var(--secondary-color) !important;
+    color: white !important;
+    animation: shake 0.5s ease-in-out;
+}
+
+.sudoku-cell.correct {
+    background: var(--accent-color);
+    color: white;
+    animation: correctPulse 0.3s ease-out;
+}
+
+.sudoku-cell.just-filled {
+    animation: cellFill 0.2s ease-out;
+}
+
+.sudoku-cell.highlight {
+    background: rgba(52, 152, 219, 0.3);
+}
+
+.sudoku-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+    margin-bottom: 20px;
+}
+
+.number-btn {
+    width: 45px;
+    height: 45px;
+    border: none;
+    border-radius: var(--border-radius);
+    background: var(--primary-color);
+    color: white;
+    font-size: 18px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: var(--transition);
+    box-shadow: var(--box-shadow);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.number-btn:hover {
+    background: var(--accent-color);
+    transform: scale(1.1);
+}
+
+.number-btn:active {
+    transform: scale(0.95);
+}
+
+.action-btn {
+    padding: 12px 20px;
+    border: none;
+    border-radius: var(--border-radius);
+    background: var(--accent-color);
+    color: white;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: var(--transition);
+    box-shadow: var(--box-shadow);
+}
+
+.action-btn:hover {
+    background: var(--primary-color);
+    transform: translateY(-2px);
+}
+
+.action-btn:active {
+    transform: translateY(0);
+}
+
+.action-btn.danger {
+    background: var(--secondary-color);
+}
+
+.action-btn.danger:hover {
+    background: #c0392b;
+}
+
+.action-btn.notes-mode {
+    background: var(--accent-color);
+    color: white;
+}
+
+.cell-notes {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    right: 2px;
+    bottom: 2px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    font-size: 8px;
+    color: var(--tg-theme-hint-color);
+}
+
+.note-number {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.rating-section {
+    background: var(--tg-theme-secondary-bg-color);
+    border-radius: var(--border-radius);
+    padding: 20px;
+    margin-top: 20px;
+    box-shadow: var(--box-shadow);
+}
+
+.rating-title {
+    font-size: 18px;
+    font-weight: bold;
+    margin-bottom: 15px;
+    text-align: center;
+    color: var(--tg-theme-text-color);
+}
+
+.rating-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--tg-theme-bg-color);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+}
+
+.rating-table th,
+.rating-table td {
+    padding: 10px;
+    text-align: center;
+    border-bottom: 1px solid var(--tg-theme-hint-color);
+}
+
+.rating-table th {
+    background: var(--primary-color);
+    color: white;
+    font-weight: bold;
+}
+
+.rating-table tr:hover {
+    background: rgba(52, 152, 219, 0.1);
+}
+
+.rating-tables {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+}
+
+.rating-table-container {
+    background: var(--tg-theme-bg-color);
+    border-radius: var(--border-radius);
+    padding: 15px;
+}
+
+.rating-table-container h3 {
+    text-align: center;
+    margin-bottom: 15px;
+    color: var(--tg-theme-text-color);
+    font-size: 16px;
+}
+
+.difficulty-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    background: var(--tg-theme-bg-color);
+    border-radius: var(--border-radius);
+    padding: 30px;
+    max-width: 400px;
+    width: 90%;
+    text-align: center;
+    box-shadow: var(--box-shadow);
+}
+
+.modal-content h2 {
+    margin-bottom: 25px;
+    color: var(--tg-theme-text-color);
+    font-size: 24px;
+}
+
+.difficulty-options {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.difficulty-option {
+    background: var(--tg-theme-secondary-bg-color);
+    border: 2px solid transparent;
+    border-radius: var(--border-radius);
+    padding: 20px;
+    cursor: pointer;
+    transition: var(--transition);
+    text-align: center;
+    color: var(--tg-theme-text-color);
+}
+
+.difficulty-option:hover {
+    background: var(--tg-theme-button-color);
+    color: var(--tg-theme-button-text-color);
+    transform: scale(1.02);
+}
+
+.difficulty-option.selected {
+    background: var(--tg-theme-button-color);
+    color: var(--tg-theme-button-text-color);
+    border-color: var(--tg-theme-button-color);
+}
+
+/* Модальное окно окончания игры */
+.game-over-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.game-over-icon {
+    font-size: 48px;
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.game-over-modal h2 {
+    color: var(--tg-theme-text-color);
+    text-align: center;
+    margin-bottom: 15px;
+}
+
+.game-over-modal p {
+    color: var(--tg-theme-hint-color);
+    text-align: center;
+    margin-bottom: 25px;
+}
+
+.game-over-actions {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+}
+
+.action-btn.secondary {
+    background: var(--tg-theme-secondary-bg-color);
+    color: var(--tg-theme-text-color);
+    border: 1px solid var(--tg-theme-hint-color);
+}
+
+.difficulty-icon {
+    font-size: 32px;
+    margin-bottom: 10px;
+}
+
+.difficulty-name {
+    font-size: 18px;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.difficulty-desc {
+    font-size: 14px;
+    opacity: 0.8;
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    75% { transform: translateX(5px); }
+}
+
+@media (max-width: 600px) {
+    .sudoku-game-container {
+        padding: 10px;
+    }
+    
+    .sudoku-cell {
+        font-size: 16px;
+    }
+    
+    .number-btn {
+        width: 40px;
+        height: 40px;
+        font-size: 16px;
+    }
+    
+    .action-btn {
+        padding: 10px 16px;
+        font-size: 14px;
+    }
+    
+    .modal-content {
+        padding: 20px;
+        margin: 20px;
+    }
+    
+    .difficulty-option {
+        padding: 15px;
+    }
+    
+    .difficulty-icon {
+        font-size: 24px;
+    }
+    
+    .difficulty-name {
+        font-size: 16px;
+    }
+    
+    .difficulty-desc {
+        font-size: 12px;
+    }
+}
+
+/* Анимации для улучшения игрового опыта */
+@keyframes correctPulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); }
+}
+
+@keyframes cellFill {
+    0% { 
+        transform: scale(0.8);
+        opacity: 0.7;
+    }
+    100% { 
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+@keyframes numberAppear {
+    0% { 
+        transform: scale(0);
+        opacity: 0;
+    }
+    100% { 
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+@keyframes winCelebration {
+    0% { transform: scale(1) rotate(0deg); }
+    25% { transform: scale(1.05) rotate(1deg); }
+    50% { transform: scale(1.1) rotate(0deg); }
+    75% { transform: scale(1.05) rotate(-1deg); }
+    100% { transform: scale(1) rotate(0deg); }
+}
+
+/* Улучшенные стили для кнопок */
+.number-btn {
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.number-btn:active {
+    transform: scale(0.95);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.number-btn::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    transition: width 0.3s, height 0.3s;
+}
+
+.number-btn:active::before {
+    width: 100px;
+    height: 100px;
+}
+
+/* Анимация для заполненных ячеек */
+.sudoku-cell.filled {
+    animation: numberAppear 0.3s ease-out;
+}
+
+/* Анимация победы */
+.sudoku-board.win {
+    animation: winCelebration 0.6s ease-out;
+}

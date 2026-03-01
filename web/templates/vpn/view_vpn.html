@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>VPN | KKEPIK</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}?v={{ STATIC_VERSION }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/vpn.css') }}?v={{ STATIC_VERSION }}">
+</head>
+<body>
+    <div class="main-container">
+        <div class="content-wrapper">
+            <div class="header-block">
+                <h1 class="main-title">VPN от РУБИКА</h1>
+                <p class="subtitle">Безопасный и быстрый доступ к сети</p>
+            </div>
+
+            <div class="info-grid">
+                <div class="info-block">
+                    <div class="info-icon">🌍</div>
+                    <div class="info-content">
+                        <span class="info-label">Локация</span>
+                        <span class="info-value">Германия</span>
+                    </div>
+                </div>
+                <div class="info-block">
+                    <div class="info-icon">🚀</div>
+                    <div class="info-content">
+                        <span class="info-label">Скорость</span>
+                        <span class="info-value">80 Мбит/с</span>
+                    </div>
+                </div>
+                <div class="info-block">
+                    <div class="info-icon">🔐</div>
+                    <div class="info-content">
+                        <span class="info-label">Протокол</span>
+                        <span class="info-value">VLESS (Xray-core)</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="action-block">
+                <button class="main-button" id="getKeyBtn">
+                    <span class="button-icon">🔑</span>
+                    <span class="button-text">Получить ключ</span>
+                </button>
+            </div>
+
+            <div id="keysList" class="keys-list"></div>
+
+            <div class="instructions-block">
+                <h2 class="section-title">Как подключиться</h2>
+                <div class="steps-list">
+                    <div class="step-item">
+                        <div class="step-marker">1</div>
+                        <div class="step-content">
+                            <p class="step-text">Установите приложение для VLESS/Xray:</p>
+                            <div class="app-buttons">
+                                <a href="https://play.google.com/store/apps/details?id=com.v2ray.ang" target="_blank" class="app-button">
+                                    <span class="app-icon">🤖</span>
+                                    <span>V2RayNG (Android)</span>
+                                </a>
+                                <a href="https://apps.apple.com/app/id6449649575" target="_blank" class="app-button">
+                                    <span class="app-icon">🍎</span>
+                                    <span>V2Box (iOS)</span>
+                                </a>
+                                <a href="https://apps.apple.com/app/id6449649575" target="_blank" class="app-button">
+                                    <span class="app-icon">🖥️</span>
+                                    <span>V2Box (macOS)</span>
+                                </a>
+                                <a href="https://github.com/v2fly/v2ray-core/releases/latest" target="_blank" class="app-button">
+                                    <span class="app-icon">🐧</span>
+                                    <span>V2Ray (Linux)</span>
+                                </a>
+                                <a href="https://github.com/2dust/v2rayN/releases/latest" target="_blank" class="app-button">
+                                    <span class="app-icon">💻</span>
+                                    <span>v2rayN (Windows)</span>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="step-item">
+                        <div class="step-marker">2</div>
+                        <div class="step-content">
+                            <p class="step-text">Нажмите "Получить ключ"</p>
+                        </div>
+                    </div>
+                    <div class="step-item">
+                        <div class="step-marker">3</div>
+                        <div class="step-content">
+                            <p class="step-text">Откройте полученную ссылку в приложении или импортируйте вручную</p>
+                        </div>
+                    </div>
+                    <div class="step-item">
+                        <div class="step-marker">4</div>
+                        <div class="step-content">
+                            <p class="step-text">Нажмите "Подключиться"</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/vpn.js') }}?v={{ STATIC_VERSION }}"></script>
+</body>
+</html> 

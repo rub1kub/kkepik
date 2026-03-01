@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="HandheldFriendly" content="true">
+    <meta name="MobileOptimized" content="width">
+    <title>Змейка | KKEPIK Games</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/snake.css') }}">
+</head>
+<body>
+    <div class="game-container">
+        <div class="header">
+            <h1 class="title">Змейка</h1>
+            <div class="score">Счёт: <span id="score">0</span></div>
+        </div>
+        <div class="game-area">
+            <canvas id="gameCanvas"></canvas>
+        </div>
+        <div class="game-controls">
+            <button id="startButton">Начать игру</button>
+            <button id="pauseButton" disabled>Пауза</button>
+        </div>
+        <div class="rating-section">
+            <h2 class="rating-title">Топ игроков</h2>
+            <table class="rating-table" id="snake-rating-table">
+                <thead>
+                    <tr><th>Место</th><th>Имя</th><th>Очки</th></tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+    <div class="game-over-modal" id="gameOverModal">
+        <div class="modal-content">
+            <h2>Игра окончена</h2>
+            <p>Ваш счёт: <span id="finalScore">0</span></p>
+            <button id="playAgainButton">Играть снова</button>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/snake.js') }}?v={{ STATIC_VERSION }}"></script>
+</body>
+</html> 

@@ -1,0 +1,347 @@
+/* Основные стили */
+body {
+    font-family: 'Montserrat', sans-serif;
+    margin: 0;
+    padding: 0;
+    background: var(--tg-theme-bg-color);
+    color: var(--tg-theme-text-color);
+}
+
+.main-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 16px;
+}
+
+.content-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+/* Заголовок */
+.header-block {
+    text-align: center;
+    margin-bottom: 8px;
+}
+
+.main-title {
+    font-size: 24px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--tg-theme-text-color);
+}
+
+.subtitle {
+    font-size: 14px;
+    color: var(--tg-theme-hint-color);
+    margin: 8px 0 0;
+    font-weight: 500;
+}
+
+/* Информационные блоки */
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+}
+
+.info-block {
+    background: var(--tg-theme-secondary-bg-color);
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.info-icon {
+    font-size: 24px;
+    width: 48px;
+    height: 48px;
+    background: var(--tg-theme-bg-color);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.info-content {
+    display: flex;
+    flex-direction: column;
+}
+
+.info-label {
+    font-size: 12px;
+    color: var(--tg-theme-hint-color);
+    font-weight: 500;
+}
+
+.info-value {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--tg-theme-text-color);
+    margin-top: 4px;
+}
+
+/* Блок с кнопкой */
+.action-block {
+    width: 100%;
+    margin-bottom: 0; /* Убираем отступ снизу */
+}
+
+/* Кнопка получения ключа */
+.main-button {
+    width: 100%;
+    background: var(--tg-theme-button-color);
+    color: var(--tg-theme-button-text-color);
+    border: none;
+    border-radius: 12px;
+    padding: 16px;
+    font-size: 16px;
+    font-weight: 600;
+    font-family: 'Montserrat', sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.main-button:active {
+    transform: scale(0.98);
+}
+
+/* Список ключей */
+.keys-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.key-item {
+    background: var(--tg-theme-secondary-bg-color);
+    border-radius: 12px;
+    padding: 16px;
+}
+
+.key-block {
+    background: var(--tg-theme-secondary-bg-color);
+    border-radius: 12px;
+    padding: 16px;
+}
+
+.key-display {
+    position: relative;
+    width: 100%;
+}
+
+.key-text {
+    font-family: 'Montserrat', monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    word-break: break-all;
+    margin: 0;
+    padding-right: 40px;
+    color: var(--tg-theme-text-color);
+}
+
+.copy-button {
+    position: absolute;
+    right: 0;
+    top: 0;
+    background: var(--tg-theme-button-color);
+    color: var(--tg-theme-button-text-color);
+    border: none;
+    border-radius: 8px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.copy-button:active {
+    transform: scale(0.95);
+}
+
+.button-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    position: absolute;
+    right: 0;
+    top: 0;
+}
+
+.delete-button {
+    background: var(--tg-theme-destructive-text-color);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.2s;
+    margin-top: 36px;
+}
+
+.delete-button:active {
+    transform: scale(0.95);
+}
+
+.delete-button .button-icon {
+    font-size: 14px;
+}
+
+/* Инструкции */
+.instructions-block {
+    background: var(--tg-theme-secondary-bg-color);
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 0;
+}
+
+.section-title {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 20px;
+    color: var(--tg-theme-text-color);
+}
+
+.steps-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.step-item {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+}
+
+.step-marker {
+    width: 32px;
+    height: 32px;
+    background: var(--tg-theme-button-color);
+    color: var(--tg-theme-button-text-color);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.step-content {
+    flex-grow: 1;
+    min-width: 0; /* Предотвращает выход за пределы */
+}
+
+.step-text {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--tg-theme-text-color);
+}
+
+/* Кнопки приложений */
+.app-buttons {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    margin-top: 8px;
+    width: 100%;
+    overflow-x: auto;
+    padding-bottom: 4px; /* Для скролл-бара */
+    -webkit-overflow-scrolling: touch;
+}
+
+.app-button {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--tg-theme-secondary-bg-color);
+    color: var(--tg-theme-text-color);
+    text-decoration: none;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    transition: opacity 0.2s;
+    border: 1px solid var(--tg-theme-hint-color);
+    opacity: 0.9;
+    white-space: nowrap;
+    flex: 0 0 auto;
+}
+
+.app-button:active {
+    opacity: 0.7;
+}
+
+.app-icon {
+    font-size: 13px;
+}
+
+/* Скрываем скролл-бар для красоты */
+.app-buttons::-webkit-scrollbar {
+    display: none;
+}
+.app-buttons {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+
+/* Уведомления */
+.notification {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--tg-theme-button-color);
+    color: var(--tg-theme-button-text-color);
+    padding: 12px 24px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 500;
+    font-family: 'Montserrat', sans-serif;
+    animation: slideUp 0.3s ease-out;
+    z-index: 1000;
+}
+
+.error-message {
+    background: rgba(255, 59, 48, 0.1);
+    color: #ff3b30;
+    padding: 12px;
+    border-radius: 8px;
+    margin: 12px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-family: 'Montserrat', sans-serif;
+}
+
+@keyframes slideUp {
+    from {
+        transform: translate(-50%, 100%);
+        opacity: 0;
+    }
+    to {
+        transform: translate(-50%, 0);
+        opacity: 1;
+    }
+}
+
+/* Адаптивность */
+@media (max-width: 480px) {
+    .info-grid {
+        grid-template-columns: 1fr;
+    }
+} 

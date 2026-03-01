@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="HandheldFriendly" content="true">
+    <meta name="MobileOptimized" content="width">
+    <title>Аэрохокей | KKEPIK Games</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bounce-ball.css') }}">
+</head>
+<body>
+    <div class="game-container">
+        <div class="header">
+            <h1 class="title">Аэрохокей</h1>
+            <div class="score-container">
+                <div class="player player1">
+                    <div class="player-name">Игрок 1</div>
+                    <div class="player-score" id="player1-score">0</div>
+                </div>
+                <div class="player player2">
+                    <div class="player-name">Игрок 2</div>
+                    <div class="player-score" id="player2-score">0</div>
+                </div>
+            </div>
+        </div>
+        <div class="game-area">
+            <canvas id="gameCanvas"></canvas>
+        </div>
+        <div class="controls">
+            <button id="startButton">Начать игру</button>
+            <button id="resetButton">Сбросить</button>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/bounce-ball.js') }}?v={{ STATIC_VERSION }}"></script>
+</body>
+</html> 

@@ -1,0 +1,32 @@
+.schedule-divider {
+    grid-column: 1 / -1;
+    margin: 16px 0;
+    position: relative;
+    text-align: center;
+}
+
+.schedule-divider::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--tg-theme-hint-color);
+    opacity: 0.3;
+}
+
+.divider-text {
+    display: inline-block;
+    padding: 0 16px;
+    background: var(--tg-theme-bg-color);
+    color: var(--tg-theme-hint-color);
+    font-size: 14px;
+    position: relative;
+    z-index: 1;
+}
+
+.schedule-row.combined {
+    opacity: 0.8;
+    background: var(--tg-theme-secondary-bg-color);
+} 

@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="HandheldFriendly" content="true">
+    <meta name="MobileOptimized" content="width">
+    <title>KKEPIK</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v={{ STATIC_VERSION }}">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <script src="{{ url_for('static', filename='js/swipe_detector.js') }}?v={{ STATIC_VERSION }}"></script>
+    <style>
+        #loader {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: var(--tg-theme-bg-color);
+            opacity: 0.85;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+        }
+        
+        #loader.fade-out {
+            opacity: 0;
+            transform: scale(1.1);
+            pointer-events: none;
+        }
+        
+        .loader-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            animation: fadeInDown 0.5s ease-out;
+        }
+        
+        .loader-image {
+            max-width: 100px;
+            max-height: 100px;
+            margin-bottom: 20px;
+            animation: pulse 1.5s infinite ease-in-out;
+        }
+        
+        .loader-text {
+            font-size: 18px;
+            font-weight: 500;
+            color: var(--tg-theme-text-color);
+            margin-top: 10px;
+        }
+        
+        @keyframes pulse {
+            0% {
+                transform: scale(0.95);
+                opacity: 0.7;
+            }
+            50% {
+                transform: scale(1.05);
+                opacity: 1;
+            }
+            100% {
+                transform: scale(0.95);
+                opacity: 0.7;
+            }
+        }
+        .beta-label {
+            position: absolute;
+            top: 10px;
+            right: 12px;
+            background: #ff5722;
+            color: #fff;
+            padding: 2px 10px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: bold;
+            z-index: 2;
+            letter-spacing: 1px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+        }
+        .game-card { position: relative; }
+        
+    </style>
+</head>
+<body>
+    <div id="loader">
+        <div class="loader-content">
+            <img src="{{ url_for('static', filename='loader.gif') }}" alt="Загрузка..." class="loader-image">
+            <div class="loader-text">Загрузка...</div>
+        </div>
+    </div>
+    <div id="auth-error" style="display:none;color:red;text-align:center;margin-top:30px;font-size:18px;">Ошибка авторизации через Telegram. Попробуйте открыть приложение заново.</div>
+    <div class="menu-container" id="main-content" style="display:none;">
+        <!-- Выбор группы/ФИО -->
+        <div id="groupSelectorContainer" class="group-selector-container">
+            <span id="currentGroupName" class="group-selector-current"></span>
+            <span id="groupSelectorArrow" class="group-selector-arrow">&#8250;</span>
+        </div>
+        <div id="groupSelectorDropdown" class="group-selector-dropdown"></div>
+        <div id="progressBox">
+            <div id="progress_bar">
+                <div id="progress_line"></div>
+                <div id="timeBox">
+                    <div class="text" id="timerPassed">--:--</div>
+                    <div class="text" id="timerLeft">до пары</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="pairs_block">
+            <div class="schedule-container" style="display:none;">
+                <div class="schedule-column" style="display:none;">
+                    <div class="schedule-title"></div>
+                    <div class="wrap list" id="bell_list">
+                        <div class="row-container"></div>
+                    </div>
+                </div>
+                <div class="schedule-column" style="display:none;">
+                    <div class="schedule-title"></div>
+                    <div class="wrap list" id="saturday_bell_list">
+                        <div class="row-container"></div>
+                    </div>
+                </div>
+            </div>
+            <script>document.addEventListener('DOMContentLoaded',function(){var scheduleContainer=document.querySelector('.schedule-container');if(scheduleContainer)scheduleContainer.style.display='';var saturdayCol=document.querySelector('.schedule-column:last-child');if(saturdayCol)saturdayCol.style.display='none';var weekdayCol=document.querySelector('.schedule-column:first-child');if(weekdayCol){weekdayCol.style.display='';weekdayCol.style.flex='1';}});</script>
+        </div>
+        
+        <!-- Контейнер для реакций и кнопки скачать -->
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+            <div id="downloadScheduleBtn" class="download-btn">Скачать</div>
+            <div id="schedule-reactions"></div>
+        </div>
+        
+        <hr class="section-divider">
+        <div class="games-grid">
+            <a href="{{ url_for('schedule_search') }}?tgWebAppData={{ '{{' }} tgWebAppData {{ '}}' }}" class="game-card schedule-card">
+                <div class="game-icon">📅</div>
+                <div class="game-title">Поиск расписания</div>
+                <div class="game-description">Поиск расписания по группе или преподавателю</div>
+            </a>
+            <a href="{{ url_for('attendance_list') }}?tgWebAppData={{ '{{' }} tgWebAppData {{ '}}' }}" class="game-card attendance-card">
+                <div class="game-icon">📝</div>
+                <div class="game-title">Контроль посещаемости</div>
+                <div class="game-description">Ведите учёт посещаемости группы</div>
+            </a>
+            
+            <div class="games-container">
+                <a href="{{ url_for('sudoku') }}?tgWebAppData={{ '{{' }} tgWebAppData {{ '}}' }}" class="game-card">
+                    <div class="game-icon">🧩</div>
+                    <div class="game-title">Судоку</div>
+                    <div class="game-description">Логическая головоломка с числами</div>
+                    <div class="beta-label">BETA</div>
+                </a>
+                <a href="{{ url_for('game_page', game_name='2048') }}" class="game-card">
+                    <div class="game-icon">🎯</div>
+                    <div class="game-title">2048</div>
+                    <div class="game-description">Увлекательная головоломка с числами</div>
+                </a>
+                <a href="{{ url_for('game_page', game_name='snake') }}" class="game-card">
+                    <div class="game-icon">🐍</div>
+                    <div class="game-title">Змейка</div>
+                    <div class="game-description">Классическая игра на выживание</div>
+                </a>
+                <a href="{{ url_for('game_page', game_name='checkers') }}" class="game-card">
+                    <div class="game-icon">&#x265F;</div>
+                    <div class="game-title">Шашки</div>
+                    <div class="game-description">Классическая игра для двоих</div>
+                </a>
+                <a href="{{ url_for('battleship') }}?tgWebAppData={{ '{{' }} tgWebAppData {{ '}}' }}" class="game-card">
+                    <div class="game-icon">🚢</div>
+                    <div class="game-title">Морской бой</div>
+                    <div class="game-description">Классическая игра для двоих</div>
+                </a>
+                <a href="{{ url_for('game_page', game_name='tic-tac-toe') }}" class="game-card">
+                    <div class="game-icon">❌</div>
+                    <div class="game-title">Крестики-нолики</div>
+                    <div class="game-description">Классическая игра для двоих</div>
+                </a>
+                <a href="{{ url_for('game_page', game_name='bounce-ball') }}" class="game-card">
+                    <div class="game-icon">🏒</div>
+                    <div class="game-title">Аэрохокей</div>
+                    <div class="game-description">Захватывающая игра для двоих</div>
+                </a>
+                <div class="game-card" id="reviewCard" style="cursor: pointer;">
+                    <div class="game-icon">⭐️</div>
+                    <div class="game-title">Предложить идею</div>
+                    <div class="game-description">Поделитесь своим мнением и помогите нам стать лучше!</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно для отзыва (перенесено вниз, вне menu-container) -->
+    <div class="modal" id="reviewModal">
+        <div class="modal-content">
+            <span class="close" id="closeReviewModal">&times;</span>
+            <h2>Предложить идею</h2>
+            <div class="review-mark-group">
+                <label>Ваша оценка:</label>
+                <div class="review-marks" id="reviewMarks">
+                    <!-- Кнопки оценок 1-10 -->
+                    {% for i in range(1, 11) %}
+                    <button type="button" class="mark-btn" data-mark="{{ i }}">{{ i }}</button>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="review-text-group">
+                <label for="reviewText">Ваш отзыв:</label>
+                <textarea id="reviewText" maxlength="500" placeholder="Напишите, что можно добавить или что можно изменить..." required></textarea>
+            </div>
+            <button class="review-send-btn" id="sendReviewBtn">Отправить</button>
+            <div class="review-status" id="reviewStatus"></div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/schedule.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script src="{{ url_for('static', filename='js/image_cards.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script src="{{ url_for('static', filename='js/schedule_reactions.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script src="{{ url_for('static', filename='js/group_selector.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script>
+        // Скрываем лоадер после полной загрузки страницы
+        window.addEventListener('load', function() {
+            setTimeout(function() {
+                const loader = document.getElementById('loader');
+                loader.classList.add('fade-out');
+                setTimeout(function() {
+                    loader.style.display = 'none';
+                }, 750);
+            }, 750); // Небольшая задержка для плавности
+        });
+
+        // Обработчик для плашки поздравлятора
+        document.addEventListener('DOMContentLoaded', function() {
+            const congratulatorCTA = document.getElementById('congratulatorCTA');
+            if (congratulatorCTA) {
+                congratulatorCTA.addEventListener('click', function(e) {
+                    // Добавляем тактильную обратную связь если доступно
+                    if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
+                        Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                    }
+                });
+            }
+        });
+
+    </script>
+</body>
+</html>

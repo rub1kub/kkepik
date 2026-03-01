@@ -1,0 +1,44 @@
+# ─── Telegram-бот ───────────────────────────────────────────────
+aiogram==3.19.0
+aiofiles==24.1.0
+aiohappyeyeballs==2.6.1
+aiohttp==3.11.16
+aiosignal==1.3.2
+magic-filter==1.0.12
+
+# ─── FastAPI + сервер ────────────────────────────────────────────
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+pydantic==2.10.6
+pydantic_core==2.27.2
+annotated-types==0.7.0
+starlette>=0.41.0
+
+# ─── Данные / Excel / PDF ────────────────────────────────────────
+pandas==2.2.3
+numpy==2.2.4
+openpyxl==3.1.5
+et_xmlfile==2.0.0
+pdfplumber>=0.11.0
+Pillow>=10.0.0
+
+# ─── MAX messenger ─────────────────────────────────────────────
+pyromax
+qrcode
+
+# ─── Конфигурация ────────────────────────────────────────────────
+python-dotenv>=1.0.0
+
+# ─── Утилиты ─────────────────────────────────────────────────────
+attrs==25.3.0
+certifi==2025.1.31
+frozenlist==1.5.0
+idna==3.10
+multidict==6.3.1
+propcache==0.3.1
+python-dateutil==2.9.0.post0
+pytz==2025.2
+six==1.17.0
+typing_extensions==4.13.0
+tzdata==2025.2
+yarl==1.18.3

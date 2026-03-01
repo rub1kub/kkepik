@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Управление кликером - Админ-панель</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+        .back-btn, .logout-btn {
+            background: #6c757d;
+            color: white;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            margin-left: 10px;
+        }
+        .back-btn:hover {
+            background: #5a6268;
+        }
+        .logout-btn {
+            background: #dc3545;
+        }
+        .logout-btn:hover {
+            background: #c82333;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        .stat-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .stat-card h3 {
+            margin-top: 0;
+            color: #333;
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+        .stat-card p {
+            margin: 0;
+            color: #666;
+            font-size: 0.9rem;
+        }
+        .users-table {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .users-table h2 {
+            margin: 0;
+            padding: 1.5rem;
+            background: #007bff;
+            color: white;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+        tr:hover {
+            background: #f8f9fa;
+        }
+        .energy-bar {
+            display: inline-block;
+            width: 60px;
+            height: 10px;
+            background: #e9ecef;
+            border-radius: 5px;
+            overflow: hidden;
+            vertical-align: middle;
+        }
+        .energy-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #d4af37 0%, #e6cc96 100%);
+            transition: width 0.3s ease;
+        }
+        .upgrade-badge {
+            background: #28a745;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.75rem;
+            margin: 0 2px;
+        }
+        .controls-section {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
+        }
+        .controls-section h2 {
+            margin-top: 0;
+            color: #333;
+        }
+        .control-group {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        .control-input {
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            flex: 1;
+        }
+        .control-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .control-btn:hover {
+            background: #0056b3;
+        }
+        .danger-btn {
+            background: #dc3545;
+        }
+        .danger-btn:hover {
+            background: #c82333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Управление кликером</h1>
+            <div>
+                <a href="{{ url_for('admin_dashboard') }}" class="back-btn">← Назад</a>
+                <a href="{{ url_for('admin_logout') }}" class="logout-btn">Выйти</a>
+            </div>
+        </div>
+
+        <!-- Статистика -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>{{ stats.total_congratulations }}</h3>
+                <p>Всего поздравлений</p>
+            </div>
+            <div class="stat-card">
+                <h3>{{ stats.unique_users }}</h3>
+                <p>Уникальных игроков</p>
+            </div>
+            <div class="stat-card">
+                <h3>{{ stats.users_with_energy }}</h3>
+                <p>Пользователей с энергией</p>
+            </div>
+            <div class="stat-card">
+                <h3>{{ stats.total_spent }}</h3>
+                <p>Потрачено поздравлений</p>
+            </div>
+        </div>
+
+        <!-- Управление системой -->
+        <div class="controls-section">
+            <h2>Управление системой</h2>
+            
+            <div class="control-group">
+                <label>Базовая энергия:</label>
+                <input type="number" class="control-input" id="baseEnergy" value="100" placeholder="100">
+                <button class="control-btn" onclick="updateSystemSettings('base_energy', 'baseEnergy')">Обновить</button>
+            </div>
+            
+            <div class="control-group">
+                <label>Время восстановления (мс):</label>
+                <input type="number" class="control-input" id="regenInterval" value="20000" placeholder="20000">
+                <button class="control-btn" onclick="updateSystemSettings('regen_interval', 'regenInterval')">Обновить</button>
+            </div>
+            
+            <div class="control-group">
+                <label>Скорость восстановления:</label>
+                <input type="number" class="control-input" id="regenRate" value="1" placeholder="1">
+                <button class="control-btn" onclick="updateSystemSettings('regen_rate', 'regenRate')">Обновить</button>
+            </div>
+
+            <div class="control-group">
+                <label>Пользователь ID:</label>
+                <input type="text" class="control-input" id="userId" placeholder="1084693264">
+                <input type="number" class="control-input" id="energyAmount" placeholder="Энергия">
+                <button class="control-btn" onclick="setUserEnergy()">Установить энергию</button>
+            </div>
+
+            <div class="control-group">
+                <label>Бонус пользователю:</label>
+                <input type="text" class="control-input" id="bonusUserId" placeholder="ID пользователя">
+                <input type="number" class="control-input" id="bonusAmount" placeholder="Количество">
+                <button class="control-btn" onclick="addCongratulations()">Добавить поздравления</button>
+            </div>
+
+            <div class="control-group">
+                <button class="control-btn danger-btn" onclick="resetAllEnergy()">Сбросить всю энергию</button>
+                <button class="control-btn danger-btn" onclick="clearUpgrades()">Очистить апгрейды</button>
+                <button class="control-btn danger-btn" onclick="fullWipeData()" style="background: #8b0000;">ПОЛНЫЙ ВАЙП</button>
+            </div>
+        </div>
+
+        <!-- Топ пользователей -->
+        <div class="users-table">
+            <h2>Топ игроков</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Место</th>
+                        <th>Пользователь</th>
+                        <th>Поздравления</th>
+                        <th>Энергия</th>
+                        <th>Апгрейды</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in stats.top_users %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td>
+                            <strong>{{ user.user_name }}</strong><br>
+                            <small>ID: {{ user.user_id }}</small>
+                        </td>
+                        <td>{{ user.congratulations_count }}</td>
+                        <td>
+                            {% if user.energy_current is not none %}
+                                {{ user.energy_current }}/{{ user.energy_max }}
+                                <div class="energy-bar">
+                                    <div class="energy-fill" style="width: {{ (user.energy_current / user.energy_max * 100) if user.energy_max > 0 else 0 }}%"></div>
+                                </div>
+                            {% else %}
+                                <em>Нет данных</em>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if user.capacity_level > 0 %}
+                                <span class="upgrade-badge">Cap: {{ user.capacity_level }}</span>
+                            {% endif %}
+                            {% if user.speed_level > 0 %}
+                                <span class="upgrade-badge">Speed: {{ user.speed_level }}</span>
+                            {% endif %}
+                            {% if user.capacity_level == 0 and user.speed_level == 0 %}
+                                <em>Нет</em>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        function showMessage(message, isError = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                padding: 15px;
+                border-radius: 4px;
+                color: white;
+                font-weight: bold;
+                z-index: 10000;
+                max-width: 300px;
+                background: ${isError ? '#dc3545' : '#28a745'};
+            `;
+            messageDiv.textContent = message;
+            document.body.appendChild(messageDiv);
+            
+            setTimeout(() => {
+                messageDiv.remove();
+            }, 5000);
+        }
+
+        async function updateSystemSettings(settingType, inputId) {
+            const value = document.getElementById(inputId).value;
+            
+            if (!value) {
+                showMessage('Введите значение', true);
+                return;
+            }
+            
+            try {
+                const response = await fetch('/admin/clicker/update-settings', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        type: settingType,
+                        value: parseInt(value)
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage(result.message);
+                } else {
+                    showMessage(result.message, true);
+                }
+            } catch (error) {
+                showMessage('Ошибка соединения', true);
+            }
+        }
+
+        async function setUserEnergy() {
+            const userId = document.getElementById('userId').value;
+            const energyAmount = document.getElementById('energyAmount').value;
+            
+            if (!userId || !energyAmount) {
+                showMessage('Заполните все поля', true);
+                return;
+            }
+            
+            try {
+                const response = await fetch('/admin/clicker/set-user-energy', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        user_id: userId,
+                        energy_amount: parseInt(energyAmount)
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage(result.message);
+                    // Очищаем поля
+                    document.getElementById('userId').value = '';
+                    document.getElementById('energyAmount').value = '';
+                    // Обновляем страницу через 2 секунды
+                    setTimeout(() => location.reload(), 2000);
+                } else {
+                    showMessage(result.message, true);
+                }
+            } catch (error) {
+                showMessage('Ошибка соединения', true);
+            }
+        }
+
+        async function resetAllEnergy() {
+            if (!confirm('Вы уверены что хотите восстановить всю энергию до максимума? Это действие повлияет на всех игроков!')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/admin/clicker/reset-all-energy', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage(result.message);
+                    setTimeout(() => location.reload(), 2000);
+                } else {
+                    showMessage(result.message, true);
+                }
+            } catch (error) {
+                showMessage('Ошибка соединения', true);
+            }
+        }
+
+        async function clearUpgrades() {
+            if (!confirm('Вы уверены что хотите очистить все апгрейды и траты? Это действие НЕОБРАТИМО и повлияет на всех игроков!')) {
+                return;
+            }
+            
+            if (!confirm('ЭТО СЕРЬЕЗНО! Все апгрейды, потраченные поздравления и энергия будут сброшены. Продолжить?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/admin/clicker/clear-upgrades', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage(result.message);
+                    setTimeout(() => location.reload(), 3000);
+                } else {
+                    showMessage(result.message, true);
+                }
+            } catch (error) {
+                showMessage('Ошибка соединения', true);
+            }
+        }
+
+        async function addCongratulations() {
+            const userId = document.getElementById('bonusUserId').value;
+            const amount = document.getElementById('bonusAmount').value;
+            
+            if (!userId || !amount) {
+                showMessage('Заполните все поля', true);
+                return;
+            }
+            
+            if (!confirm(`Добавить ${amount} поздравлений пользователю ${userId}?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/admin/clicker/add-congratulations', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        user_id: userId,
+                        amount: parseInt(amount)
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage(result.message);
+                    // Очищаем поля
+                    document.getElementById('bonusUserId').value = '';
+                    document.getElementById('bonusAmount').value = '';
+                    // Обновляем страницу через 2 секунды
+                    setTimeout(() => location.reload(), 2000);
+                } else {
+                    showMessage(result.message, true);
+                }
+            } catch (error) {
+                showMessage('Ошибка соединения', true);
+            }
+        }
+
+        async function fullWipeData() {
+            if (!confirm('⚠️ ВНИМАНИЕ! ⚠️\n\nПОЛНЫЙ ВАЙП ДАННЫХ удалит ВСЕ:\n• Все поздравления всех пользователей\n• Всю энергию и настройки энергии\n• Все апгрейды и траты\n• Всю статистику игры\n\nЭТО ДЕЙСТВИЕ НЕОБРАТИМО!\n\nВы АБСОЛЮТНО уверены?')) {
+                return;
+            }
+            
+            const confirmText = prompt('Для подтверждения введите "ПОЛНЫЙ ВАЙП" (без кавычек):');
+            if (confirmText !== 'ПОЛНЫЙ ВАЙП') {
+                showMessage('Отменено - неверный текст подтверждения', true);
+                return;
+            }
+            
+            if (!confirm('ПОСЛЕДНЕЕ ПРЕДУПРЕЖДЕНИЕ!\n\nВы собираетесь удалить ВСЕ данные кликера!\nВсе игроки потеряют свой прогресс!\n\nПродолжить?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/admin/clicker/full-wipe', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage(result.message);
+                    setTimeout(() => location.reload(), 3000);
+                } else {
+                    showMessage(result.message, true);
+                }
+            } catch (error) {
+                showMessage('Ошибка соединения', true);
+            }
+        }
+    </script>
+</body>
+</html>

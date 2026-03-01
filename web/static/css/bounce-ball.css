@@ -1,0 +1,254 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap');
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Montserrat', sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    touch-action: manipulation;
+}
+
+body {
+    background: var(--tg-theme-bg-color);
+    color: var(--tg-theme-text-color);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+}
+
+.back-button {
+    position: absolute;
+    left: 16px;
+    top: 16px;
+    font-size: 24px;
+    color: var(--tg-theme-text-color);
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.game-container {
+    width: 100%;
+    max-width: 600px;
+    margin: 0 auto;
+    background: var(--tg-theme-secondary-bg-color);
+    border-radius: 24px;
+    padding: 20px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    animation: fadeIn 0.3s ease-out;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 16px;
+}
+
+.title {
+    font-size: 24px;
+    font-weight: bold;
+    color: var(--tg-theme-text-color);
+    margin-bottom: 12px;
+}
+
+.score-container {
+    display: flex;
+    justify-content: center;
+    gap: 32px;
+    margin-bottom: 12px;
+}
+
+.player {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: var(--tg-theme-bg-color);
+    padding: 8px 16px;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.player-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--tg-theme-hint-color);
+    margin-bottom: 4px;
+}
+
+.player-score {
+    font-size: 32px;
+    font-weight: bold;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.player1 .player-score {
+    color: #3498db;
+}
+
+.player2 .player-score {
+    color: #e74c3c;
+}
+
+.game-area {
+    flex: 1;
+    background: var(--tg-theme-bg-color);
+    border-radius: 16px;
+    margin-bottom: 16px;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+    position: relative;
+    overflow: hidden;
+}
+
+#gameCanvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.controls {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+}
+
+.controls button {
+    flex: 1;
+    background: var(--tg-theme-button-color);
+    color: var(--tg-theme-button-text-color);
+    border: none;
+    padding: 12px 24px;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    -webkit-tap-highlight-color: transparent;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.controls button:active {
+    transform: scale(0.95);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+.controls button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    background: var(--tg-theme-bg-color);
+    padding: 20px;
+    border-radius: 12px;
+    text-align: center;
+    max-width: 90%;
+    width: 300px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.modal h2 {
+    margin-bottom: 16px;
+    color: var(--tg-theme-text-color);
+    font-size: 20px;
+}
+
+.final-scores {
+    display: flex;
+    justify-content: space-around;
+    margin: 20px 0;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (max-width: 480px) {
+    .game-container {
+        padding: 16px;
+        border-radius: 20px;
+    }
+
+    .title {
+        font-size: 20px;
+    }
+
+    .score-container {
+        gap: 24px;
+    }
+
+    .player {
+        padding: 6px 12px;
+    }
+
+    .player-name {
+        font-size: 12px;
+    }
+
+    .player-score {
+        font-size: 28px;
+    }
+
+    .controls button {
+        padding: 10px 20px;
+        font-size: 14px;
+    }
+}
+
+@media (max-width: 360px) {
+    .game-container {
+        padding: 12px;
+        border-radius: 16px;
+    }
+
+    .title {
+        font-size: 18px;
+    }
+
+    .score-container {
+        gap: 16px;
+    }
+
+    .player {
+        padding: 4px 8px;
+    }
+
+    .player-name {
+        font-size: 11px;
+    }
+
+    .player-score {
+        font-size: 24px;
+    }
+
+    .controls button {
+        padding: 8px 16px;
+        font-size: 13px;
+    }
+} 

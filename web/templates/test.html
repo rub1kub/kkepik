@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="HandheldFriendly" content="true">
+    <meta name="MobileOptimized" content="width">
+    <title>KKEPIK Игры (ТЕСТОВАЯ ВЕРСИЯ)</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/testmain.css') }}">
+    <style>
+        body::before {
+            content: "ТЕСТОВАЯ ВЕРСИЯ";
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background-color: #ff5722;
+            color: white;
+            text-align: center;
+            padding: 5px;
+            font-weight: bold;
+            z-index: 9999;
+        }
+        #loader {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: var(--tg-theme-bg-color);
+            opacity: 0.85;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+        }
+        #loader.fade-out {
+            opacity: 0;
+            transform: scale(1.1);
+            pointer-events: none;
+        }
+        .loader-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            animation: fadeInDown 0.5s ease-out;
+        }
+        .loader-image {
+            max-width: 100px;
+            max-height: 100px;
+            margin-bottom: 20px;
+            animation: pulse 1.5s infinite ease-in-out;
+        }
+        .loader-text {
+            font-size: 18px;
+            font-weight: 500;
+            color: var(--tg-theme-text-color);
+            margin-top: 10px;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.95); opacity: 0.7; }
+            50% { transform: scale(1.05); opacity: 1; }
+            100% { transform: scale(0.95); opacity: 0.7; }
+        }
+        /* CTA в стиле игры */
+        .mini-cta {
+            display: flex;
+            width: 100%;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 10px;
+            padding: 12px 16px;
+            margin: 8px 0 12px;
+            background: var(--tg-theme-secondary-bg-color);
+            color: var(--tg-theme-text-color);
+            border-radius: 22px;
+            border: none;
+            text-decoration: none;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            touch-action: manipulation;
+            cursor: pointer;
+            box-shadow: 0 6px 32px 0 rgba(0,0,0,0.16), 0 1.5px 4px rgba(0,0,0,0.08);
+        }
+        .mini-cta:active { transform: scale(0.95); }
+        .mini-cta .coin-dot {
+            width: 22px;
+            height: 22px;
+            background: url('/static/img/coin.png') center center / contain no-repeat transparent;
+            filter: drop-shadow(0 1px 3px rgba(0,0,0,0.2));
+            flex-shrink: 0;
+        }
+        .mini-cta .mini-cta-title {
+            font-weight: 700;
+            font-size: 16px;
+            letter-spacing: 0.01em;
+            color: var(--tg-theme-text-color);
+        }
+        .mini-cta .mini-cta-badge {
+            margin-left: 2px;
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--tg-theme-hint-color);
+            background: var(--tg-theme-bg-color);
+            padding: 2px 6px;
+            border-radius: 10px;
+            border: 1px solid var(--tg-theme-secondary-bg-color);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+        .mini-cta .mini-cta-spacer { flex: 1; }
+        .mini-cta .mini-cta-arrow {
+            font-size: 20px;
+            line-height: 1;
+            color: var(--tg-theme-hint-color);
+            transform: translateY(1px);
+        }
+    </style>
+</head>
+<body>
+    <div id="loader">
+        <div class="loader-content">
+            <img src="{{ url_for('static', filename='loader.gif') }}" alt="Загрузка..." class="loader-image">
+            <div class="loader-text">Загрузка...</div>
+        </div>
+    </div>
+    <div id="auth-error" style="display:none;color:red;text-align:center;margin-top:30px;font-size:18px;">Ошибка авторизации через Telegram. Попробуйте открыть приложение заново.</div>
+    <div class="menu-container" id="main-content" style="display:none;">
+        <!-- CTA Поздравлятор в стиле index -->
+        <a href="{{ url_for('congratulate_game') }}?tgWebAppData={{ '{{' }} tgWebAppData {{ '}}' }}" class="mini-cta" id="congratulatorCTA">
+            <div class="coin-dot"></div>
+            <div class="mini-cta-title">Поздравлятор</div>
+            <span class="mini-cta-badge">Сезон 1</span>
+            <div class="mini-cta-spacer"></div>
+            <div class="mini-cta-arrow">›</div>
+        </a>
+        
+        <!-- CTA Страница ивента -->
+        <a href="/congratulate" class="mini-cta" id="eventPageCTA" style="background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%); border: 1px solid rgba(255, 215, 0, 0.3);">
+            <div class="coin-dot" style="background: linear-gradient(45deg, #FFD700, #FFA500); border-radius: 50%;"></div>
+            <div class="mini-cta-title" style="color: #FFD700;">Ивент - В С Е</div>
+            <span class="mini-cta-badge" style="background: rgba(255, 215, 0, 0.2); color: #FFD700; border-color: rgba(255, 215, 0, 0.4);">ТЕСТ</span>
+            <div class="mini-cta-spacer"></div>
+            <div class="mini-cta-arrow" style="color: #FFD700;">›</div>
+        </a>
+        
+        <!-- CTA Страница окончания ивента -->
+        <a href="/event-end" class="mini-cta" id="eventEndCTA" style="background: linear-gradient(135deg, #1a2d1a 0%, #2d4d2d 100%); border: 1px solid rgba(100, 255, 100, 0.3);">
+            <div class="coin-dot" style="background: linear-gradient(45deg, #6BFF6B, #8EFF8E); border-radius: 50%;"></div>
+            <div class="mini-cta-title" style="color: #6BFF6B;">Окончание ивента</div>
+            <span class="mini-cta-badge" style="background: rgba(100, 255, 100, 0.2); color: #6BFF6B; border-color: rgba(100, 255, 100, 0.4);">END</span>
+            <div class="mini-cta-spacer"></div>
+            <div class="mini-cta-arrow" style="color: #6BFF6B;">›</div>
+        </a>
+        
+        <!-- Выбор группы/ФИО -->
+        <div id="groupSelectorContainer" class="group-selector-container">
+            <span id="currentGroupName" class="group-selector-current"></span>
+            <span id="groupSelectorArrow" class="group-selector-arrow">></span>
+        </div>
+        <div id="groupSelectorDropdown" class="group-selector-dropdown"></div>
+        <div id="progressBox">
+            <div id="progress_bar">
+                <div id="progress_line"></div>
+                <div id="timeBox">
+                    <div class="text" id="timerPassed">--:--</div>
+                    <div class="text" id="timerLeft">до пары</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="pairs_block">
+            <div class="schedule-container">
+                <div class="schedule-column">
+                    <div class="schedule-title">Будни</div>
+                    <div class="wrap list" id="bell_list">
+                        <div class="row-container"></div>
+                    </div>
+                </div>
+                <div class="schedule-column">
+                    <div class="schedule-title">Суббота</div>
+                    <div class="wrap list" id="saturday_bell_list">
+                        <div class="row-container"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Контейнер для реакций -->
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+            <a id="downloadScheduleBtn" href="#" class="download-btn">Скачать</a>
+            <div id="schedule-reactions"></div>
+        </div>
+        
+        <hr class="section-divider">
+        <div class="games-grid">
+            <a href="{{ url_for('schedule_search') }}?tgWebAppData={{ '{{' }} tgWebAppData {{ '}}' }}" class="game-card schedule-card">
+                <div class="game-icon">📅</div>
+                <div class="game-title">Поиск расписания</div>
+                <div class="game-description">Поиск расписания по группе или преподавателю</div>
+            </a>
+            <a href="{{ url_for('attendance_list') }}?tgWebAppData={{ '{{' }} tgWebAppData {{ '}}' }}" class="game-card attendance-card">
+                <div class="game-icon">📝</div>
+                <div class="game-title">Контроль посещаемости</div>
+                <div class="game-description">Ведите учёт посещаемости группы</div>
+            </a>
+            <a href="{{ url_for('vpn_page') }}?tgWebAppData={{ '{{' }} tgWebAppData {{ '}}' }}" class="game-card vpn-card">
+                <div class="game-icon">🔒</div>
+                <div class="game-title">Бесплатный VPN</div>
+                <div class="game-description">Безопасный доступ к сети через Германию</div>
+            </a>
+            
+            <div class="games-container">
+                <a href="{{ url_for('game_page', game_name='2048') }}" class="game-card">
+                    <div class="game-icon">🎯</div>
+                    <div class="game-title">2048</div>
+                    <div class="game-description">Увлекательная головоломка с числами</div>
+                </a>
+                <a href="{{ url_for('game_page', game_name='snake') }}" class="game-card">
+                    <div class="game-icon">🐍</div>
+                    <div class="game-title">Змейка</div>
+                    <div class="game-description">Классическая игра на выживание</div>
+                </a>
+                <a href="{{ url_for('battleship') }}?tgWebAppData={{ '{{' }} tgWebAppData {{ '}}' }}" class="game-card">
+                    <div class="game-icon">🚢</div>
+                    <div class="game-title">Морской бой</div>
+                    <div class="game-description">Классическая игра для двоих</div>
+                </a>
+                <a href="{{ url_for('game_page', game_name='tic-tac-toe') }}" class="game-card">
+                    <div class="game-icon">❌</div>
+                    <div class="game-title">Крестики-нолики</div>
+                    <div class="game-description">Классическая игра для двоих</div>
+                </a>
+                <a href="{{ url_for('game_page', game_name='bounce-ball') }}" class="game-card">
+                    <div class="game-icon">🏒</div>
+                    <div class="game-title">Аэрохокей</div>
+                    <div class="game-description">Захватывающая игра для двоих</div>
+                </a>
+                <a href="{{ url_for('game_page', game_name='casino') }}" class="game-card">
+                    <div class="game-icon">🎰</div>
+                    <div class="game-title">Казино</div>
+                    <div class="game-description">Этого никогда не появится в официальной версии</div>
+                </a>
+                <a href="{{ url_for('game_page', game_name='checkers') }}" class="game-card">
+                    <div class="game-icon">&#x265F;</div>
+                    <div class="game-title">Шашки</div>
+                    <div class="game-description">Онлайн-лобби для игры вдвоём</div>
+                    <div class="beta-label">БЕТА</div>
+                </a>
+                <a href="{{ url_for('sudoku') }}?tgWebAppData={{ '{{' }} tgWebAppData {{ '}}' }}" class="game-card">
+                    <div class="game-icon">🧩</div>
+                    <div class="game-title">Судоку</div>
+                    <div class="game-description">Логическая головоломка с числами</div>
+                    <div class="beta-label">ТЕСТ</div>
+                </a>
+                <div class="game-card" id="reviewCard" style="cursor: pointer;">
+                    <div class="game-icon">⭐️</div>
+                    <div class="game-title">Предложить идею</div>
+                    <div class="game-description">Поделитесь своим мнением и помогите нам стать лучше!</div>
+                </div>
+            </div>
+        </div>
+        <style>
+            .game-card.placeholder {
+                opacity: 0.5;
+                pointer-events: none;
+                position: relative;
+            }
+            .game-placeholder-label {
+                position: absolute;
+                top: 10px;
+                right: 10px;
+                background: #ff5722;
+                color: #fff;
+                padding: 2px 8px;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: bold;
+                z-index: 2;
+            }
+            .beta-label {
+                position: absolute;
+                top: 10px;
+                right: 12px;
+                background: #ff5722;
+                color: #fff;
+                padding: 2px 10px;
+                border-radius: 8px;
+                font-size: 12px;
+                font-weight: bold;
+                z-index: 2;
+                letter-spacing: 1px;
+                box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+            }
+            .game-card { position: relative; }
+        </style>
+    </div>
+
+    <!-- Модальное окно для отзыва (перенесено вниз, вне menu-container) -->
+    <div class="modal" id="reviewModal">
+        <div class="modal-content">
+            <span class="close" id="closeReviewModal">&times;</span>
+            <h2>Предложить идею</h2>
+            <div class="review-mark-group">
+                <label>Ваша оценка:</label>
+                <div class="review-marks" id="reviewMarks">
+                    <!-- Кнопки оценок 1-10 -->
+                    {% for i in range(1, 11) %}
+                    <button type="button" class="mark-btn" data-mark="{{ i }}">{{ i }}</button>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="review-text-group">
+                <label for="reviewText">Ваш отзыв:</label>
+                <textarea id="reviewText" maxlength="500" placeholder="Напишите, что можно добавить или что можно изменить..." required></textarea>
+            </div>
+            <button class="review-send-btn" id="sendReviewBtn">Отправить</button>
+            <div class="review-status" id="reviewStatus"></div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/schedule.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/image_cards.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/schedule_reactions.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/group_selector.js') }}"></script>
+    <script>
+        // Универсальный способ получения tgWebAppData
+        function getTgWebAppData() {
+            // 1. Через Telegram WebApp JS API
+            if (window.Telegram && Telegram.WebApp && Telegram.WebApp.initData) {
+                return Telegram.WebApp.initData;
+            }
+            // 2. Через параметры URL
+            const urlParam = new URLSearchParams(window.location.search).get('tgWebAppData');
+            if (urlParam) return urlParam;
+            return null;
+        }
+        window.tgWebAppData = getTgWebAppData();
+        if (!window.tgWebAppData) {
+            document.getElementById('auth-error').style.display = '';
+        }
+
+        // === Динамическое обновление ссылки на скачивание расписания ===
+        let currentDownloadUrl = '';
+        function updateDownloadLink() {
+            const scheduleType = 'groups';
+            let dateObj = window.scheduleState && window.scheduleState.displayedDate ? new Date(window.scheduleState.displayedDate) : new Date();
+            const pad = n => n.toString().padStart(2, '0');
+            const dateStr = pad(dateObj.getDate()) + '.' + pad(dateObj.getMonth() + 1) + '.' + dateObj.getFullYear();
+            const url = `https://kkepik.ru/api/schedule/download/${scheduleType}/${dateStr}`;
+            currentDownloadUrl = url;
+            const btn = document.getElementById('downloadScheduleBtn');
+            if (btn) btn.setAttribute('data-url', url);
+        }
+        // Анимация появления кнопки 'Скачать'
+        function animateDownloadBtn() {
+            const btn = document.getElementById('downloadScheduleBtn');
+            if (btn) {
+                btn.classList.remove('fade-slide-up');
+                void btn.offsetWidth;
+                btn.classList.add('fade-slide-up');
+            }
+        }
+        // Слушаем только кастомное событие от реакций
+        document.addEventListener('reactionsAnimated', animateDownloadBtn);
+
+        // Открывать ссылку через Telegram.WebApp.openLink
+        document.addEventListener('DOMContentLoaded', function() {
+            const btn = document.getElementById('downloadScheduleBtn');
+            if (btn) {
+                btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const url = btn.getAttribute('data-url') || currentDownloadUrl;
+                    if (window.Telegram && Telegram.WebApp && Telegram.WebApp.openLink) {
+                        Telegram.WebApp.openLink(url);
+                    } else {
+                        window.open(url, '_blank');
+                    }
+                });
+            }
+        });
+
+        // Открытие модального окна по клику на карточку
+        document.addEventListener('DOMContentLoaded', function() {
+            var reviewCard = document.getElementById('reviewCard');
+            var reviewModal = document.getElementById('reviewModal');
+            var closeReviewModal = document.getElementById('closeReviewModal');
+            var sendBtn = document.getElementById('sendReviewBtn');
+            var marks = document.getElementById('reviewMarks');
+            var reviewText = document.getElementById('reviewText');
+            var status = document.getElementById('reviewStatus');
+            let selectedMark = null;
+
+            if (reviewCard && reviewModal && closeReviewModal) {
+                reviewCard.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+                    reviewModal.style.display = 'block';
+                    document.body.style.overflow = 'hidden';
+                    status.textContent = '';
+                    reviewText.value = '';
+                    selectedMark = null;
+                    // Сброс выделения кнопок оценок
+                    document.querySelectorAll('.mark-btn').forEach(btn => btn.classList.remove('selected'));
+                });
+                
+                closeReviewModal.addEventListener('click', function() {
+                    reviewModal.style.display = 'none';
+                    document.body.style.overflow = 'auto';
+                });
+                
+                window.addEventListener('click', function(event) {
+                    if (event.target === reviewModal) {
+                        reviewModal.style.display = 'none';
+                        document.body.style.overflow = 'auto';
+                    }
+                });
+
+                // Обработка выбора оценки
+                if (marks) {
+                    marks.addEventListener('click', function(e) {
+                        if (e.target.classList.contains('mark-btn')) {
+                            selectedMark = parseInt(e.target.dataset.mark);
+                            document.querySelectorAll('.mark-btn').forEach(btn => btn.classList.remove('selected'));
+                            e.target.classList.add('selected');
+                            if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+                        }
+                    });
+                }
+
+                // Обработка отправки отзыва
+                if (sendBtn) {
+                    sendBtn.addEventListener('click', function() {
+                        if (!selectedMark) {
+                            status.textContent = 'Пожалуйста, выберите оценку';
+                            status.style.color = 'red';
+                            return;
+                        }
+                        if (!reviewText.value.trim()) {
+                            status.textContent = 'Пожалуйста, напишите отзыв';
+                            status.style.color = 'red';
+                            return;
+                        }
+
+                        // Отправка отзыва
+                        fetch('/api/submit_review', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                mark: selectedMark,
+                                text: reviewText.value.trim(),
+                                tgWebAppData: window.tgWebAppData
+                            })
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.success) {
+                                status.textContent = 'Спасибо за ваш отзыв!';
+                                status.style.color = 'green';
+                                localStorage.setItem('review_submitted', 'true');
+                                setTimeout(() => {
+                                    reviewModal.style.display = 'none';
+                                    document.body.style.overflow = 'auto';
+                                    reviewCard.style.display = 'none';
+                                }, 2000);
+                            } else {
+                                status.textContent = 'Ошибка отправки отзыва';
+                                status.style.color = 'red';
+                            }
+                        })
+                        .catch(error => {
+                            status.textContent = 'Ошибка соединения с сервером';
+                            status.style.color = 'red';
+                        });
+                    });
+                }
+            }
+        });
+
+        // Скрываем лоадер после полной загрузки страницы
+        window.addEventListener('load', function() {
+            setTimeout(function() {
+                const loader = document.getElementById('loader');
+                loader.classList.add('fade-out');
+                setTimeout(function() {
+                    loader.style.display = 'none';
+                }, 750);
+            }, 750); // Небольшая задержка для плавности
+        });
+
+        // Удалены скрипты праздничной плашки для упрощения тестовой страницы
+        
+        // Обработчики для плашек
+        document.addEventListener('DOMContentLoaded', function() {
+            const congratulatorCTA = document.getElementById('congratulatorCTA');
+            if (congratulatorCTA) {
+                congratulatorCTA.addEventListener('click', function(e) {
+                    // Добавляем тактильную обратную связь если доступно
+                    if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
+                        Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                    }
+                });
+            }
+            
+            const eventPageCTA = document.getElementById('eventPageCTA');
+            if (eventPageCTA) {
+                eventPageCTA.addEventListener('click', function(e) {
+                    // Добавляем тактильную обратную связь если доступно
+                    if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
+                        Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                    }
+                });
+            }
+            
+            const eventEndCTA = document.getElementById('eventEndCTA');
+            if (eventEndCTA) {
+                eventEndCTA.addEventListener('click', function(e) {
+                    // Добавляем тактильную обратную связь если доступно
+                    if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
+                        Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                    }
+                });
+            }
+        });
+    </script>
+</body>
+</html> 

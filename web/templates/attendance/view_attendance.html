@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Посещаемость группы | Учет посещаемости</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/attendance.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="header-container">
+            <h1>Группа <span id="groupName"></span></h1>
+            <div class="group-controls">
+                <button class="group-control-btn delete-btn" id="deleteGroupBtn" title="Удалить группу">
+                    <span class="btn-icon">🗑</span>
+                </button>
+                <button class="group-control-btn edit-btn" id="editGroupBtn">
+                    <span class="btn-icon">✏️</span>
+                    Редактировать
+                </button>
+            </div>
+        </div>
+        <div class="attendance-controls">
+            <button id="prevMonth" class="btn-nav">←</button>
+            <span id="currentMonth"></span>
+            <button id="nextMonth" class="btn-nav">→</button>
+        </div>
+        <div class="attendance-table-wrapper">
+            <table class="attendance-table" id="attendanceTable">
+                <thead>
+                    <tr id="dateRow">
+                        <th class="name-column">Студент</th>
+                        <th class="total-column" colspan="2">Всего</th>
+                        <!-- Даты будут добавлены через JavaScript -->
+                    </tr>
+                </thead>
+                <tbody id="attendanceBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Добавим модальное окно для редактирования -->
+    <div class="modal" id="editModal">
+        <div class="modal-content">
+            <h2>Редактирование группы</h2>
+            <div class="form-group">
+                <label for="groupNameInput">Название группы</label>
+                <input type="text" id="groupNameInput" placeholder="Название группы">
+            </div>
+            
+            <!-- Добавляем новую секцию для управления администраторами -->
+            <div class="form-group">
+                <label for="adminInput">Добавить администратора</label>
+                <div class="admin-input-container">
+                    <input type="text" id="adminInput" placeholder="@username или ID пользователя">
+                    <button class="add-admin-btn" id="addAdminBtn">
+                        <span class="btn-icon">+</span>
+                    </button>
+                </div>
+            </div>
+            <div class="admins-title">Администраторы группы:</div>
+            <div class="admins-list" id="adminsList"></div>
+            
+            <div class="students-list" id="editStudentsList">
+                <!-- Студенты будут добавлены через JavaScript -->
+            </div>
+            <button class="modal-btn add-student-btn" id="addStudentBtn">
+                <span class="btn-icon">+</span>
+                Добавить студента
+            </button>
+            <div class="modal-actions">
+                <button class="modal-btn cancel-btn" id="cancelEditBtn">Отмена</button>
+                <button class="modal-btn save-btn" id="saveGroupBtn">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Добавим модальное окно для подтверждения удаления -->
+    <div class="modal" id="deleteModal">
+        <div class="modal-content">
+            <h2>Удаление группы</h2>
+            <p>Вы действительно хотите удалить группу? Это действие нельзя отменить.</p>
+            <div class="modal-actions">
+                <button class="modal-btn cancel-btn" id="cancelDeleteBtn">Отмена</button>
+                <button class="modal-btn delete-confirm-btn" id="confirmDeleteBtn">Удалить</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/view_attendance.js') }}"></script>
+</body>
+</html> 
