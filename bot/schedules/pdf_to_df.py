@@ -70,10 +70,15 @@ def _find_pair_numbers(chars: list) -> List[Dict]:
 # Text-run extraction
 # ──────────────────────────────────────────────
 
-def _chars_to_runs(chars: list, gap: float = 12.0) -> List[Dict]:
+def _chars_to_runs(chars: list, gap: float = 12.0,
+                    group_starts: Optional[List[float]] = None) -> List[Dict]:
     """
     Группирует символы в text-run'ы (по x-близости + смена шрифта в content-stream).
     Разделяет подгруппы, у которых дисциплина и аудитория идут разными шрифтами.
+
+    Если передан group_starts, дополнительно разрезает run'ы на границах групп —
+    когда текст одной группы «перетекает» в столбец следующей.
+
     Возвращает [{text, x_start}].
     """
     if not chars:
@@ -96,6 +101,37 @@ def _chars_to_runs(chars: list, gap: float = 12.0) -> List[Dict]:
     if current:
         runs.append(current)
 
+    # Разрезаем run'ы на границах групп, но ТОЛЬКО если на границе есть
+    # реальный x-gap (≥ min_boundary_gap). Это позволяет тексту, который
+    # намеренно перетекает в соседний столбец, оставаться цельным.
+    if group_starts and len(group_starts) > 1:
+        min_boundary_gap = 7.0  # минимальный gap для разрезки на границе
+        split_runs = []
+        for run in runs:
+            sorted_run = sorted(run, key=lambda c: c["x0"])
+            first_gi = _assign_to_group(sorted_run[0]["x0"], group_starts)
+            last_gi = _assign_to_group(sorted_run[-1]["x0"], group_starts)
+            if first_gi == last_gi or first_gi < 0:
+                split_runs.append(run)
+            else:
+                # Run пересекает границу — ищем точки разрезки
+                # Разрез делаем только там, где x-gap совпадает с границей группы
+                sub = []
+                for i, ch in enumerate(sorted_run):
+                    sub.append(ch)
+                    if i < len(sorted_run) - 1:
+                        next_ch = sorted_run[i + 1]
+                        x_gap = next_ch["x0"] - ch["x0"]
+                        if x_gap >= min_boundary_gap:
+                            gi_cur = _assign_to_group(ch["x0"], group_starts)
+                            gi_next = _assign_to_group(next_ch["x0"], group_starts)
+                            if gi_cur != gi_next and gi_next > gi_cur:
+                                split_runs.append(sub)
+                                sub = []
+                if sub:
+                    split_runs.append(sub)
+        runs = split_runs
+
     result = []
     for run in runs:
         sorted_run = sorted(run, key=lambda c: c["x0"])
@@ -105,13 +141,14 @@ def _chars_to_runs(chars: list, gap: float = 12.0) -> List[Dict]:
     return result
 
 
-def _assign_to_group(x_start: float, group_starts: List[float], tolerance: float = 5.0) -> int:
+def _assign_to_group(x_start: float, group_starts: List[float], tolerance: float = 10.0) -> int:
     """Определяет индекс группы (0..N-1) по x_start. Возвращает -1 если не подходит."""
     best = -1
     for i, gx in enumerate(group_starts):
         if x_start >= gx - tolerance:
             best = i
     return best
+
 
 
 def _looks_like_aud(text: str) -> bool:
@@ -182,10 +219,8 @@ def _extract_block(page_chars: list, block_groups: List[Dict],
     """
     Извлекает данные блока (до 4 групп) и возвращает строки DataFrame.
 
-    Текст дисциплин может перетекать за границы столбцов группы,
-    поэтому разбивка по x-диапазонам НЕ используется.
-    Вместо этого все символы обрабатываются вместе через _chars_to_runs,
-    а каждый run назначается группе по x_start.
+    Символы сначала разделяются по группам через midpoint-границы,
+    затем для каждой группы строятся text-run'ы через _chars_to_runs.
 
     Disc/aud классификация — по содержимому (_looks_like_aud).
     Subgroups (sg1/sg2) определяются расстоянием от начала группы.
@@ -260,12 +295,12 @@ def _extract_block(page_chars: list, block_groups: List[Dict],
             elif 7 < offset < 14:
                 teacher_chars.extend(bucket_chars)
 
-        # ── Disc/Aud: все символы вместе, классификация по содержимому ──
+        # ── Disc/Aud: run'ы строим в порядке content-stream, разрезаем на границах групп ──
 
         disc_per_group = defaultdict(list)     # gi -> [(dist, text)]
         aud_per_group = defaultdict(list)
 
-        content_runs = _chars_to_runs(content_chars)
+        content_runs = _chars_to_runs(content_chars, group_starts=group_starts)
         content_runs = _split_merged_aud_disc(content_runs)
         for run in content_runs:
             gi = _assign_to_group(run["x_start"], group_starts)
@@ -276,10 +311,10 @@ def _extract_block(page_chars: list, block_groups: List[Dict],
                 else:
                     disc_per_group[gi].append((d, run["text"]))
 
-        # ── Teacher: все символы вместе (backward-x разделяет sg1/sg2) ──
+        # ── Teacher: run'ы в порядке content-stream (backward-x разделяет sg1/sg2) ──
 
         teacher_per_group = defaultdict(list)
-        teacher_runs = _chars_to_runs(teacher_chars)
+        teacher_runs = _chars_to_runs(teacher_chars, group_starts=group_starts)
         for run in teacher_runs:
             gi = _assign_to_group(run["x_start"], group_starts)
             if gi >= 0:
@@ -341,11 +376,14 @@ def pdf_to_dataframe(file_path: str) -> Optional[pd.DataFrame]:
 
             page_chars = page.chars
 
-            # Блоки: группы с одинаковым y (±2pt)
+            # Блоки: группы с одинаковым y (кластеризация с tolerance 3pt)
             blocks = defaultdict(list)
-            for g in groups:
-                block_y = round(g["y"], 0)
-                blocks[block_y].append(g)
+            sorted_groups = sorted(groups, key=lambda g: g["y"])
+            cluster_y = None
+            for g in sorted_groups:
+                if cluster_y is None or abs(g["y"] - cluster_y) > 3:
+                    cluster_y = g["y"]
+                blocks[cluster_y].append(g)
 
             sorted_ys = sorted(blocks.keys())
 

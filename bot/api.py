@@ -162,8 +162,8 @@ def find_schedule_file(
         if (date in filename or file_date in filename) and type_kw in filename.upper():
             candidates.append((filename, ext))
 
-    # Предпочитаем .xlsx (для обратной совместимости), затем .pdf
-    for ext_pref in (".xlsx", ".pdf"):
+    # Предпочитаем .pdf (основной формат), затем .xlsx
+    for ext_pref in (".pdf", ".xlsx"):
         for filename, ext in candidates:
             if ext == ext_pref:
                 return os.path.join(data_dir, filename), ext

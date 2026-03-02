@@ -65,13 +65,12 @@ async def main():
     dp.message.register(cmd_broadcast, Command(commands=["broadcast"]))
     dp.message.register(cmd_broadcast_teachers, Command(commands=["broadcast_teachers"]))
     dp.message.register(cmd_app, Command(commands=["app"]))
-    
+
     # Регистрируем callback для выбора роли
     dp.callback_query.register(process_role_callback, lambda c: c.data in ["role_student", "role_teacher"])
     
     # Регистрируем callback для вопроса о классном руководстве
     dp.callback_query.register(process_class_teacher_callback, lambda c: c.data in ["is_class_teacher_yes", "is_class_teacher_no"])
-    
     # Регистрируем обработчик ввода номера группы для классного руководителя
     dp.message.register(process_class_group, cmd_start.__globals__["RegistrationStates"].waiting_group)
 
