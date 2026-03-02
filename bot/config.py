@@ -19,9 +19,6 @@ TEST_MODE = os.getenv("TEST_MODE", "False").lower() in ("true", "1", "yes")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 TEST_BOT_TOKEN = os.getenv("TEST_BOT_TOKEN", "")
 
-# ── Превью-картинка расписания в рассылке ──
-SEND_PREVIEW = False
-
 # ── Пути к данным ──
 APP_NAME = "kkepik_bot"
 if os.name == 'nt':

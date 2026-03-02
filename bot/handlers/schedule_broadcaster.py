@@ -18,7 +18,7 @@ import config
 import global_schedules
 from schedules import group_schedule, teacher_schedule
 from schedules.schedule_comparator import get_changed_users, load_existing_schedule
-from schedules.schedule_image import generate_schedule_image
+from schedules.pdf_crop import crop_group_screenshots
 from schedules.schedule_mood import get_mood_emoji
 from schedules.pair_times import add_pair_times, is_saturday
 
@@ -43,22 +43,9 @@ def create_schedule_keyboard(schedule_date: str, schedule_type: str = "groups") 
     ])
 
 
-def _get_cached_image(cache: dict, lines: list, group_name: str, date_str: str):
-    """Генерирует и кэширует изображение расписания по группе."""
-    if not config.SEND_PREVIEW:
-        return None
-    key = group_name.upper()
-    if key not in cache:
-        try:
-            cache[key] = generate_schedule_image(lines, group_name, date_str)
-        except Exception:
-            cache[key] = None
-    return cache[key]
-
-
 async def _send_with_image(bot: Bot, uid: int, msg_text: str, img_bytes, keyboard):
     """Отправляет расписание: фото + caption если есть картинка, иначе текст."""
-    if img_bytes and config.SEND_PREVIEW:
+    if img_bytes:
         photo = BufferedInputFile(img_bytes, filename="schedule.png")
         if len(msg_text) <= 1024:
             await bot.send_photo(uid, photo=photo, caption=msg_text, parse_mode="HTML", reply_markup=keyboard)
@@ -179,6 +166,15 @@ async def process_and_broadcast(
     except Exception as e:
         return False, f"Ошибка сохранения файла: {e}"
 
+    # 4b. Генерируем кропы из PDF для рассылки студентам
+    pdf_crop_cache: dict[str, bytes] = {}
+    if data_file_path.lower().endswith(".pdf") and schedule_type == "groups":
+        try:
+            pdf_crop_cache = crop_group_screenshots(data_file_path)
+            await _log(f"PDF кропы: {len(pdf_crop_cache)} групп")
+        except Exception as e:
+            logging.warning(f"[broadcast] PDF crop failed: {e}")
+
     # 5. Обновляем глобальный кэш (бот-процесс)
     if schedule_type == "groups":
         global_schedules.last_groups_df = df
@@ -219,7 +215,6 @@ async def process_and_broadcast(
 
     # 8. Рассылка
     success_count = 0
-    group_image_cache = {}
 
     for (uid, role, namegrp, is_class_teacher, class_group) in rows:
         if uid not in changed_user_ids:
@@ -251,7 +246,7 @@ async def process_and_broadcast(
                         msg_text = "‼️ РАСПИСАНИЕ ИЗМЕНИЛОСЬ\n\n" + msg_text
                     try:
                         kb = create_schedule_keyboard(schedule_date, "groups")
-                        img = _get_cached_image(group_image_cache, lines_timed, namegrp, schedule_date)
+                        img = pdf_crop_cache.get(namegrp.upper())
                         await _send_with_image(bot, uid, msg_text, img, kb)
                         success_count += 1
                     except Exception as e:
@@ -264,7 +259,7 @@ async def process_and_broadcast(
                         msg_text = "‼️ РАСПИСАНИЕ ИЗМЕНИЛОСЬ\n\n" + msg_text
                     try:
                         kb = create_schedule_keyboard(schedule_date, "groups")
-                        img = _get_cached_image(group_image_cache, lines_timed, namegrp, schedule_date)
+                        img = pdf_crop_cache.get(namegrp.upper())
                         await _send_with_image(bot, uid, msg_text, img, kb)
                         success_count += 1
                     except Exception as e:
@@ -310,7 +305,7 @@ async def process_and_broadcast(
                         msg_text = "‼️ РАСПИСАНИЕ ИЗМЕНИЛОСЬ\n\n" + msg_text
                     try:
                         kb = create_schedule_keyboard(schedule_date, "groups")
-                        img = _get_cached_image(group_image_cache, lines_timed, class_group, schedule_date)
+                        img = pdf_crop_cache.get(class_group.upper())
                         await _send_with_image(bot, uid, msg_text, img, kb)
                         success_count += 1
                     except Exception as e:
@@ -323,7 +318,7 @@ async def process_and_broadcast(
                         msg_text = "‼️ РАСПИСАНИЕ ИЗМЕНИЛОСЬ\n\n" + msg_text
                     try:
                         kb = create_schedule_keyboard(schedule_date, "groups")
-                        img = _get_cached_image(group_image_cache, lines_timed, class_group, schedule_date)
+                        img = pdf_crop_cache.get(class_group.upper())
                         await _send_with_image(bot, uid, msg_text, img, kb)
                         success_count += 1
                     except Exception as e:
