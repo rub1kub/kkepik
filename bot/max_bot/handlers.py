@@ -152,7 +152,8 @@ async def _process_attachment(attach, chat_id: int, raw_data: dict = None):
 
         file_name, file_url = _extract_file_info(attach, raw_data)
 
-        print(f"[MAX] Extracted: name={file_name!r}, url={file_url[:80]!r if file_url else ''!r}")
+        url_short = file_url[:80] if file_url else ''
+        print(f"[MAX] Extracted: name={file_name!r}, url={url_short!r}")
 
         if not file_name:
             print(f"[MAX] Вложение без имени файла, пропускаем")
