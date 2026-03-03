@@ -59,6 +59,12 @@ def crop_group_screenshots(file_path: str) -> dict[str, bytes]:
             for bi, by in enumerate(sorted_ys):
                 bg = sorted(blocks[by], key=lambda g: g["x"])
 
+                # Стандартная ширина столбца (из расстояния между группами)
+                if len(bg) >= 2:
+                    col_width = bg[1]["x"] - bg[0]["x"]
+                else:
+                    col_width = 130.0  # fallback
+
                 y_top_pt = by - BLOCK_Y_PAD_TOP_PT
                 if bi + 1 < len(sorted_ys):
                     y_bot_pt = sorted_ys[bi + 1] - BLOCK_Y_PAD_BOTTOM_PT
@@ -77,12 +83,6 @@ def crop_group_screenshots(file_path: str) -> dict[str, bytes]:
 
                 y_top_px = max(0, int(y_top_pt * scale))
                 y_bot_px = min(pil_img.height, int(y_bot_pt * scale))
-
-                # Стандартная ширина столбца (из расстояния между группами)
-                if len(bg) >= 2:
-                    col_width = bg[1]["x"] - bg[0]["x"]
-                else:
-                    col_width = 130.0  # fallback
 
                 for gi, g in enumerate(bg):
                     x_left_pt = g["x"] - GROUP_MARGIN_PT

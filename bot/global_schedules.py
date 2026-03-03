@@ -6,6 +6,7 @@
 
 last_groups_df = None
 last_groups_date = None
+last_groups_crop_cache: dict[str, bytes] = {}
 
 last_teachers_df = None
 last_teachers_date = None
@@ -13,7 +14,8 @@ last_teachers_date = None
 
 def reload_cache():
     """Загружает последние файлы расписания из DATA_DIR в глобальный кэш."""
-    global last_groups_df, last_groups_date, last_teachers_df, last_teachers_date
+    global last_groups_df, last_groups_date, last_groups_crop_cache
+    global last_teachers_df, last_teachers_date
 
     import os
     import re
@@ -42,6 +44,17 @@ def reload_cache():
         if stype == "groups":
             last_groups_df = df
             last_groups_date = date
+            # Генерируем кропы из PDF
+            if ext == ".pdf":
+                try:
+                    from schedules.pdf_crop import crop_group_screenshots
+                    last_groups_crop_cache = crop_group_screenshots(fpath)
+                    print(f"[cache] PDF кропы: {len(last_groups_crop_cache)} групп")
+                except Exception as e:
+                    print(f"[cache] PDF crop failed: {e}")
+                    last_groups_crop_cache = {}
+            else:
+                last_groups_crop_cache = {}
         else:
             last_teachers_df = df
             last_teachers_date = date

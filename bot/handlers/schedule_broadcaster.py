@@ -179,6 +179,7 @@ async def process_and_broadcast(
     if schedule_type == "groups":
         global_schedules.last_groups_df = df
         global_schedules.last_groups_date = schedule_date
+        global_schedules.last_groups_crop_cache = pdf_crop_cache
     else:
         global_schedules.last_teachers_df = df
         global_schedules.last_teachers_date = schedule_date

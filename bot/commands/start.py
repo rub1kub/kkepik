@@ -5,6 +5,7 @@ from aiogram import types
 from aiogram.filters import Command
 from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types.input_file import BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import re
@@ -166,7 +167,16 @@ async def cmd_start(message: types.Message, state: FSMContext):
                     f"<b>{schedule_date}</b>\n\n{txt}"
                 )
                 schedule_keyboard = create_schedule_keyboard(schedule_date, "groups")
-                await message.answer(msg_text, parse_mode="HTML", reply_markup=schedule_keyboard)
+                img_bytes = global_schedules.last_groups_crop_cache.get(typed_name)
+                if img_bytes:
+                    photo = BufferedInputFile(img_bytes, filename="schedule.png")
+                    if len(msg_text) <= 1024:
+                        await message.answer_photo(photo=photo, caption=msg_text, parse_mode="HTML", reply_markup=schedule_keyboard)
+                    else:
+                        await message.answer_photo(photo=photo)
+                        await message.answer(msg_text, parse_mode="HTML", reply_markup=schedule_keyboard)
+                else:
+                    await message.answer(msg_text, parse_mode="HTML", reply_markup=schedule_keyboard)
             else:
                 await message.answer(
                     f"Расписание не найдено для группы <b>{typed_name}</b>.",
