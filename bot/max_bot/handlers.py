@@ -14,6 +14,8 @@ from pyromax.api.MaxApi import MaxApi
 from pyromax.types.Message import Message
 from pyromax.types.File import File
 
+ADMIN_ID = 1084693264
+
 
 # ── Monkey-patch: сохраняем сырые данные вложений до обработки Pydantic ──
 # pyromax конвертирует raw dict → File(...), при этом поле fileName теряется,
@@ -33,6 +35,69 @@ def _from_update_with_raw(cls, update):
     return msg
 
 Message.from_update = _from_update_with_raw
+
+
+def _extract_file_info(attach, raw_data: dict = None) -> tuple[str, str]:
+    """
+    Извлекает (filename, url) из вложения, используя все доступные источники.
+    Возвращает (file_name, file_url).
+    """
+    file_name = ''
+    file_url = ''
+
+    # Источник 1: raw_data dict (из monkey-patch — самый надёжный)
+    if raw_data and isinstance(raw_data, dict):
+        for key in ('fileName', 'filename', 'file_name', 'name', 'title'):
+            if not file_name:
+                val = raw_data.get(key)
+                if val and isinstance(val, str):
+                    file_name = val
+        if not file_url:
+            file_url = raw_data.get('url', '') or ''
+
+    # Источник 2: типизированный File из pyromax
+    if isinstance(attach, File):
+        if not file_url:
+            file_url = attach.url or ''
+        if not file_name:
+            file_name = getattr(attach, '_filename', '') or ''
+
+    # Источник 3: raw dict (когда _type не распознан pyromax)
+    elif isinstance(attach, dict):
+        if not file_name:
+            for key in ('fileName', 'filename', 'file_name', 'name', 'title'):
+                val = attach.get(key)
+                if val and isinstance(val, str):
+                    file_name = val
+                    break
+        if not file_url:
+            for key in ('url', 'fileUrl', 'file_url', 'downloadUrl'):
+                val = attach.get(key)
+                if val and isinstance(val, str):
+                    file_url = val
+                    break
+
+    # Источник 4: произвольный объект с атрибутами (Photo, Video, etc.)
+    elif hasattr(attach, '__dict__'):
+        for attr in ('fileName', 'filename', 'file_name', 'name', 'title'):
+            if not file_name:
+                val = getattr(attach, attr, None)
+                if val and isinstance(val, str):
+                    file_name = val
+        if not file_url:
+            file_url = getattr(attach, 'url', '') or ''
+
+    # Источник 5: извлечение из URL
+    if not file_name and file_url:
+        try:
+            from urllib.parse import urlparse, unquote
+            path_part = unquote(urlparse(file_url).path.split('/')[-1])
+            if '.' in path_part:
+                file_name = path_part
+        except Exception:
+            pass
+
+    return file_name, file_url
 
 
 def register_handlers(dispatcher):
@@ -58,7 +123,7 @@ def register_handlers(dispatcher):
             raw_attaches = getattr(message, '_raw_attaches', [])
 
             if attaches:
-                print(f"[MAX] Вложения ({len(attaches)})")
+                print(f"[MAX] Вложения ({len(attaches)}), raw_attaches={len(raw_attaches)}")
 
             for i, attach in enumerate(attaches):
                 raw = raw_attaches[i] if i < len(raw_attaches) else {}
@@ -75,63 +140,22 @@ def register_handlers(dispatcher):
 
 
 async def _process_attachment(attach, chat_id: int, raw_data: dict = None):
-    """Обрабатывает вложение — типизированный File или raw dict."""
+    """Обрабатывает вложение — типизированный File, raw dict или другой тип."""
     try:
-        if isinstance(attach, File):
-            # Типизированный файл из pyromax
-            file_name = getattr(attach, '_filename', '') or ''
-            file_url = attach.url or ''
-            file_id = attach.file_id
-            file_token = attach.file_token
-
-            # Пробуем получить fileName из model_extra (pydantic extra fields)
-            if not file_name and hasattr(attach, 'model_extra') and attach.model_extra:
-                file_name = attach.model_extra.get('fileName', '')
-
-            # Пробуем получить fileName из сырых данных вложения
-            if not file_name and raw_data and isinstance(raw_data, dict):
-                file_name = raw_data.get('fileName', '') or ''
-
-            # Пробуем извлечь имя файла из URL
-            if not file_name and file_url:
-                from urllib.parse import urlparse, unquote
-                path_part = unquote(urlparse(file_url).path.split('/')[-1])
-                if '.' in path_part:
-                    file_name = path_part
-
-            print(f"[MAX] File: name={file_name!r}, url={file_url!r}, "
-                  f"id={file_id}, token_len={len(file_token) if file_token else 0}")
-
-        elif isinstance(attach, dict):
-            # Raw dict — достаём данные вручную
-            file_name = (
-                attach.get('fileName')
-                or attach.get('file_name')
-                or attach.get('name')
-                or attach.get('title')
-                or ''
-            )
-            file_url = (
-                attach.get('url')
-                or attach.get('fileUrl')
-                or attach.get('file_url')
-                or attach.get('downloadUrl')
-                or ''
-            )
-            print(f"[MAX] Raw attach: keys={list(attach.keys())}, "
-                  f"name={file_name!r}, url={file_url!r}")
+        attach_type = type(attach).__name__
+        # Полная диагностика raw_data
+        if raw_data and isinstance(raw_data, dict):
+            print(f"[MAX] Attach type={attach_type}, raw keys={list(raw_data.keys())}, "
+                  f"raw_data={_safe_repr(raw_data)}")
         else:
-            # Photo, Video или что-то неизвестное — логируем
-            print(f"[MAX] Attach type={type(attach).__name__}: "
-                  f"{vars(attach) if hasattr(attach, '__dict__') else attach}")
-            return
+            print(f"[MAX] Attach type={attach_type}, raw_data={raw_data!r}")
+
+        file_name, file_url = _extract_file_info(attach, raw_data)
+
+        print(f"[MAX] Extracted: name={file_name!r}, url={file_url[:80]!r if file_url else ''!r}")
 
         if not file_name:
-            # Диагностика: выводим все доступные данные
-            if raw_data:
-                print(f"[MAX] Вложение без имени файла. Raw data keys: {list(raw_data.keys()) if isinstance(raw_data, dict) else type(raw_data)}")
-            else:
-                print(f"[MAX] Вложение без имени файла, пропускаем")
+            print(f"[MAX] Вложение без имени файла, пропускаем")
             return
 
         if not _is_schedule_file(file_name):
@@ -150,6 +174,18 @@ async def _process_attachment(attach, chat_id: int, raw_data: dict = None):
         import traceback
         print(f"[MAX] Ошибка обработки вложения: {e}")
         traceback.print_exc()
+
+
+def _safe_repr(d: dict, max_len: int = 300) -> str:
+    """Безопасный repr для диагностики (обрезает длинные значения)."""
+    parts = []
+    for k, v in d.items():
+        sv = repr(v)
+        if len(sv) > 80:
+            sv = sv[:77] + '...'
+        parts.append(f"{k}={sv}")
+    result = '{' + ', '.join(parts) + '}'
+    return result[:max_len]
 
 
 async def _check_text_for_schedule_links(text: str, chat_id: int):
@@ -185,6 +221,16 @@ async def _download_and_broadcast(file_url: str, file_name: str):
         print("[MAX] Telegram бот не доступен, рассылка невозможна")
         return
 
+    # Уведомляем админа о получении расписания из MAX
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"📩 Получен файл расписания из MAX:\n<b>{file_name}</b>\n\nНачинаю обработку и рассылку...",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        print(f"[MAX] Не удалось уведомить админа: {e}")
+
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = os.path.join(temp_dir, file_name)
@@ -195,6 +241,7 @@ async def _download_and_broadcast(file_url: str, file_name: str):
                 async with session.get(file_url) as resp:
                     if resp.status != 200:
                         print(f"[MAX] Ошибка скачивания: HTTP {resp.status}")
+                        await _notify_admin(bot, f"Ошибка скачивания {file_name}: HTTP {resp.status}")
                         return
                     data = await resp.read()
 
@@ -213,10 +260,21 @@ async def _download_and_broadcast(file_url: str, file_name: str):
 
             if success:
                 print(f"[MAX] Рассылка завершена: {msg}")
+                await _notify_admin(bot, f"Рассылка завершена: {msg}")
             else:
                 print(f"[MAX] Ошибка рассылки: {msg}")
+                await _notify_admin(bot, f"Ошибка рассылки {file_name}: {msg}")
 
     except Exception as e:
         import traceback
         print(f"[MAX] Ошибка при скачивании/рассылке: {e}")
         traceback.print_exc()
+        await _notify_admin(bot, f"Ошибка при обработке {file_name}: {e}")
+
+
+async def _notify_admin(bot, text: str):
+    """Отправляет уведомление админу."""
+    try:
+        await bot.send_message(ADMIN_ID, text)
+    except Exception:
+        pass
