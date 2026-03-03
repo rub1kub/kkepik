@@ -180,6 +180,9 @@ def _looks_like_aud(text: str) -> bool:
         pass
     if re.match(r"^[ВвЦцИиТтЕеРр/зс_\d\.\-]+$", text):
         return True
+    # "0_0", "0-0", "0/0" — дистанционно / без аудитории
+    if re.match(r"^\d[_\-/]\d$", text):
+        return True
     # "86-б", "89а" — число + необязательный дефис + одна буква
     if re.match(r"^\d{1,4}[- ]?[а-яА-Яa-zA-Z]$", text):
         return True
@@ -199,8 +202,9 @@ def _split_merged_aud_disc(runs: List[Dict]) -> List[Dict]:
     result = []
     for run in runs:
         text = run["text"]
-        # Паттерн: 1-4 цифры + кириллическая буква (начало дисциплины)
-        m = re.match(r"^(\d{1,4})([А-Яа-яЁё].{3,})", text)
+        # Паттерн: aud (цифры, возможно через . _ - 0) + кириллическая буква
+        # Покрывает: "95Практика", "0.0Практика", "0_0Практика", "0-0Практика"
+        m = re.match(r"^(\d[\d._\-/]*\d?)([А-Яа-яЁё].{3,})", text)
         if m:
             aud_part = m.group(1)
             disc_part = m.group(2)
@@ -334,20 +338,28 @@ def _extract_block(page_chars: list, block_groups: List[Dict],
                 teacher_per_group[gi].append((d, run["text"]))
 
         # Фильтр overflow: disc начинающийся с lowercase — мусор из соседней группы
-        for gi in disc_per_group:
+        for gi in list(disc_per_group.keys()):
             entries = disc_per_group[gi]
-            if len(entries) > 1:
-                filtered = [(d, t) for d, t in entries if not t or not t[0].islower()]
-                if filtered:
-                    disc_per_group[gi] = filtered
+            filtered = [(d, t) for d, t in entries if not t or not t[0].islower()]
+            disc_per_group[gi] = filtered if filtered else []
+
+        # Фильтр мусора: disc из одной пунктуации (апострофы, точки и т.п.)
+        for gi in list(disc_per_group.keys()):
+            entries = disc_per_group[gi]
+            filtered = [(d, t) for d, t in entries if t and any(c.isalnum() for c in t) and len(t) > 1]
+            disc_per_group[gi] = filtered if filtered else []
 
         # Фильтр overflow: teacher начинающийся с "." или lowercase — фрагмент ФИО из соседней группы
-        for gi in teacher_per_group:
+        for gi in list(teacher_per_group.keys()):
             entries = teacher_per_group[gi]
-            if len(entries) > 1:
-                filtered = [(d, t) for d, t in entries if t and t[0].isalpha() and t[0].isupper()]
-                if filtered:
-                    teacher_per_group[gi] = filtered
+            filtered = [(d, t) for d, t in entries if t and t[0].isalpha() and t[0].isupper()]
+            teacher_per_group[gi] = filtered if filtered else []
+
+        # Фильтр: teacher = число (аудитория, попавшая в teacher y-зону)
+        for gi in list(teacher_per_group.keys()):
+            entries = teacher_per_group[gi]
+            filtered = [(d, t) for d, t in entries if t and not re.match(r"^\d+$", t)]
+            teacher_per_group[gi] = filtered if filtered else []
 
         # Сортируем по расстоянию от начала группы
         for gi in disc_per_group:
