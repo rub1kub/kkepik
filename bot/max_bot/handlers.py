@@ -15,6 +15,26 @@ from pyromax.types.Message import Message
 from pyromax.types.File import File
 
 
+# ── Monkey-patch: сохраняем сырые данные вложений до обработки Pydantic ──
+# pyromax конвертирует raw dict → File(...), при этом поле fileName теряется,
+# потому что оно не объявлено в Pydantic-модели File.
+# Сохраняем raw attaches в атрибут _raw_attaches для использования в обработчике.
+
+_orig_from_update = Message.from_update.__func__
+
+@classmethod
+def _from_update_with_raw(cls, update):
+    msg = _orig_from_update(cls, update)
+    try:
+        raw_msg = update.payload.get('message', {})
+        object.__setattr__(msg, '_raw_attaches', raw_msg.get('attaches', []))
+    except Exception:
+        object.__setattr__(msg, '_raw_attaches', [])
+    return msg
+
+Message.from_update = _from_update_with_raw
+
+
 def register_handlers(dispatcher):
     """Регистрирует обработчики событий pyromax."""
 
@@ -35,11 +55,14 @@ def register_handlers(dispatcher):
 
             # Обрабатываем вложения
             attaches = message.attaches or []
+            raw_attaches = getattr(message, '_raw_attaches', [])
+
             if attaches:
                 print(f"[MAX] Вложения ({len(attaches)})")
 
-            for attach in attaches:
-                await _process_attachment(attach, chat_id)
+            for i, attach in enumerate(attaches):
+                raw = raw_attaches[i] if i < len(raw_attaches) else {}
+                await _process_attachment(attach, chat_id, raw_data=raw)
 
             # Также проверяем ссылки на файлы в тексте
             if text:
@@ -51,7 +74,7 @@ def register_handlers(dispatcher):
             traceback.print_exc()
 
 
-async def _process_attachment(attach, chat_id: int):
+async def _process_attachment(attach, chat_id: int, raw_data: dict = None):
     """Обрабатывает вложение — типизированный File или raw dict."""
     try:
         if isinstance(attach, File):
@@ -64,6 +87,17 @@ async def _process_attachment(attach, chat_id: int):
             # Пробуем получить fileName из model_extra (pydantic extra fields)
             if not file_name and hasattr(attach, 'model_extra') and attach.model_extra:
                 file_name = attach.model_extra.get('fileName', '')
+
+            # Пробуем получить fileName из сырых данных вложения
+            if not file_name and raw_data and isinstance(raw_data, dict):
+                file_name = raw_data.get('fileName', '') or ''
+
+            # Пробуем извлечь имя файла из URL
+            if not file_name and file_url:
+                from urllib.parse import urlparse, unquote
+                path_part = unquote(urlparse(file_url).path.split('/')[-1])
+                if '.' in path_part:
+                    file_name = path_part
 
             print(f"[MAX] File: name={file_name!r}, url={file_url!r}, "
                   f"id={file_id}, token_len={len(file_token) if file_token else 0}")
@@ -93,7 +127,11 @@ async def _process_attachment(attach, chat_id: int):
             return
 
         if not file_name:
-            print(f"[MAX] Вложение без имени файла, пропускаем")
+            # Диагностика: выводим все доступные данные
+            if raw_data:
+                print(f"[MAX] Вложение без имени файла. Raw data keys: {list(raw_data.keys()) if isinstance(raw_data, dict) else type(raw_data)}")
+            else:
+                print(f"[MAX] Вложение без имени файла, пропускаем")
             return
 
         if not _is_schedule_file(file_name):

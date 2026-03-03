@@ -91,10 +91,19 @@ def _chars_to_runs(chars: list, gap: float = 12.0,
         curr_x = c["x0"]
         prev_font = current[-1].get("fontname", "")
         curr_font = c.get("fontname", "")
+        prev_text = current[-1].get("text", "")
+        curr_text = c.get("text", "")
         # Новый run: большой разрыв вперёд, откат назад (≥1.5pt), ИЛИ смена шрифта
-        if (curr_x - prev_x > gap or
-                curr_x < prev_x - 1.5 or
-                (prev_font and curr_font and prev_font != curr_font)):
+        split = (curr_x - prev_x > gap or
+                 curr_x < prev_x - 1.5 or
+                 (prev_font and curr_font and prev_font != curr_font))
+        # Split: точка + backward uppercase (граница между ФИО преподавателей)
+        if not split and prev_text == "." and curr_text.isupper() and curr_x < prev_x:
+            split = True
+        # Split: lowercase→UPPERCASE (склеенные дисциплины "проектИстория", "86-бПрактика")
+        if not split and prev_text.islower() and curr_text.isupper():
+            split = True
+        if split:
             runs.append(current)
             current = []
         current.append(c)
@@ -170,6 +179,9 @@ def _looks_like_aud(text: str) -> bool:
     except (ValueError, OverflowError):
         pass
     if re.match(r"^[ВвЦцИиТтЕеРр/зс_\d\.\-]+$", text):
+        return True
+    # "86-б", "89а" — число + необязательный дефис + одна буква
+    if re.match(r"^\d{1,4}[- ]?[а-яА-Яa-zA-Z]$", text):
         return True
     return False
 
@@ -320,6 +332,22 @@ def _extract_block(page_chars: list, block_groups: List[Dict],
             if gi >= 0:
                 d = run["x_start"] - group_starts[gi]
                 teacher_per_group[gi].append((d, run["text"]))
+
+        # Фильтр overflow: disc начинающийся с lowercase — мусор из соседней группы
+        for gi in disc_per_group:
+            entries = disc_per_group[gi]
+            if len(entries) > 1:
+                filtered = [(d, t) for d, t in entries if not t or not t[0].islower()]
+                if filtered:
+                    disc_per_group[gi] = filtered
+
+        # Фильтр overflow: teacher начинающийся с "." или lowercase — фрагмент ФИО из соседней группы
+        for gi in teacher_per_group:
+            entries = teacher_per_group[gi]
+            if len(entries) > 1:
+                filtered = [(d, t) for d, t in entries if t and t[0].isalpha() and t[0].isupper()]
+                if filtered:
+                    teacher_per_group[gi] = filtered
 
         # Сортируем по расстоянию от начала группы
         for gi in disc_per_group:

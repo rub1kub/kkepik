@@ -16,6 +16,7 @@ RENDER_DPI = 200
 GROUP_MARGIN_PT = 5.0
 BLOCK_Y_PAD_TOP_PT = 3.0
 BLOCK_Y_PAD_BOTTOM_PT = 3.0
+CONTENT_PAD_BOTTOM_PT = 25.0  # отступ ниже последнего номера пары
 
 
 def crop_group_screenshots(file_path: str) -> dict[str, bytes]:
@@ -61,7 +62,14 @@ def crop_group_screenshots(file_path: str) -> dict[str, bytes]:
                 if bi + 1 < len(sorted_ys):
                     y_bot_pt = sorted_ys[bi + 1] - BLOCK_Y_PAD_BOTTOM_PT
                 else:
-                    y_bot_pt = page.height - 5
+                    # Последний блок: ищем реальную нижнюю границу контента
+                    y_start = by + 3
+                    last_content_y = by
+                    for c in page.chars:
+                        if c["top"] >= y_start and c["top"] <= page.height and c["x0"] >= 10:
+                            if c["top"] > last_content_y:
+                                last_content_y = c["top"]
+                    y_bot_pt = last_content_y + CONTENT_PAD_BOTTOM_PT
 
                 y_top_px = max(0, int(y_top_pt * scale))
                 y_bot_px = min(pil_img.height, int(y_bot_pt * scale))
