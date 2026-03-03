@@ -16,7 +16,8 @@ RENDER_DPI = 200
 GROUP_MARGIN_PT = 5.0
 BLOCK_Y_PAD_TOP_PT = 3.0
 BLOCK_Y_PAD_BOTTOM_PT = 3.0
-CONTENT_PAD_BOTTOM_PT = 25.0  # отступ ниже последнего номера пары
+CONTENT_PAD_BOTTOM_PT = 15.0  # отступ ниже последнего контента
+CONTENT_PAD_RIGHT_PT = 5.0    # отступ правее последнего контента
 
 
 def crop_group_screenshots(file_path: str) -> dict[str, bytes]:
@@ -62,11 +63,14 @@ def crop_group_screenshots(file_path: str) -> dict[str, bytes]:
                 if bi + 1 < len(sorted_ys):
                     y_bot_pt = sorted_ys[bi + 1] - BLOCK_Y_PAD_BOTTOM_PT
                 else:
-                    # Последний блок: ищем реальную нижнюю границу контента
+                    # Последний блок: ищем нижнюю границу контента в пределах блока
                     y_start = by + 3
+                    block_x_left = bg[0]["x"] - GROUP_MARGIN_PT
+                    block_x_right = bg[-1]["x"] + col_width + GROUP_MARGIN_PT
                     last_content_y = by
                     for c in page.chars:
-                        if c["top"] >= y_start and c["top"] <= page.height and c["x0"] >= 10:
+                        if (c["top"] >= y_start and c["top"] <= page.height
+                                and block_x_left <= c["x0"] <= block_x_right):
                             if c["top"] > last_content_y:
                                 last_content_y = c["top"]
                     y_bot_pt = last_content_y + CONTENT_PAD_BOTTOM_PT
@@ -74,12 +78,19 @@ def crop_group_screenshots(file_path: str) -> dict[str, bytes]:
                 y_top_px = max(0, int(y_top_pt * scale))
                 y_bot_px = min(pil_img.height, int(y_bot_pt * scale))
 
+                # Стандартная ширина столбца (из расстояния между группами)
+                if len(bg) >= 2:
+                    col_width = bg[1]["x"] - bg[0]["x"]
+                else:
+                    col_width = 130.0  # fallback
+
                 for gi, g in enumerate(bg):
                     x_left_pt = g["x"] - GROUP_MARGIN_PT
                     if gi + 1 < len(bg):
                         x_right_pt = bg[gi + 1]["x"] - GROUP_MARGIN_PT
                     else:
-                        x_right_pt = page.width
+                        # Последняя группа: ширина = стандартная ширина столбца
+                        x_right_pt = min(g["x"] + col_width, page.width)
 
                     x_left_px = max(0, int(x_left_pt * scale))
                     x_right_px = min(pil_img.width, int(x_right_pt * scale))
