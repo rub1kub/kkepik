@@ -111,6 +111,17 @@ def parse_schedule_for_group(df, row_g: int, col_g: int, group_name: str) -> lis
     Парсим расписание для группы. col_g — это столбец, где найдена группа.
     Теперь для всех пар от 1 до максимальной, если пары нет — добавляем строку '▪️N пара – Нет'.
     """
+    # Курс группы: первый символ 3-го сегмента ("101-Д9-2КСК" → 2)
+    try:
+        _course = int(group_name.split("-")[2][0])
+    except (IndexError, ValueError):
+        _course = 1
+    _bold = _course >= 2
+
+    def _fmt_t(t: str) -> str:
+        """Оборачивает преподавателя в <b> для курсов 2+."""
+        return f"<b>{t}</b>" if _bold and t else t
+
     pairs_dict = {}
     max_pair = 0
     i = row_g + 1
@@ -165,11 +176,11 @@ def parse_schedule_for_group(df, row_g: int, col_g: int, group_name: str) -> lis
 
             t1, t2 = teacher1.strip(), teacher2.strip()
             if t1 and t2 and t1 != t2:
-                line += f" – {t1} / {t2}"
+                line += f" – {_fmt_t(t1)} / {_fmt_t(t2)}"
             elif t1:
-                line += f" – {t1}"
+                line += f" – {_fmt_t(t1)}"
             elif t2:
-                line += f" – {t2}"
+                line += f" – {_fmt_t(t2)}"
 
             auds = []
             for a in [aud1, aud2, aud1t, aud2t]:
@@ -197,7 +208,7 @@ def parse_schedule_for_group(df, row_g: int, col_g: int, group_name: str) -> lis
         if disc1.strip():
             line1 = f"▪️{pair_val} пара – {disc1}"
             if teacher1.strip():
-                line1 += f" – {teacher1}"
+                line1 += f" – {_fmt_t(teacher1.strip())}"
             if aud1.strip():
                 line1 += f" – {aud1}"
             if aud1t.strip():
@@ -211,7 +222,7 @@ def parse_schedule_for_group(df, row_g: int, col_g: int, group_name: str) -> lis
         if disc2.strip() or teacher2.strip():
             line2 = f"▪️{pair_val} пара – {disc2}"
             if teacher2.strip():
-                line2 += f" – {teacher2}"
+                line2 += f" – {_fmt_t(teacher2.strip())}"
             if aud2.strip():
                 line2 += f" – {aud2}"
             if aud2t.strip():

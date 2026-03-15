@@ -53,17 +53,23 @@ def _find_group_positions(page) -> List[Dict]:
     return groups
 
 
-def _find_pair_numbers(chars: list) -> List[Dict]:
+def _find_pair_numbers(chars: list, max_x: float = 52) -> List[Dict]:
     """
-    Находит номера пар: одиночные цифры при x < 52.
+    Находит номера пар: одиночные цифры при x < max_x.
+    В PDF бывают 2 колонки цифр (пары и уроки) — берём только ЛЕВУЮ (пары).
     Возвращает [{num: str, top: float}] отсортированные по top.
     """
-    pairs = []
+    candidates = []
     for c in chars:
-        if c["x0"] < 52 and c["text"].strip().isdigit() and len(c["text"].strip()) == 1:
-            pairs.append({"num": c["text"].strip(), "top": c["top"]})
+        if c["x0"] < max_x and c["text"].strip().isdigit() and len(c["text"].strip()) == 1:
+            candidates.append({"num": c["text"].strip(), "top": c["top"], "x": c["x0"]})
+    if not candidates:
+        return []
+    # Берём только левую колонку цифр (tolerance 5pt)
+    leftmost_x = min(c["x"] for c in candidates)
+    pairs = [p for p in candidates if p["x"] - leftmost_x < 5]
     pairs.sort(key=lambda p: p["top"])
-    return pairs
+    return [{"num": p["num"], "top": p["top"]} for p in pairs]
 
 
 # ──────────────────────────────────────────────
@@ -251,8 +257,9 @@ def _extract_block(page_chars: list, block_groups: List[Dict],
     if not block_chars:
         return []
 
-    # Номера пар в этом блоке
-    pair_nums = _find_pair_numbers(block_chars)
+    # Номера пар в этом блоке (порог x определяем по первой группе)
+    pair_num_max_x = group_starts[0] - 8 if group_starts else 52
+    pair_nums = _find_pair_numbers(block_chars, max_x=pair_num_max_x)
     if not pair_nums:
         return []
 
@@ -276,9 +283,10 @@ def _extract_block(page_chars: list, block_groups: List[Dict],
         else:
             pair_y_end = y_end
 
-        # Собираем символы этой пары (исключая x < 62 — это пара/урок)
+        # Собираем символы этой пары (исключая x левее пар-колонки)
+        content_min_x = group_starts[0] - 10 if group_starts else 62
         pair_chars = [c for c in block_chars
-                      if pair_top - 2 <= c["top"] <= pair_y_end and c["x0"] >= 62]
+                      if pair_top - 2 <= c["top"] <= pair_y_end and c["x0"] >= content_min_x]
 
         if not pair_chars:
             # Пустая пара

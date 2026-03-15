@@ -37,42 +37,17 @@ def _from_update_with_raw(cls, update):
     except Exception:
         pass
 
-    # 2. Логируем полный raw payload для диагностики
-    try:
-        payload = update.payload or {}
-        msg_data = payload.get('message', {})
-        print(f"[MAX-DEBUG] Raw payload keys: {list(payload.keys())}")
-        print(f"[MAX-DEBUG] Raw message keys: {list(msg_data.keys())}")
-        if raw_attaches:
-            for i, ra in enumerate(raw_attaches):
-                if isinstance(ra, dict):
-                    print(f"[MAX-DEBUG] raw_attach[{i}]: keys={list(ra.keys())}, "
-                          f"_type={ra.get('_type', 'N/A')}, type={ra.get('type', 'N/A')}, "
-                          f"fileName={ra.get('fileName', 'N/A')}")
-                else:
-                    print(f"[MAX-DEBUG] raw_attach[{i}]: {type(ra).__name__} = {repr(ra)[:200]}")
-        else:
-            print(f"[MAX-DEBUG] raw_attaches пусто, text={msg_data.get('text', '')[:80]}")
-
-        # Проверяем link/body — MAX иногда хранит файлы там
-        for extra_key in ('link', 'body', 'forward', 'payload'):
-            if extra_key in msg_data and msg_data[extra_key]:
-                print(f"[MAX-DEBUG] message['{extra_key}'] = {_safe_repr(msg_data[extra_key]) if isinstance(msg_data[extra_key], dict) else repr(msg_data[extra_key])[:200]}")
-    except Exception as e:
-        print(f"[MAX-DEBUG] Ошибка логирования: {e}")
-
-    # 3. Фиксим attaches: добавляем _type если отсутствует (иначе валидатор pyromax падает)
+    # 2. Фиксим attaches: добавляем _type если отсутствует (иначе валидатор pyromax падает)
     try:
         if update.payload and 'message' in update.payload:
             attaches = update.payload['message'].get('attaches', [])
             for i, a in enumerate(attaches):
                 if isinstance(a, dict) and '_type' not in a:
                     inferred_type = a.get('type', 'UNKNOWN').upper()
-                    print(f"[MAX-DEBUG] Attach[{i}] без _type, ставим '{inferred_type}'")
                     attaches[i] = dict(a)
                     attaches[i]['_type'] = inferred_type
-    except Exception as e:
-        print(f"[MAX-DEBUG] Ошибка фикса attaches: {e}")
+    except Exception:
+        pass
 
     # 4. Вызываем оригинальный from_update
     try:
@@ -129,46 +104,59 @@ def _extract_file_ids(attach, raw_data: dict = None) -> tuple[int, str]:
     return int(file_id) if file_id else 0, str(token)
 
 
-async def _get_file_url_from_api(max_api: MaxApi, file_id: int) -> str:
-    """Получает URL скачивания файла через MAX API (опкод GET_FILE = 88)."""
+async def _get_file_url_from_api(max_api: MaxApi, file_id: int, token: str = '',
+                                  chat_id: int = 0, message_id: str = '') -> str:
+    """Получает URL скачивания файла через MAX API (опкод GET_FILE = 88).
+    Требует fileId + chatId + messageId (как в веб-клиенте MAX).
+    """
     try:
         from pyromax.types.OpcodeEnum import Opcode
-        print(f"[MAX] Запрашиваем URL для fileId={file_id}...")
+        payload = {'fileId': file_id}
+        if chat_id:
+            payload['chatId'] = chat_id
+        if message_id:
+            payload['messageId'] = message_id
+        print(f"[MAX] GET_FILE: fileId={file_id}, chatId={chat_id}, msgId={message_id}")
         response, seq = await max_api.max_client.send_and_receive(
             opcode=Opcode.GET_FILE.value,
-            payload={'fileId': file_id}
+            payload=payload
         )
         if response:
-            for item in (response if isinstance(response, list) else [response]):
-                if isinstance(item, dict):
-                    payload = item.get('payload', {})
-                    # URL может быть на разных уровнях
-                    url = payload.get('url', '')
-                    if url:
-                        print(f"[MAX] Получен URL: {url[:80]}")
-                        return url
-                    # Проверяем вложенные структуры
-                    for key in ('info', 'file', 'data'):
-                        nested = payload.get(key)
-                        if isinstance(nested, dict):
-                            url = nested.get('url', '')
-                            if url:
-                                print(f"[MAX] Получен URL из {key}: {url[:80]}")
-                                return url
-                        elif isinstance(nested, list):
-                            for n in nested:
-                                if isinstance(n, dict):
-                                    url = n.get('url', '')
-                                    if url:
-                                        print(f"[MAX] Получен URL из {key}[]: {url[:80]}")
-                                        return url
-                    # Логируем весь payload если URL не найден
-                    print(f"[MAX] GET_FILE payload (URL не найден): {_safe_repr(payload)}")
+            url = _find_url_in_response(response)
+            if url:
+                print(f"[MAX] GET_FILE URL: {url[:100]}")
+                return url
+            print(f"[MAX] GET_FILE ответ (URL не найден): {_safe_repr(response[0] if isinstance(response, list) else response)}")
         else:
             print(f"[MAX] GET_FILE пустой ответ")
     except Exception as e:
         print(f"[MAX] Ошибка GET_FILE: {e}")
-        traceback.print_exc()
+
+    return ''
+
+
+def _find_url_in_response(data, depth: int = 0) -> str:
+    """Рекурсивно ищет URL в структуре ответа."""
+    if depth > 5:
+        return ''
+    if isinstance(data, list):
+        for item in data:
+            url = _find_url_in_response(item, depth + 1)
+            if url:
+                return url
+    elif isinstance(data, dict):
+        # Ищем URL-подобные значения
+        for key in ('url', 'fileUrl', 'file_url', 'downloadUrl', 'download_url', 'link'):
+            val = data.get(key, '')
+            if val and isinstance(val, str) and val.startswith('http'):
+                return val
+        # Рекурсия в payload и другие dict-значения
+        for key in ('payload', 'info', 'file', 'data', 'result', 'body'):
+            nested = data.get(key)
+            if nested:
+                url = _find_url_in_response(nested, depth + 1)
+                if url:
+                    return url
     return ''
 
 
@@ -255,8 +243,7 @@ def _extract_file_info(attach, raw_data: dict = None) -> tuple[str, str]:
 def register_handlers(dispatcher):
     """Регистрирует обработчики событий pyromax."""
 
-    @dispatcher.message()
-    async def on_message(message: Message, max_api: MaxApi):
+    async def _handle_message(message: Message, max_api: MaxApi):
         """Обрабатывает входящие сообщения. Ищет файлы расписания."""
         try:
             chat_id = message.chat_id
@@ -278,16 +265,21 @@ def register_handlers(dispatcher):
 
             print(f"[MAX] attaches={len(attaches)}, raw_attaches={len(raw_attaches)}")
 
+            # message_id нужен для GET_FILE запроса
+            msg_id = getattr(message, 'id', '') or ''
+
             # Обрабатываем типизированные вложения
             for i, attach in enumerate(attaches):
                 raw = raw_attaches[i] if i < len(raw_attaches) else {}
-                await _process_attachment(attach, chat_id, raw_data=raw, max_api=max_api)
+                await _process_attachment(attach, chat_id, raw_data=raw, max_api=max_api,
+                                          message_id=msg_id)
 
             # Если typed attaches пусто, но raw_attaches есть — обрабатываем raw напрямую
             if not attaches and raw_attaches:
                 print(f"[MAX] Typed attaches пусто, обрабатываем {len(raw_attaches)} raw attaches")
                 for raw in raw_attaches:
-                    await _process_attachment(raw, chat_id, raw_data=raw, max_api=max_api)
+                    await _process_attachment(raw, chat_id, raw_data=raw, max_api=max_api,
+                                              message_id=msg_id)
 
             # Проверяем link/body/forward в raw_message — MAX иногда хранит файлы там
             for extra_key in ('link', 'body', 'forward'):
@@ -307,22 +299,47 @@ def register_handlers(dispatcher):
             print(f"[MAX] Ошибка обработки сообщения: {e}")
             traceback.print_exc()
 
+    # Регистрируем через декоратор (для type='USER')
+    @dispatcher.message()
+    async def on_message(message: Message, max_api: MaxApi):
+        await _handle_message(message, max_api)
 
-async def _process_attachment(attach, chat_id: int, raw_data: dict = None, max_api: MaxApi = None):
+    # Добавляем CHAT event для групповых сообщений
+    from pyromax.api.observer.event.MaxEventObserver import MaxEventObserver
+    from pyromax.types.OpcodeEnum import Opcode
+    if 'CHAT' not in dispatcher.events:
+        chat_observer = MaxEventObserver(dispatcher, 'CHAT',
+                                         opcode=Opcode.PUSH_NOTIFICATION.value,
+                                         type_of_update=Message)
+        dispatcher.events['CHAT'] = chat_observer
+
+    @dispatcher.events['CHAT']()
+    async def on_chat_message(message: Message, max_api: MaxApi):
+        await _handle_message(message, max_api)
+
+
+async def _process_attachment(attach, chat_id: int, raw_data: dict = None, max_api: MaxApi = None,
+                              message_id: str = ''):
     """Обрабатывает вложение — типизированный File, raw dict или другой тип."""
     try:
         attach_type = type(attach).__name__
-        # Полная диагностика raw_data
-        if raw_data and isinstance(raw_data, dict):
-            print(f"[MAX] Attach type={attach_type}, raw keys={list(raw_data.keys())}, "
-                  f"raw_data={_safe_repr(raw_data)}")
-        else:
-            print(f"[MAX] Attach type={attach_type}, raw_data={raw_data!r}")
+        raw_keys = list(raw_data.keys()) if isinstance(raw_data, dict) else []
+        print(f"[MAX] Attach type={attach_type}, raw_keys={raw_keys}")
 
         file_name, file_url = _extract_file_info(attach, raw_data)
+        file_id, token = _extract_file_ids(attach, raw_data)
+        print(f"[MAX] Extracted: name={file_name!r}, url={file_url[:80] if file_url else ''!r}, "
+              f"fileId={file_id}, token={token[:20] if token else ''!r}")
 
-        url_short = file_url[:80] if file_url else ''
-        print(f"[MAX] Extracted: name={file_name!r}, url={url_short!r}")
+        # Если URL нет — получаем через MAX API по fileId + chatId + messageId
+        if not file_url and max_api and file_id:
+            file_url = await _get_file_url_from_api(max_api, file_id, token,
+                                                     chat_id=chat_id, message_id=message_id)
+
+        # Если имени нет но URL есть — извлекаем имя из URL или Content-Disposition
+        if not file_name and file_url:
+            file_name = await _get_filename_from_url(file_url)
+            print(f"[MAX] Имя из URL/headers: {file_name!r}")
 
         if not file_name:
             print(f"[MAX] Вложение без имени файла, пропускаем")
@@ -332,18 +349,11 @@ async def _process_attachment(attach, chat_id: int, raw_data: dict = None, max_a
             print(f"[MAX] Файл '{file_name}' не похож на расписание, пропускаем")
             return
 
-        print(f"[MAX] Обнаружен файл расписания: {file_name} (чат: {chat_id})")
-
-        # Если URL нет — получаем через MAX API по fileId
-        if not file_url and max_api:
-            file_id, token = _extract_file_ids(attach, raw_data)
-            if file_id:
-                file_url = await _get_file_url_from_api(max_api, file_id)
-
         if not file_url:
             print(f"[MAX] Нет URL для скачивания файла '{file_name}'")
             return
 
+        print(f"[MAX] Обнаружен файл расписания: {file_name} (чат: {chat_id})")
         await _download_and_broadcast(file_url, file_name)
 
     except Exception as e:
@@ -361,6 +371,34 @@ def _safe_repr(d: dict, max_len: int = 500) -> str:
         parts.append(f"{k}={sv}")
     result = '{' + ', '.join(parts) + '}'
     return result[:max_len]
+
+
+async def _get_filename_from_url(url: str) -> str:
+    """Извлекает имя файла из URL (path) или из Content-Disposition заголовка (HEAD запрос)."""
+    from urllib.parse import urlparse, unquote
+
+    # 1. Пробуем из URL path
+    try:
+        path_part = unquote(urlparse(url).path.split('/')[-1])
+        if '.' in path_part and len(path_part) > 3:
+            return path_part
+    except Exception:
+        pass
+
+    # 2. HEAD запрос для Content-Disposition
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.head(url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                cd = resp.headers.get('Content-Disposition', '')
+                if 'filename' in cd:
+                    # filename="name.pdf" или filename*=UTF-8''name.pdf
+                    m = re.search(r"filename\*?=['\"]?(?:UTF-8'')?([^;\"']+)", cd, re.IGNORECASE)
+                    if m:
+                        return unquote(m.group(1).strip())
+    except Exception as e:
+        print(f"[MAX] HEAD запрос для имени файла не удался: {e}")
+
+    return ''
 
 
 async def _check_text_for_schedule_links(text: str, chat_id: int):
