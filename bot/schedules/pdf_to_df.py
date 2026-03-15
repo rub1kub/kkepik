@@ -130,7 +130,7 @@ def _chars_to_runs(chars: list, gap: float = 12.0,
                     sub.append(ch)
                     if i < len(sorted_run) - 1:
                         next_ch = sorted_run[i + 1]
-                        x_gap = next_ch["x0"] - ch["x0"]
+                        x_gap = next_ch["x0"] - ch.get("x1", ch["x0"])
                         if x_gap >= min_boundary_gap:
                             gi_cur = _assign_to_group(ch["x0"], group_starts)
                             gi_next = _assign_to_group(next_ch["x0"], group_starts)
@@ -406,13 +406,20 @@ def pdf_to_dataframe(file_path: str) -> Optional[pd.DataFrame]:
     """
     Конвертирует PDF-файл расписания в pandas DataFrame.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     all_rows = []
 
     with pdfplumber.open(file_path) as pdf:
+        logger.info(f"pdf_to_df: {file_path}, pages={len(pdf.pages)}")
         for page in pdf.pages:
             groups = _find_group_positions(page)
             if not groups:
+                logger.warning(f"pdf_to_df: page {page.page_number} — групп не найдено "
+                               f"(chars={len(page.chars)}, words={len(page.extract_words())})")
                 continue
+            logger.info(f"pdf_to_df: page {page.page_number} — {len(groups)} групп")
 
             page_chars = page.chars
 
@@ -439,6 +446,7 @@ def pdf_to_dataframe(file_path: str) -> Optional[pd.DataFrame]:
                 all_rows.extend(rows)
 
     if not all_rows:
+        logger.warning(f"pdf_to_df: all_rows пуст — ни одна группа не распознана в {file_path}")
         return None
 
     max_cols = max(len(r) for r in all_rows)
