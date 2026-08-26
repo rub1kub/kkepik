@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap');
+@import url('./fonts.css');
 
 :root {
     --tg-theme-bg-color: #ffffff;
@@ -455,12 +455,12 @@ button:disabled {
     border-radius: 16px;
     padding: 1px;
     background: var(--tg-theme-hint-color, rgba(0,0,0,0.1));
-    -webkit-mask: 
-        linear-gradient(#fff 0 0) content-box, 
+    -webkit-mask:
+        linear-gradient(#fff 0 0) content-box,
         linear-gradient(#fff 0 0);
     -webkit-mask-composite: xor;
-    mask: 
-        linear-gradient(#fff 0 0) content-box, 
+    mask:
+        linear-gradient(#fff 0 0) content-box,
         linear-gradient(#fff 0 0);
     mask-composite: exclude;
     pointer-events: none;
@@ -999,13 +999,13 @@ button:disabled {
     .reaction-picker {
         width: 95%;
     }
-    
+
     .emoji-list {
         grid-template-columns: repeat(4, 1fr);
         gap: 6px;
         padding: 12px;
     }
-    
+
     .emoji-item .emoji {
         font-size: 20px;
     }
@@ -1713,4 +1713,4 @@ button:disabled {
 }
 .autocomplete-dropdown .dropdown-item:last-child {
     border-bottom: none;
-} 
+}

@@ -6,7 +6,7 @@
     <title>Шашки</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/checkers.css') }}">
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
 </head>
 <body>
     <div id="main-content">
@@ -59,4 +59,4 @@
     </div>
     <script src="{{ url_for('static', filename='js/checkers.js') }}?v={{ STATIC_VERSION }}"></script>
 </body>
-</html> 
+</html>

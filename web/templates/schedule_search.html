@@ -2,61 +2,162 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#ffffff">
     <title>Поиск расписания</title>
+    <link rel="icon" href="data:,">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_search.css') }}?v={{ STATIC_VERSION }}">
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
 </head>
 <body>
-    <div class="container">
-        <div class="search-container">
-            <h1>Поиск расписания</h1>
-            
-            <div class="search-form">
-                <div class="search-type-selector">
-                    <button class="type-btn active" data-type="group">Поиск по группе</button>
-                    <button class="type-btn" data-type="teacher">Поиск по преподавателю</button>
-                    <button class="type-btn" data-type="audience">Поиск по аудитории</button>
+    <main class="page-shell">
+        <section class="search-panel" aria-label="Параметры поиска">
+            <form id="schedule-search-form" novalidate>
+                <div class="type-selector" role="tablist" aria-label="Искать расписание по">
+                    <button class="type-button active" type="button" role="tab" aria-selected="true" data-type="group">Группа</button>
+                    <button class="type-button" type="button" role="tab" aria-selected="false" data-type="teacher">Преподаватель</button>
+                    <button class="type-button" type="button" role="tab" aria-selected="false" data-type="audience">Аудитория</button>
                 </div>
 
-                <div class="search-inputs">
-                    <div class="input-group group-input">
-                        <input type="text" id="group" placeholder="103-Д9-1ИНС" class="search-input">
+                <button class="my-entity" id="my-entity" type="button" hidden>
+                    <span class="my-entity-label" id="my-entity-label">Моя группа</span>
+                    <strong id="my-entity-value"></strong>
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="m9 18 6-6-6-6" />
+                    </svg>
+                </button>
+
+                <div class="search-field-group">
+                    <label class="field-label" id="search-label" for="search-value">Номер группы</label>
+                    <div class="search-field">
+                        <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <circle cx="11" cy="11" r="7" />
+                            <path d="m20 20-4-4" />
+                        </svg>
+                        <input
+                            id="search-value"
+                            type="text"
+                            autocomplete="off"
+                            autocapitalize="characters"
+                            enterkeyhint="search"
+                            spellcheck="false"
+                            placeholder="Например, 103-Д9-2ИНС"
+                            aria-describedby="field-hint"
+                            aria-controls="autocomplete-list"
+                            aria-autocomplete="list"
+                        >
+                        <button class="clear-button" id="clear-search" type="button" aria-label="Очистить поле" hidden>
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="m7 7 10 10M17 7 7 17" />
+                            </svg>
+                        </button>
                     </div>
-                    <div class="input-group teacher-input" style="display: none;">
-                        <input type="text" id="teacher" placeholder="Иванов И.И." class="search-input">
-                    </div>
-                    <div class="input-group audience-input" style="display: none;">
-                        <input type="text" id="audience" placeholder="42" class="search-input">
-                    </div>
-                    <div class="input-group">
-                        <input type="date" id="date" class="search-input">
-                    </div>
+                    <p class="field-hint" id="field-hint">Начните вводить название группы</p>
+                    <div class="autocomplete-list" id="autocomplete-list" role="listbox" hidden></div>
                 </div>
 
-                <button id="search-btn" class="search-button">Найти расписание</button>
-            </div>
+                <fieldset class="date-fieldset">
+                    <legend>Дата</legend>
+                    <div class="date-selector" id="date-selector">
+                        <button class="date-choice" type="button" data-date-offset="-1" aria-pressed="false">
+                            <span>Вчера</span>
+                            <strong></strong>
+                        </button>
+                        <button class="date-choice active" type="button" data-date-offset="0" aria-pressed="true">
+                            <span>Сегодня</span>
+                            <strong></strong>
+                        </button>
+                        <button class="date-choice" type="button" data-date-offset="1" aria-pressed="false">
+                            <span>Завтра</span>
+                            <strong></strong>
+                        </button>
+                        <div class="custom-date-wrapper">
+                            <button class="date-choice custom-date-choice" id="custom-date-choice" type="button" aria-pressed="false">
+                                <span>Другая</span>
+                                <strong id="custom-date-label"></strong>
+                            </button>
+                        </div>
+                    </div>
+                </fieldset>
+
+            </form>
+
+            <section class="recent-section" id="recent-section" aria-labelledby="recent-title" hidden>
+                <div class="recent-heading">
+                    <h2 id="recent-title">Недавние запросы</h2>
+                    <button id="clear-recent" type="button">Очистить</button>
+                </div>
+                <div class="recent-list" id="recent-list"></div>
+            </section>
+        </section>
+
+        <div class="search-action-dock">
+            <button class="search-submit" id="search-submit" type="submit" form="schedule-search-form">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="m20 20-4-4" />
+                </svg>
+                <span>Найти</span>
+                <span class="button-spinner" aria-hidden="true"></span>
+            </button>
         </div>
 
-        <div class="results-container" style="display: none;">
-            <div class="schedule-header">
+        <div class="status-message" id="status-message" role="status" aria-live="polite" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 8v5M12 17h.01" />
+            </svg>
+            <span></span>
+        </div>
+
+        <section class="results-panel" id="results-panel" aria-labelledby="schedule-title" hidden>
+            <header class="schedule-header">
+                <p class="schedule-kind" id="schedule-kind"></p>
                 <h2 id="schedule-title"></h2>
-                <div class="schedule-date" id="schedule-date"></div>
-            </div>
-            
-            <div class="schedule-table">
-                <div class="schedule-row header">
-                    <div class="time">Время</div>
-                    <div class="subject">Предмет</div>
-                    <div class="room">Аудитория</div>
-                </div>
-                <div id="schedule-content"></div>
-            </div>
-        </div>
+                <time class="schedule-date" id="schedule-date"></time>
+            </header>
 
-        <div class="error-message" style="display: none;"></div>
+            <div class="lesson-list" id="schedule-content" role="list"></div>
+
+            <div class="result-actions" id="result-actions" hidden>
+                <a class="download-button" id="download-schedule" href="#">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 3v12m0 0 4-4m-4 4-4-4" />
+                        <path d="M5 19h14" />
+                    </svg>
+                    Скачать PDF
+                </a>
+            </div>
+        </section>
+    </main>
+
+    <div class="calendar-overlay" id="calendar-overlay" hidden>
+        <section class="calendar-sheet" role="dialog" aria-modal="true" aria-labelledby="calendar-title">
+            <div class="calendar-handle" aria-hidden="true"></div>
+            <header class="calendar-header">
+                <div>
+                    <h2 id="calendar-title">Выберите дату</h2>
+                    <p id="calendar-month-label"></p>
+                </div>
+                <div class="calendar-navigation" aria-label="Переключение месяца">
+                    <button id="calendar-prev" type="button" aria-label="Предыдущий месяц">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+                    </button>
+                    <button id="calendar-next" type="button" aria-label="Следующий месяц">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+                    </button>
+                </div>
+            </header>
+
+            <div class="calendar-weekdays" aria-hidden="true">
+                <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span>
+            </div>
+            <div class="calendar-grid" id="calendar-grid"></div>
+            <button class="calendar-cancel" id="calendar-cancel" type="button">Отмена</button>
+        </section>
     </div>
 
+    <noscript>Для поиска расписания необходимо включить JavaScript.</noscript>
     <script src="{{ url_for('static', filename='js/schedule_search.js') }}?v={{ STATIC_VERSION }}"></script>
 </body>
-</html> 
+</html>

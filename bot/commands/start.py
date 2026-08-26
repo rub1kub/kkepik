@@ -11,16 +11,19 @@ from aiogram.fsm.state import State, StatesGroup
 import re
 from aiogram.enums import ParseMode
 from difflib import get_close_matches
-import datetime
 import pandas as pd
 import os
-from zoneinfo import ZoneInfo
 
 import global_schedules
 from schedules import group_schedule, teacher_schedule, parser_all
-from schedules.schedule_mood import get_mood_emoji
-from schedules.pair_times import add_pair_times, is_saturday
-import config
+from schedules.schedule_formatter import (
+    build_group_schedule_message,
+    fit_photo_caption,
+    telegram_text_length,
+)
+from schedules.schedule_dates import is_current_schedule
+from schedules.schedule_keyboard import create_schedule_keyboard
+from tracked_groups import get_tracked_groups, replace_tracked_groups
 
 
 def _find_latest_schedule(schedule_type: str):
@@ -61,6 +64,9 @@ def _find_latest_schedule(schedule_type: str):
             else:
                 continue
 
+            if not is_current_schedule(date_str):
+                continue
+
             if ext == '.pdf':
                 from schedules.pdf_to_df import pdf_to_dataframe
                 df = pdf_to_dataframe(file_path)
@@ -84,35 +90,7 @@ class RegistrationStates(StatesGroup):
     is_class_teacher = State()
     waiting_group = State()
     
-webapp_url = "https://kkepik.ru/"
-
-def create_schedule_keyboard(schedule_date: str, schedule_type: str = "groups") -> types.InlineKeyboardMarkup:
-    """
-    Создает клавиатуру с кнопками для расписания
-    
-    Args:
-        schedule_date: Дата в формате dd.mm.yyyy
-        schedule_type: Тип расписания ("groups" или "teachers")
-    """
-    # Создаем инлайн кнопку для открытия веб-приложения
-    webapp_button = types.InlineKeyboardButton(
-        text="📱 Открыть приложение",
-        web_app=types.WebAppInfo(url=webapp_url)
-    )
-    
-    # Создаем кнопку для скачивания файла
-    api_port = config.get_api_port()
-    download_url = f"https://kkepik.ru/api/schedule/download/{schedule_type}/{schedule_date}"
-    download_button = types.InlineKeyboardButton(
-        text="📥 Скачать файлом",
-        url=download_url
-    )
-    
-    # Возвращаем клавиатуру с двумя кнопками (скачивание сверху)
-    return types.InlineKeyboardMarkup(inline_keyboard=[
-        [download_button],
-        [webapp_button]
-    ])
+webapp_url = "https://kkepik.rub1kub.ru/"
 
 # Создаем базовую клавиатуру (для случаев, когда нет расписания)
 webapp_button = types.InlineKeyboardButton(
@@ -121,6 +99,53 @@ webapp_button = types.InlineKeyboardButton(
 )
     
 keyboard = types.InlineKeyboardMarkup(inline_keyboard=[[webapp_button]])
+
+
+async def _answer_group_schedule(
+    message: types.Message,
+    df,
+    schedule_date: str,
+    group_name: str,
+    *,
+    tracked_count: int,
+    always_show_group: bool = False,
+) -> bool:
+    lines = group_schedule.get_schedule_for_group(df, group_name) if df is not None else None
+    if lines is None:
+        await message.answer(
+            f"Расписание не найдено для группы <b>{group_name}</b>.",
+            reply_markup=keyboard,
+        )
+        return False
+
+    if not lines:
+        lines = [f"▪️{pair} пара – Нет" for pair in range(1, 5)]
+
+    img_bytes = global_schedules.last_groups_crop_cache.get(group_name)
+    show_group = always_show_group or tracked_count > 1 or not img_bytes
+    msg_text = build_group_schedule_message(
+        lines,
+        group_name,
+        schedule_date,
+        show_group=show_group,
+    )
+    schedule_keyboard = create_schedule_keyboard(schedule_date, "groups")
+    if img_bytes:
+        photo = BufferedInputFile(img_bytes, filename="schedule.png")
+        caption = fit_photo_caption(msg_text)
+        if telegram_text_length(caption) <= 1024:
+            await message.answer_photo(
+                photo=photo,
+                caption=caption,
+                reply_markup=schedule_keyboard,
+            )
+        else:
+            await message.answer_photo(photo=photo)
+            await message.answer(msg_text, reply_markup=schedule_keyboard)
+    else:
+        await message.answer(msg_text, reply_markup=schedule_keyboard)
+    return True
+
 
 # Обработчик команды /start
 async def cmd_start(message: types.Message, state: FSMContext):
@@ -146,6 +171,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         typed_name = (typed_name or "").strip()
         if role == config.ROLE_STUDENT:
             typed_name = typed_name.upper()
+            tracked = get_tracked_groups(config.DB_PATH, user_id) or [typed_name]
 
             # 1. Кэш в памяти
             df = global_schedules.last_groups_df
@@ -155,33 +181,26 @@ async def cmd_start(message: types.Message, state: FSMContext):
             if df is None:
                 df, schedule_date = _find_latest_schedule("groups")
 
-            lines = None
-            if df is not None:
-                lines = group_schedule.get_schedule_for_group(df, typed_name)
-
-            if lines:
-                lines_timed = add_pair_times(lines, schedule_date)
-                txt = "\n".join(lines_timed if is_saturday(schedule_date) else lines)
-                msg_text = (
-                    f"{get_mood_emoji(lines)} Ваше расписание (группа <b>{typed_name}</b>):\n\n"
-                    f"<b>{schedule_date}</b>\n\n{txt}"
-                )
-                schedule_keyboard = create_schedule_keyboard(schedule_date, "groups")
-                img_bytes = global_schedules.last_groups_crop_cache.get(typed_name)
-                if img_bytes:
-                    photo = BufferedInputFile(img_bytes, filename="schedule.png")
-                    if len(msg_text) <= 1024:
-                        await message.answer_photo(photo=photo, caption=msg_text, parse_mode="HTML", reply_markup=schedule_keyboard)
-                    else:
-                        await message.answer_photo(photo=photo)
-                        await message.answer(msg_text, parse_mode="HTML", reply_markup=schedule_keyboard)
-                else:
-                    await message.answer(msg_text, parse_mode="HTML", reply_markup=schedule_keyboard)
-            else:
+            if df is None or not schedule_date:
                 await message.answer(
-                    f"Расписание не найдено для группы <b>{typed_name}</b>.",
-                    parse_mode="HTML",
+                    "Расписание пока не загружено.",
                     reply_markup=keyboard
+                )
+                return
+            if not is_current_schedule(schedule_date):
+                await message.answer(
+                    "Актуальное расписание ещё не загружено.",
+                    reply_markup=keyboard,
+                )
+                return
+
+            for group_name in tracked:
+                await _answer_group_schedule(
+                    message,
+                    df,
+                    schedule_date,
+                    group_name,
+                    tracked_count=len(tracked),
                 )
             return
         elif role == config.ROLE_TEACHER:
@@ -214,6 +233,10 @@ async def cmd_start(message: types.Message, state: FSMContext):
                     lines_raw = teacher_schedule.get_schedule_for_teacher(df, typed_name)
                     schedule_date = sd
 
+            if schedule_date and not is_current_schedule(schedule_date):
+                lines_raw = None
+                schedule_date = None
+
             if lines_raw:
                 txt = "\n".join(lines_raw)
                 msg_text = (
@@ -228,6 +251,26 @@ async def cmd_start(message: types.Message, state: FSMContext):
                     parse_mode="HTML",
                     reply_markup=keyboard
                 )
+
+            tracked = get_tracked_groups(config.DB_PATH, user_id)
+            group_df = global_schedules.last_groups_df
+            group_date = global_schedules.last_groups_date
+            if tracked and group_df is None:
+                group_df, group_date = _find_latest_schedule("groups")
+            if (
+                tracked
+                and group_df is not None
+                and is_current_schedule(group_date)
+            ):
+                for group_name in tracked:
+                    await _answer_group_schedule(
+                        message,
+                        group_df,
+                        group_date,
+                        group_name,
+                        tracked_count=len(tracked),
+                        always_show_group=True,
+                    )
             return
         return
 
@@ -338,6 +381,9 @@ async def process_name(message: types.Message, state: FSMContext):
                    (user_id, role, name_or_group.upper()))
     conn.commit()
     conn.close()
+
+    if role == config.ROLE_STUDENT:
+        replace_tracked_groups(config.DB_PATH, user_id, [name_or_group.upper()])
     
     await message.answer(f"✅ Регистрация завершена! Теперь Вам будет приходить студенческое расписание.\n\nСброс: /reset", reply_markup=keyboard)
     await state.clear()
@@ -361,6 +407,7 @@ async def process_class_teacher_callback(callback: types.CallbackQuery, state: F
                    (user_id, config.ROLE_TEACHER, teacher_name))
         conn.commit()
         conn.close()
+        replace_tracked_groups(config.DB_PATH, user_id, [])
 
         await callback.message.answer(f"✅ Регистрация завершена! Теперь Вам будет приходить преподавательское расписание.\n\nСброс: /reset")
         await state.clear()
@@ -392,6 +439,7 @@ async def process_class_group(message: types.Message, state: FSMContext):
                (user_id, config.ROLE_TEACHER, teacher_name, group))
     conn.commit()
     conn.close()
+    replace_tracked_groups(config.DB_PATH, user_id, [group])
     
     await message.answer(f"✅ Регистрация завершена! Теперь Вам будет приходить преподавательское расписание.\n\nСброс: /reset")
     await state.clear()

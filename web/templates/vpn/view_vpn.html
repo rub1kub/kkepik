@@ -4,10 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>VPN | KKEPIK</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link href="{{ url_for('static', filename='css/fonts.css') }}" rel="stylesheet">
+    <script src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}?v={{ STATIC_VERSION }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/vpn.css') }}?v={{ STATIC_VERSION }}">
 </head>
@@ -107,4 +105,4 @@
     </div>
     <script src="{{ url_for('static', filename='js/vpn.js') }}?v={{ STATIC_VERSION }}"></script>
 </body>
-</html> 
+</html>

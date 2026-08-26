@@ -10,6 +10,8 @@ let userEntity = null; // Кэш для личной группы/ФИО пол�
 // --- DOM элементы ---
 const groupSelectorContainer = document.getElementById('groupSelectorContainer');
 const currentGroupName = document.getElementById('currentGroupName');
+const groupQuickSwitch = document.getElementById('groupQuickSwitch');
+const groupSelectorManage = document.getElementById('groupSelectorManage');
 const groupSelectorArrow = document.getElementById('groupSelectorArrow');
 const groupSelectorDropdown = document.getElementById('groupSelectorDropdown');
 
@@ -24,6 +26,60 @@ let addError = null;
 let searchTimeout = null;
 let searchList = [];
 let selectedSearchItem = null;
+
+function telegramAuthHeaders() {
+    return tgWebAppData ? { 'X-Telegram-Init-Data': tgWebAppData } : {};
+}
+
+function entityKey(entity) {
+    return entity && entity.entity_type && entity.entity_id
+        ? `${entity.entity_type}:${entity.entity_id}`
+        : '';
+}
+
+function sameEntity(left, right) {
+    return Boolean(entityKey(left) && entityKey(left) === entityKey(right));
+}
+
+function getTrackedEntities() {
+    const tracked = [];
+    const seen = new Set();
+    [userEntity, ...favorites].forEach(entity => {
+        const key = entityKey(entity);
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        tracked.push(entity);
+    });
+    return tracked;
+}
+
+function selectEntity(entity) {
+    if (!entityKey(entity)) return;
+    currentEntity = entity;
+    addToHistory(entity);
+    renderCurrentEntity();
+    closeDropdown();
+    window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('soft');
+    window.updateScheduleForEntity?.(entity);
+}
+
+function applyBootstrapData(data) {
+    if (!data) return;
+    if (Array.isArray(data.favorites)) favorites = data.favorites;
+    if (data.user && data.user.name_or_group) {
+        userEntity = {
+            entity_type: data.user.role === 'teacher' ? 'teacher' : 'group',
+            entity_id: data.user.name_or_group,
+            entity_name: data.user.name_or_group
+        };
+    }
+}
+
+document.addEventListener('kkepik:bootstrap-updated', function (event) {
+    applyBootstrapData(event.detail);
+    if (!currentEntity && userEntity) currentEntity = userEntity;
+    renderCurrentEntity();
+});
 
 // --- Работа с историей выбранных сущностей ---
 const HISTORY_KEY = 'groupSelectorHistory';
@@ -57,39 +113,31 @@ function removeFromHistory(entity) {
 }
 
 // --- Инициализация ---
-document.addEventListener('DOMContentLoaded', async function() {
-    await loadFavorites();
-    // Получаем user_id из tgWebAppData
-    let userId = null;
-    try {
-        if (window.Telegram && Telegram.WebApp && Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user && Telegram.WebApp.initDataUnsafe.user.id) {
-            userId = Telegram.WebApp.initDataUnsafe.user.id;
-        } else if (tgWebAppData) {
-            // Парсим вручную
-            const params = Object.fromEntries(tgWebAppData.split('&').map(x => x.split('=')));
-            if (params.user) {
-                const userObj = JSON.parse(decodeURIComponent(params.user));
-                userId = userObj.id;
-            }
-        }
-    } catch (e) {}
-    if (userId) {
+async function initGroupSelector() {
+    if (window.kkepikApp) {
         try {
-            const resp = await fetch(`/api/user/${userId}`);
-            const data = await resp.json();
-            if (data && data.name_or_group) {
-                userEntity = {
-                    entity_type: data.role === 'teacher' ? 'teacher' : 'group',
-                    entity_id: data.name_or_group,
-                    entity_name: data.name_or_group
-                };
-            }
+            applyBootstrapData(await window.kkepikApp.ready);
         } catch (e) {}
+    } else {
+        await loadFavorites();
+        if (tgWebAppData) {
+            try {
+                const resp = await fetch('/api/me', { headers: telegramAuthHeaders() });
+                const data = await resp.json();
+                applyBootstrapData({ user: data });
+            } catch (e) {}
+        }
     }
     await setDefaultEntity();
     renderCurrentEntity();
     setupDropdown();
-});
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initGroupSelector, { once: true });
+} else {
+    initGroupSelector();
+}
 
 // --- Загрузка избранных ---
 async function loadFavorites() {
@@ -143,12 +191,57 @@ function renderCurrentEntity() {
     } else {
         currentGroupName.textContent = 'Ваша группа/ФИО';
     }
+    renderEntitySwitcher();
+}
+
+function renderEntitySwitcher() {
+    if (!groupQuickSwitch || !groupSelectorManage || !groupSelectorArrow) return;
+
+    const tracked = getTrackedEntities();
+    const useQuickSwitch = tracked.length === 2;
+    const useDropdown = tracked.length > 2;
+
+    currentGroupName.hidden = useQuickSwitch;
+    groupQuickSwitch.hidden = !useQuickSwitch;
+    groupSelectorArrow.hidden = !useDropdown;
+    groupSelectorManage.hidden = useDropdown;
+    groupSelectorManage.textContent = useQuickSwitch ? 'Изменить' : 'Добавить';
+    groupSelectorContainer.classList.toggle('quick-mode', useQuickSwitch);
+    groupSelectorContainer.classList.toggle('dropdown-mode', useDropdown);
+
+    groupQuickSwitch.replaceChildren();
+    if (!useQuickSwitch) return;
+
+    tracked.forEach(entity => {
+        const button = document.createElement('button');
+        const active = sameEntity(entity, currentEntity);
+        button.type = 'button';
+        button.className = 'group-quick-button';
+        button.textContent = entity.entity_name || entity.entity_id;
+        button.dataset.entityKey = entityKey(entity);
+        button.classList.toggle('active', active);
+        button.setAttribute('role', 'tab');
+        button.setAttribute('aria-selected', String(active));
+        button.addEventListener('click', () => {
+            if (!sameEntity(entity, currentEntity)) selectEntity(entity);
+        });
+        groupQuickSwitch.appendChild(button);
+    });
 }
 
 // --- Выпадающий список ---
 function setupDropdown() {
     groupSelectorArrow.addEventListener('click', toggleDropdown);
-    currentGroupName.addEventListener('click', toggleDropdown);
+    currentGroupName.addEventListener('click', () => {
+        if (getTrackedEntities().length > 2) toggleDropdown();
+    });
+    groupSelectorManage.addEventListener('click', () => {
+        if (getTrackedEntities().length === 2) {
+            openDropdown();
+        } else {
+            openAddModal();
+        }
+    });
     document.addEventListener('click', (e) => {
         if (!groupSelectorContainer.contains(e.target) && !groupSelectorDropdown.contains(e.target)) {
             closeDropdown();
@@ -157,6 +250,7 @@ function setupDropdown() {
 }
 
 function toggleDropdown() {
+    if (getTrackedEntities().length <= 2) return;
     if (isDropdownOpen) {
         closeDropdown();
     } else {
@@ -222,13 +316,7 @@ async function renderDropdownContent() {
             // item.style.fontWeight = 'bold';
         }
         item.onclick = () => {
-            currentEntity = userEntity;
-            renderCurrentEntity();
-            closeDropdown();
-            addToHistory(userEntity);
-            if (window.updateScheduleForEntity) {
-                window.updateScheduleForEntity(currentEntity);
-            }
+            selectEntity(userEntity);
         };
         groupSelectorDropdown.appendChild(item);
     }
@@ -245,13 +333,7 @@ async function renderDropdownContent() {
             // item.style.fontWeight = 'bold';
         }
         item.onclick = () => {
-            currentEntity = fav;
-            renderCurrentEntity();
-            closeDropdown();
-            addToHistory(fav);
-            if (window.updateScheduleForEntity) {
-                window.updateScheduleForEntity(currentEntity);
-            }
+            selectEntity(fav);
         };
         // Кнопка удаления
         const delBtn = document.createElement('span');
@@ -274,13 +356,7 @@ async function renderDropdownContent() {
             // item.style.fontWeight = 'bold';
         }
         item.onclick = () => {
-            currentEntity = fav;
-            renderCurrentEntity();
-            closeDropdown();
-            addToHistory(fav);
-            if (window.updateScheduleForEntity) {
-                window.updateScheduleForEntity(currentEntity);
-            }
+            selectEntity(fav);
         };
         // Кнопка удаления только если элемент есть в избранном
         const isFavorite = favorites.some(f => f.entity_id === fav.entity_id && f.entity_type === fav.entity_type);
@@ -354,33 +430,6 @@ async function removeFavorite(entity) {
             removeFromHistory(entity);
             // Если удалили текущую — сбросить на личную группу/ФИО пользователя, если возможно
             if (currentEntity && entity.entity_id === currentEntity.entity_id && entity.entity_type === currentEntity.entity_type) {
-                // Пробуем получить личную группу/ФИО пользователя
-                let userId = null;
-                try {
-                    if (window.Telegram && Telegram.WebApp && Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user && Telegram.WebApp.initDataUnsafe.user.id) {
-                        userId = Telegram.WebApp.initDataUnsafe.user.id;
-                    } else if (tgWebAppData) {
-                        const params = Object.fromEntries(tgWebAppData.split('&').map(x => x.split('=')));
-                        if (params.user) {
-                            const userObj = JSON.parse(decodeURIComponent(params.user));
-                            userId = userObj.id;
-                        }
-                    }
-                } catch (e) {}
-                let userEntity = null;
-                if (userId) {
-                    try {
-                        const resp = await fetch(`/api/user/${userId}`);
-                        const userData = await resp.json();
-                        if (userData && userData.name_or_group) {
-                            userEntity = {
-                                entity_type: userData.role === 'teacher' ? 'teacher' : 'group',
-                                entity_id: userData.name_or_group,
-                                entity_name: userData.name_or_group
-                            };
-                        }
-                    } catch (e) {}
-                }
                 if (userEntity) {
                     currentEntity = userEntity;
                     addToHistory(currentEntity);
@@ -398,6 +447,7 @@ async function removeFavorite(entity) {
                     renderCurrentEntity();
                 }
             }
+            renderCurrentEntity();
             renderDropdownContent();
         } else {
             alert(data.error || 'Ошибка при удалении');
@@ -543,4 +593,4 @@ function renderSearchResults(type, list, query) {
 }
 
 // --- Стили для выпадающего и модального окна ---
-// УДАЛЕНО: динамическое добавление <style> со стилями, теперь всё в main.css 
+// УДАЛЕНО: динамическое добавление <style> со стилями, теперь всё в main.css

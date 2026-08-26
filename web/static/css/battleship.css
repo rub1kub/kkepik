@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap');
+@import url('./fonts.css');
 
 :root {
     --tg-theme-bg-color: #ffffff;
@@ -15,7 +15,7 @@
     --border-radius: 12px;
     --box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     --transition: all 0.3s ease;
-    
+
     /* Цвета для игры */
     --board-bg: #e8f4f8;
     --cell-border: #b3d4e0;
@@ -573,30 +573,30 @@ body {
         flex-direction: row;
         justify-content: space-around;
     }
-    
+
     .placement-container {
         flex-direction: row;
         align-items: flex-start;
     }
-    
+
     .ships-container {
         flex-direction: column;
         width: 30%;
     }
-    
+
     .board-container {
         width: 60%;
     }
-    
+
     .placement-controls {
         width: 100%;
     }
-    
+
     .ships-info {
         flex-direction: row;
         justify-content: space-around;
     }
-    
+
     .board {
         max-width: 400px;
     }
@@ -607,12 +607,12 @@ body {
         font-size: 24px;
     }
 
-    
+
     .cell {
         width: 28px;
         height: 28px;
     }
-    
+
     .board {
         max-width: 100%;
     }
@@ -890,4 +890,4 @@ body {
 
 #refresh-games-btn {
     margin-top: 8px;
-} 
+}

@@ -58,6 +58,8 @@ def get_api_port():
 
 
 def init_db():
+    from tracked_groups import migrate_legacy_groups
+
     conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
     cur.execute('''
@@ -75,6 +77,7 @@ def init_db():
         cur.execute("ALTER TABLE users ADD COLUMN is_class_teacher INTEGER")
     if "class_group" not in columns:
         cur.execute("ALTER TABLE users ADD COLUMN class_group TEXT")
+    migrate_legacy_groups(conn)
     conn.commit()
     conn.close()
 

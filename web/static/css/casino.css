@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap');
+@import url('./fonts.css');
 
 * {
     margin: 0;
@@ -407,4 +407,4 @@ body::before {
     .casino-slot-symbol {
         font-size: 1.1rem;
     }
-} 
+}

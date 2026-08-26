@@ -5,16 +5,54 @@
 
 import re
 
-# Кастомные Telegram-эмодзи: (emoji_id, fallback_symbol)
-EMOJI_TIERS = [
-    (5449372007432985754, "🌴"),  # 0 — выходной / все «Нет»
-    (5260502250815513613, "🥳"),  # 1 — супер легко (score 1–4)
-    (5260540892636273043, "😎"),  # 2 — легко        (score 5–8)
-    (5348130312482200800, "🙂"),  # 3 — нормально    (score 9–12)
-    (5262597653690078323, "😐"),  # 4 — средне       (score 13–16)
-    (5235752982808632917, "😰"),  # 5 — тяжело       (score 17–20)
-    (5352609576824872241, "😩"),  # 6 — плохо        (score 21–24)
-    (5262487238670832805, "💀"),  # 7 — ужасно       (score 25+)
+# Telegram requires the fallback to match the sticker's own emoji field.
+# Comments preserve the visual grouping supplied for the schedule design.
+REST_EMOJIS = [
+    (5449372007432985754, "🌴"),
+    (5343919586674750560, "😴"),  # visual: 🛌
+    (5886606502868816489, "☕"),
+    (5253555484811610534, "🧘"),
+]
+EASY_EMOJIS = [
+    (5262515430836163289, "🎃"),  # visual: 🥳
+    (5319066444883828666, "😎"),
+    (5345810437436879174, "😌"),
+    (5352693122528724986, "✨"),
+]
+NORMAL_EMOJIS = [
+    (5262941654800687250, "🧙"),  # visual: 🙂
+    (5336933568964734298, "🤓"),
+    (5346234148845532752, "🙂"),  # visual: 📚
+    (5402477260982731644, "☀️"),  # visual: 🌤
+]
+MEDIUM_EMOJIS = [
+    (5262507798679280566, "🐸"),  # visual: 😐
+    (6206233738494347353, "😐"),  # visual: 🫠
+    (5262845357338941000, "⚰️"),  # visual: 😵‍💫
+    (5260681883527699649, "🔥"),
+]
+HARD_EMOJIS = [
+    (5260404531719594367, "😱"),  # visual: 😰
+    (5260563484164251010, "😫"),  # visual: 😩
+    (5262588247711702277, "🥺"),  # visual: 🥲
+    (5390858197626006383, "🌧"),
+]
+CRITICAL_EMOJIS = [
+    (5262487238670832805, "💀"),
+    (5260635566600379633, "👺"),  # visual: 💀
+    (5420475901257195805, "⚰️"),  # visual: 🪦
+    (5363925144907554991, "🆘"),
+]
+
+# Each supplied emoji is a separate step on the difficulty scale. Scores above
+# the scale stay on the final SOS level.
+DIFFICULTY_EMOJIS = [
+    *REST_EMOJIS,
+    *EASY_EMOJIS,
+    *NORMAL_EMOJIS,
+    *MEDIUM_EMOJIS,
+    *HARD_EMOJIS,
+    *CRITICAL_EMOJIS,
 ]
 
 # Фамилии со штрафом (+3 к каждой паре, в которой они встречаются)
@@ -169,6 +207,11 @@ def _tg_emoji(emoji_id: int, fallback: str) -> str:
     return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
 
 
+def _emoji_for_score(total_score: int) -> tuple[int, str]:
+    level = min(max(total_score, 0), len(DIFFICULTY_EMOJIS) - 1)
+    return DIFFICULTY_EMOJIS[level]
+
+
 def get_mood_emoji(schedule_lines: list[str]) -> str:
     """
     По списку строк расписания возвращает HTML кастомного Telegram-эмодзи
@@ -181,12 +224,12 @@ def get_mood_emoji(schedule_lines: list[str]) -> str:
         HTML строка: <tg-emoji emoji-id="...">🙂</tg-emoji>
     """
     if not schedule_lines:
-        return _tg_emoji(*EMOJI_TIERS[0])  # 🌴 выходной
+        return _tg_emoji(*_emoji_for_score(0))
 
     real_pairs = [l for l in schedule_lines if l.strip() and "пара – Нет" not in l]
 
     if not real_pairs:
-        return _tg_emoji(*EMOJI_TIERS[0])  # 🌴 все «Нет»
+        return _tg_emoji(*_emoji_for_score(0))
 
     total_score = 0
     has_bonus = False
@@ -210,19 +253,4 @@ def get_mood_emoji(schedule_lines: list[str]) -> str:
     if has_bonus:
         total_score = max(0, total_score - 2)
 
-    # Пороги → tier index (tier 0 уже обработан выше)
-    # score 1–4   → tier 1 (🥳)
-    # score 5–8   → tier 2 (😎)
-    # score 9–12  → tier 3 (🙂)
-    # score 13–16 → tier 4 (😐)
-    # score 17–20 → tier 5 (😰)
-    # score 21–24 → tier 6 (😩)
-    # score 25+   → tier 7 (💀)
-    thresholds = [4, 8, 12, 16, 20, 24]
-    tier_idx = 7  # default: 💀
-    for i, t in enumerate(thresholds):
-        if total_score <= t:
-            tier_idx = i + 1
-            break
-
-    return _tg_emoji(*EMOJI_TIERS[tier_idx])
+    return _tg_emoji(*_emoji_for_score(total_score))

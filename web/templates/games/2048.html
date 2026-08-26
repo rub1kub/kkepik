@@ -6,7 +6,7 @@
     <meta name="HandheldFriendly" content="true">
     <meta name="MobileOptimized" content="width">
     <title>2048</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/2048.css') }}?v={{ STATIC_VERSION }}">
 </head>
 <body>
@@ -45,4 +45,4 @@
 
     <script src="{{ url_for('static', filename='js/2048.js') }}?v={{ STATIC_VERSION }}"></script>
 </body>
-</html> 
+</html>

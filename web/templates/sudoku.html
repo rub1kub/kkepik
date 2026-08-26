@@ -6,15 +6,21 @@
     <meta name="HandheldFriendly" content="true">
     <meta name="MobileOptimized" content="width">
     <title>Судоку - KKEPIK</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/testmain.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/sudoku.css') }}">
+    <script src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/vendor/canvas-confetti.1.6.0.min.js') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/testmain.css') }}?v={{ STATIC_VERSION }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/sudoku.css') }}?v={{ STATIC_VERSION }}">
 </head>
 <body>
     <div class="menu-container">
         <div class="header">
-            <h1>🧩 Судоку</h1>
+            <h1 class="sudoku-title">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
+                </svg>
+                <span>Судоку</span>
+            </h1>
         </div>
         
         <div class="difficulty-modal" id="difficultyModal">
@@ -22,17 +28,23 @@
                 <h2>Выберите сложность</h2>
                 <div class="difficulty-options">
                     <button class="difficulty-option" data-difficulty="easy">
-                        <div class="difficulty-icon">🥉</div>
+                        <div class="difficulty-icon" aria-hidden="true">
+                            <svg viewBox="0 0 32 32"><rect x="4" y="18" width="6" height="10" rx="2" /><rect x="13" y="11" width="6" height="17" rx="2" /><rect x="22" y="4" width="6" height="24" rx="2" /></svg>
+                        </div>
                         <div class="difficulty-name">Легкий</div>
                         <div class="difficulty-desc">40+ клеток заполнено</div>
                     </button>
                     <button class="difficulty-option" data-difficulty="medium">
-                        <div class="difficulty-icon">🥈</div>
+                        <div class="difficulty-icon" aria-hidden="true">
+                            <svg viewBox="0 0 32 32"><rect x="4" y="18" width="6" height="10" rx="2" /><rect x="13" y="11" width="6" height="17" rx="2" /><rect x="22" y="4" width="6" height="24" rx="2" /></svg>
+                        </div>
                         <div class="difficulty-name">Средний</div>
                         <div class="difficulty-desc">30+ клеток заполнено</div>
                     </button>
                     <button class="difficulty-option" data-difficulty="hard">
-                        <div class="difficulty-icon">🥇</div>
+                        <div class="difficulty-icon" aria-hidden="true">
+                            <svg viewBox="0 0 32 32"><rect x="4" y="18" width="6" height="10" rx="2" /><rect x="13" y="11" width="6" height="17" rx="2" /><rect x="22" y="4" width="6" height="24" rx="2" /></svg>
+                        </div>
                         <div class="difficulty-name">Сложный</div>
                         <div class="difficulty-desc">20+ клеток заполнено</div>
                     </button>
@@ -43,7 +55,12 @@
         <!-- Модальное окно окончания игры -->
         <div class="game-over-modal" id="gameOverModal" style="display: none;">
             <div class="modal-content">
-                <div class="game-over-icon">💔</div>
+                <div class="game-over-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z" />
+                        <path d="m4 4 16 16" />
+                    </svg>
+                </div>
                 <h2>Игра окончена!</h2>
                 <p>У вас закончились жизни. Попробуйте еще раз!</p>
                 <div class="game-over-actions">
@@ -59,9 +76,9 @@
                 <div class="lives-container">
                     <span class="lives-label">Жизни:</span>
                     <div class="lives" id="lives">
-                        <span class="life">❤️</span>
-                        <span class="life">❤️</span>
-                        <span class="life">❤️</span>
+                        <span class="life" aria-label="Жизнь"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z" /><path class="life-slash" d="m4 4 16 16" /></svg></span>
+                        <span class="life" aria-label="Жизнь"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z" /><path class="life-slash" d="m4 4 16 16" /></svg></span>
+                        <span class="life" aria-label="Жизнь"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z" /><path class="life-slash" d="m4 4 16 16" /></svg></span>
                     </div>
                 </div>
                 <div class="difficulty" id="difficulty">Легкий</div>
@@ -91,10 +108,13 @@
             </div>
             
             <div class="rating-section">
-                <div class="rating-title">🏆 Рейтинг игроков</div>
+                <div class="rating-title">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4Z" /><path d="M7 6H4v2a4 4 0 0 0 4 4M17 6h3v2a4 4 0 0 1-4 4" /></svg>
+                    <span>Рейтинг игроков</span>
+                </div>
                 <div class="rating-tables">
                     <div class="rating-table-container">
-                        <h3>🥉 Легкий</h3>
+                        <h3>Легкий</h3>
                         <table class="rating-table">
                             <thead>
                                 <tr><th>#</th><th>Игрок</th><th>Время</th></tr>
@@ -106,7 +126,7 @@
                     </div>
                     
                     <div class="rating-table-container">
-                        <h3>🥈 Средний</h3>
+                        <h3>Средний</h3>
                         <table class="rating-table">
                             <thead>
                                 <tr><th>#</th><th>Игрок</th><th>Время</th></tr>
@@ -118,7 +138,7 @@
                     </div>
                     
                     <div class="rating-table-container">
-                        <h3>🥇 Сложный</h3>
+                        <h3>Сложный</h3>
                         <table class="rating-table">
                             <thead>
                                 <tr><th>#</th><th>Игрок</th><th>Время</th></tr>
@@ -133,7 +153,7 @@
         </div>
     </div>
     
-    <script src="{{ url_for('static', filename='js/sudoku.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/sudoku.js') }}?v={{ STATIC_VERSION }}"></script>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             window.sudokuGame = new SudokuGame();

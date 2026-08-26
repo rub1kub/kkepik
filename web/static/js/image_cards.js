@@ -1,20 +1,8 @@
-// Кэшируем все иконки предметов
-const subjectIcons = [
-    'history.png', 'PE.png', 'informatics.png', 'chemistry.png', 'biology.png',
-    'social.png', 'english.png', 'russian.png', 'literature.png', 'physics.png',
-    'math.png', 'geography.png', 'project.png', 'test.png',
-    'network.png', 'os-admin.png', 'practice.png', 'safety.png',
-    'certification-tests.png', 'rf-units.png', 'philosophy.png'
-];
-subjectIcons.forEach(filename => {
-    const img = new window.Image();
-    img.src = `/static/img/${filename}`;
-});
-
 // Логика для добавления картинки test.png в правый нижний угол карточки .row
 
 window.addCornerImageToRows = function(container) {
     if (!container) return;
+    if (window.kkepikApp && window.kkepikApp.lowData) return;
     // Получаем название группы из currentGroupName
     let groupText = '';
     const currentGroupNameElem = document.getElementById('currentGroupName');
@@ -95,7 +83,7 @@ window.addCornerImageToRows = function(container) {
                 imgSrc = '/static/img/certification-tests.png';
                 isDefaultIcon = false;
             } else if (subject === 'радиоприемн. и радиопередающ.у') {
-                imgSrc = '/static/img/rf-units.png';
+                imgSrc = '/static/img/rs-units.png';
                 isDefaultIcon = false;
             } else if (subject === 'основы философии') {
                 imgSrc = '/static/img/philosophy.png';
@@ -112,9 +100,16 @@ window.addCornerImageToRows = function(container) {
                 return;
             }
             const img = document.createElement('img');
-            img.src = imgSrc;
+            img.src = imgSrc.replace('/static/img/', '/static/img/optimized/').replace('.png', '.webp') + '?v=20260825-2';
+            img.onerror = function () {
+                img.onerror = null;
+                img.src = imgSrc;
+            };
             img.alt = 'corner';
             img.className = 'corner-image';
+            img.loading = 'lazy';
+            img.decoding = 'async';
+            img.fetchPriority = 'low';
             // Вставляем перед первым div (время)
             const firstDiv = row.querySelector('div');
             if (firstDiv) {
@@ -126,16 +121,4 @@ window.addCornerImageToRows = function(container) {
     });
 };
 
-// Если карточки динамически обновляются, можно использовать MutationObserver или интегрировать вызов в функцию рендера
-
-// Находим все карточки расписания внутри .row-container
-document.querySelectorAll('.row-container .row').forEach(function(row) {
-    // Проверяем, нет ли уже картинки
-    if (!row.querySelector('.corner-image')) {
-        const img = document.createElement('img');
-        img.src = '/static/img/test.png'; // путь к картинке
-        img.alt = 'test';
-        img.className = 'corner-image';
-        row.appendChild(img);
-    }
-}); 
+window.addCornerImageToRows(document.querySelector('#bell_list .row-container'));

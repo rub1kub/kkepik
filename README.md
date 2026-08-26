@@ -19,7 +19,7 @@
 ## Структура проекта
 
 ```
-KKEP/
+kkepik/
 ├── bot/                     — Telegram-бот + FastAPI
 │   ├── main.py              — точка входа
 │   ├── config.py            — конфигурация (читает .env)
@@ -43,8 +43,8 @@ KKEP/
 ### 1. Клонировать репозиторий
 
 ```bash
-git clone https://github.com/ВАШ_НИК/kkepik-bot.git
-cd kkepik-bot/bot
+git clone https://github.com/rub1kub/kkepik.git
+cd kkepik/bot
 ```
 
 ### 2. Установить зависимости
@@ -75,6 +75,7 @@ TEST_MODE=false
 ADMINS=123456789,987654321
 
 MAX_WATCH_CHAT_IDS=-1234567890123
+MAX_ENABLED=false
 ```
 
 ### 4. Запустить
@@ -82,6 +83,30 @@ MAX_WATCH_CHAT_IDS=-1234567890123
 ```bash
 python main.py
 ```
+
+---
+
+## Веб-приложение
+
+```bash
+cd ../web
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+export BOT_TOKEN="..."
+export FLASK_SECRET_KEY="..."
+export VPN_ADMIN_PASSWORD="..."
+export ADMIN_PASSWORD="..."
+export VPN_SSH_HOST="..."
+export VPN_SSH_USERNAME="..."
+export VPN_SSH_PASSWORD="..."
+export VPN_PUBLIC_HOST="..."
+flask --app app run
+```
+
+При запуске через Apache `app.wsgi` также читает эти значения из
+`/etc/kkepik/kkepik.ru.env`. Реальные значения, базы, логи, расписания,
+резервные копии и `tokens.json` с сессией MAX исключены из Git.
 
 ---
 
@@ -93,6 +118,7 @@ python main.py
 | `TEST_BOT_TOKEN` | Токен тестового бота |
 | `TEST_MODE` | `true` — тестовый бот + отдельная БД |
 | `ADMINS` | Telegram user_id администраторов через запятую |
+| `MAX_ENABLED` | Явное включение мониторинга MAX |
 | `MAX_WATCH_CHAT_IDS` | ID чатов MAX для мониторинга через запятую |
 
 ---
@@ -102,6 +128,7 @@ python main.py
 | Команда | Описание |
 |---|---|
 | `/start` | Регистрация и показ актуального расписания |
+| `/groups` | Управление дополнительными отслеживаемыми группами |
 | `/find <группа/ФИО> [дата]` | Поиск расписания |
 | `/reset` | Сброс регистрации |
 | `/app` | Ссылка на веб-приложение |
@@ -178,6 +205,8 @@ schedules/
 | 2 | 10:25–11:45 | 10:10–11:25 |
 | 3 | 12:05–13:25 | 11:35–12:50 |
 | 4 | 13:35–14:55 | 13:00–14:15 |
+| 5 | 15:05–16:25 | 14:25–15:40 |
+| 6 | 16:35–17:55 | 15:50–17:05 |
 
 ---
 

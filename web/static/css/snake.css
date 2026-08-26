@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap');
+@import url('./fonts.css');
 
 * {
     margin: 0;
@@ -564,4 +564,4 @@ button:disabled {
         opacity: 1;
         transform: translateY(0);
     }
-} 
+}

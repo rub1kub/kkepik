@@ -7,7 +7,7 @@
     <meta name="MobileOptimized" content="width">
     <title>Контроль посещаемости</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/attendance.css') }}">
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
 </head>
 <body>
     <div class="attendance-container">
@@ -17,4 +17,4 @@
     </div>
     <script src="{{ url_for('static', filename='js/attendance.js') }}"></script>
 </body>
-</html> 
+</html>

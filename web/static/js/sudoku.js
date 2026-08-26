@@ -342,13 +342,9 @@ class SudokuGame {
 
         const lifeElements = livesContainer.querySelectorAll('.life');
         lifeElements.forEach((life, index) => {
-            if (index < this.lives) {
-                life.classList.remove('lost');
-                life.textContent = '❤️';
-            } else {
-                life.classList.add('lost');
-                life.textContent = '💔';
-            }
+            const isAvailable = index < this.lives;
+            life.classList.toggle('lost', !isAvailable);
+            life.setAttribute('aria-label', isAvailable ? 'Жизнь' : 'Потерянная жизнь');
         });
     }
 
@@ -571,7 +567,7 @@ class SudokuGame {
         }
         
         // Показываем уведомление о победе через alert
-        tg.showAlert(`🎉 Поздравляем! Вы решили судоку за ${this.formatTime(this.completionTime)}!`);
+        tg.showAlert(`Поздравляем! Вы решили судоку за ${this.formatTime(this.completionTime)}!`);
         
         // Запускаем конфетти
         if (window.launchConfetti) {
@@ -649,44 +645,6 @@ class SudokuGame {
     }
     
     updateRatingDisplay(ratings) {
-        const container = document.querySelector('.rating-section');
-        container.innerHTML = `
-            <div class="rating-title">🏆 Рейтинг игроков</div>
-            
-            <div class="rating-tables">
-                <div class="rating-table-container">
-                    <h3>🥉 Легкий</h3>
-                    <table class="rating-table">
-                        <thead>
-                            <tr><th>#</th><th>Игрок</th><th>Время</th></tr>
-                        </thead>
-                        <tbody id="ratingEasyBody"></tbody>
-                    </table>
-                </div>
-                
-                <div class="rating-table-container">
-                    <h3>🥈 Средний</h3>
-                    <table class="rating-table">
-                        <thead>
-                            <tr><th>#</th><th>Игрок</th><th>Время</th></tr>
-                        </thead>
-                        <tbody id="ratingMediumBody"></tbody>
-                    </table>
-                </div>
-                
-                <div class="rating-table-container">
-                    <h3>🥇 Сложный</h3>
-                    <table class="rating-table">
-                        <thead>
-                            <tr><th>#</th><th>Игрок</th><th>Время</th></tr>
-                        </thead>
-                        <tbody id="ratingHardBody"></tbody>
-                    </table>
-                </div>
-            </div>
-        `;
-        
-        // Заполняем таблицы
         this.fillRatingTable('ratingEasyBody', ratings.easy.slice(0, 10));
         this.fillRatingTable('ratingMediumBody', ratings.medium.slice(0, 10));
         this.fillRatingTable('ratingHardBody', ratings.hard.slice(0, 10));

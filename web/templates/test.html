@@ -6,8 +6,8 @@
     <meta name="HandheldFriendly" content="true">
     <meta name="MobileOptimized" content="width">
     <title>KKEPIK Игры (ТЕСТОВАЯ ВЕРСИЯ)</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <script src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/vendor/canvas-confetti.1.6.0.min.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/testmain.css') }}">
     <style>
         body::before {
@@ -138,7 +138,7 @@
             <div class="mini-cta-spacer"></div>
             <div class="mini-cta-arrow">›</div>
         </a>
-        
+
         <!-- CTA Страница ивента -->
         <a href="/congratulate" class="mini-cta" id="eventPageCTA" style="background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%); border: 1px solid rgba(255, 215, 0, 0.3);">
             <div class="coin-dot" style="background: linear-gradient(45deg, #FFD700, #FFA500); border-radius: 50%;"></div>
@@ -147,7 +147,7 @@
             <div class="mini-cta-spacer"></div>
             <div class="mini-cta-arrow" style="color: #FFD700;">›</div>
         </a>
-        
+
         <!-- CTA Страница окончания ивента -->
         <a href="/event-end" class="mini-cta" id="eventEndCTA" style="background: linear-gradient(135deg, #1a2d1a 0%, #2d4d2d 100%); border: 1px solid rgba(100, 255, 100, 0.3);">
             <div class="coin-dot" style="background: linear-gradient(45deg, #6BFF6B, #8EFF8E); border-radius: 50%;"></div>
@@ -156,7 +156,7 @@
             <div class="mini-cta-spacer"></div>
             <div class="mini-cta-arrow" style="color: #6BFF6B;">›</div>
         </a>
-        
+
         <!-- Выбор группы/ФИО -->
         <div id="groupSelectorContainer" class="group-selector-container">
             <span id="currentGroupName" class="group-selector-current"></span>
@@ -189,13 +189,13 @@
                 </div>
             </div>
         </div>
-        
+
         <!-- Контейнер для реакций -->
         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
             <a id="downloadScheduleBtn" href="#" class="download-btn">Скачать</a>
             <div id="schedule-reactions"></div>
         </div>
-        
+
         <hr class="section-divider">
         <div class="games-grid">
             <a href="{{ url_for('schedule_search') }}?tgWebAppData={{ '{{' }} tgWebAppData {{ '}}' }}" class="game-card schedule-card">
@@ -213,7 +213,7 @@
                 <div class="game-title">Бесплатный VPN</div>
                 <div class="game-description">Безопасный доступ к сети через Германию</div>
             </a>
-            
+
             <div class="games-container">
                 <a href="{{ url_for('game_page', game_name='2048') }}" class="game-card">
                     <div class="game-icon">🎯</div>
@@ -352,7 +352,7 @@
             let dateObj = window.scheduleState && window.scheduleState.displayedDate ? new Date(window.scheduleState.displayedDate) : new Date();
             const pad = n => n.toString().padStart(2, '0');
             const dateStr = pad(dateObj.getDate()) + '.' + pad(dateObj.getMonth() + 1) + '.' + dateObj.getFullYear();
-            const url = `https://kkepik.ru/api/schedule/download/${scheduleType}/${dateStr}`;
+            const url = `https://kkepik.rub1kub.ru/api/schedule/download/${scheduleType}/${dateStr}`;
             currentDownloadUrl = url;
             const btn = document.getElementById('downloadScheduleBtn');
             if (btn) btn.setAttribute('data-url', url);
@@ -408,12 +408,12 @@
                     // Сброс выделения кнопок оценок
                     document.querySelectorAll('.mark-btn').forEach(btn => btn.classList.remove('selected'));
                 });
-                
+
                 closeReviewModal.addEventListener('click', function() {
                     reviewModal.style.display = 'none';
                     document.body.style.overflow = 'auto';
                 });
-                
+
                 window.addEventListener('click', function(event) {
                     if (event.target === reviewModal) {
                         reviewModal.style.display = 'none';
@@ -496,7 +496,7 @@
         });
 
         // Удалены скрипты праздничной плашки для упрощения тестовой страницы
-        
+
         // Обработчики для плашек
         document.addEventListener('DOMContentLoaded', function() {
             const congratulatorCTA = document.getElementById('congratulatorCTA');
@@ -508,7 +508,7 @@
                     }
                 });
             }
-            
+
             const eventPageCTA = document.getElementById('eventPageCTA');
             if (eventPageCTA) {
                 eventPageCTA.addEventListener('click', function(e) {
@@ -518,7 +518,7 @@
                     }
                 });
             }
-            
+
             const eventEndCTA = document.getElementById('eventEndCTA');
             if (eventEndCTA) {
                 eventEndCTA.addEventListener('click', function(e) {
@@ -531,4 +531,4 @@
         });
     </script>
 </body>
-</html> 
+</html>

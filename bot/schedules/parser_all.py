@@ -39,7 +39,8 @@ def _find_latest_schedule_file(schedule_type: str) -> Optional[str]:
     Находит самый свежий файл расписания (.xlsx или .pdf) в DATA_DIR.
     schedule_type: "groups" → ищет файлы с «ГРУППЫ»
                    "teachers" → ищет файлы с «ПРЕПОДАВАТЕЛИ»
-    Возвращает полный путь к файлу или None.
+    Возвращает самый поздний актуальный файл или None. Архивный файл с новым
+    mtime (например, после /silent загрузки) не должен вытеснять расписание.
     """
     try:
         import config
@@ -48,8 +49,10 @@ def _find_latest_schedule_file(schedule_type: str) -> Optional[str]:
         return None
 
     type_kw = "ГРУППЫ" if schedule_type == "groups" else "ПРЕПОДАВАТЕЛИ"
-    best_path  = None
-    best_mtime = 0.0
+    from schedules.schedule_dates import is_current_schedule
+
+    candidates = []
+    undated_pdf_candidates = []
 
     for filename in os.listdir(data_dir):
         if filename.startswith("~$"):
@@ -61,12 +64,27 @@ def _find_latest_schedule_file(schedule_type: str) -> Optional[str]:
             continue
 
         full_path = os.path.join(data_dir, filename)
-        mtime = os.path.getmtime(full_path)
-        if mtime > best_mtime:
-            best_mtime = mtime
-            best_path  = full_path
+        match = re.search(r'(\d{1,2}[._]\d{1,2}[._]\d{4})', filename)
+        date_str = match.group(1).replace('_', '.') if match else None
+        if date_str and is_current_schedule(date_str):
+            parsed_date = pd.to_datetime(date_str, format="%d.%m.%Y")
+            candidates.append((parsed_date, os.path.getmtime(full_path), full_path))
+        elif not date_str and ext == ".pdf":
+            undated_pdf_candidates.append((os.path.getmtime(full_path), full_path))
 
-    return best_path
+    if candidates:
+        return max(candidates)[2]
+
+    # Rare fallback for PDFs whose filename has no date. Check newest first and
+    # stop at the first file whose content has a current date.
+    if undated_pdf_candidates:
+        from schedules.pdf_to_df import extract_date_from_pdf_content
+
+        for _, full_path in sorted(undated_pdf_candidates, reverse=True):
+            if is_current_schedule(extract_date_from_pdf_content(full_path)):
+                return full_path
+
+    return None
 
 
 def _resolve_df(
@@ -95,10 +113,20 @@ def _resolve_df(
     except Exception:
         pass
 
-    # 3. Файл в DATA_DIR
+    # 3. Current file in DATA_DIR. An old file must never become a source for
+    # autocomplete merely because it has the newest mtime.
     file_path = _find_latest_schedule_file(schedule_type)
     if file_path:
-        return _load_df_from_file(file_path)
+        from schedules.schedule_dates import is_current_schedule
+
+        match = re.search(r'(\d{1,2}[._]\d{1,2}[._]\d{4})', file_path)
+        date_str = match.group(1).replace('_', '.') if match else None
+        if os.path.splitext(file_path)[1].lower() == ".pdf":
+            from schedules.pdf_to_df import extract_date_from_pdf_content
+
+            date_str = extract_date_from_pdf_content(file_path) or date_str
+        if is_current_schedule(date_str):
+            return _load_df_from_file(file_path)
 
     return None
 
@@ -115,6 +143,13 @@ def get_all_groups(df: Optional[pd.DataFrame] = None) -> list:
         df  — готовый DataFrame (например, уже загруженный).
               Если None — функция сама найдёт последний файл ГРУППЫ в DATA_DIR.
     """
+    if df is None:
+        from schedules.schedule_catalog import get_catalog_values
+
+        catalog_groups = get_catalog_values("groups")
+        if catalog_groups:
+            return catalog_groups
+
     df = _resolve_df(df, "groups")
     if df is None:
         print("[parser_all] Файл расписания групп не найден")
@@ -166,6 +201,13 @@ def get_all_teachers(df: Optional[pd.DataFrame] = None) -> list:
               Если None — функция сама найдёт последний файл ПРЕПОДАВАТЕЛИ в DATA_DIR.
               Если файл ПРЕПОДАВАТЕЛИ не найден — ищет в файле ГРУППЫ.
     """
+    if df is None:
+        from schedules.schedule_catalog import get_catalog_values
+
+        catalog_teachers = get_catalog_values("teachers")
+        if catalog_teachers:
+            return catalog_teachers
+
     df = _resolve_df(df, "teachers")
     if df is None:
         # Fallback: извлекаем преподавателей из расписания групп

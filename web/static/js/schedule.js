@@ -12,8 +12,8 @@ const SATURDAY_SCHEDULE = [
     { start: '10:10', end: '11:25' },
     { start: '11:35', end: '12:50' },
     { start: '13:00', end: '14:15' },
-    { start: '14:25', end: '15:50' },
-    { start: '16:00', end: '17:15' }
+    { start: '14:25', end: '15:40' },
+    { start: '15:50', end: '17:05' }
 ];
 
 let lastState = {
@@ -23,10 +23,28 @@ let lastState = {
 
 let isTeacher = false;
 
+const PROGRESS_TIME_MODES = [
+    { id: 'natural', label: 'обычный формат' },
+    { id: 'digital', label: 'минуты и секунды' },
+    { id: 'seconds', label: 'только секунды' },
+    { id: 'hours-minutes', label: 'часы и минуты' },
+    { id: 'decimal-hours', label: 'часы десятичным числом' },
+    { id: 'target-time', label: 'точное время события' }
+];
+let progressTimeModeIndex = 0;
+
 async function checkUserRole() {
     try {
-        const userId = tg.initDataUnsafe.user.id;
-        const response = await fetch(`/api/user/${userId}`);
+        if (window.kkepikApp) {
+            const bootstrap = await window.kkepikApp.ready;
+            if (bootstrap.user) {
+                isTeacher = bootstrap.user.role === 'teacher';
+                return;
+            }
+        }
+        const response = await fetch('/api/me', {
+            headers: { 'X-Telegram-Init-Data': tg.initData }
+        });
         const data = await response.json();
         isTeacher = data.role === 'teacher';
     } catch (error) {
@@ -74,24 +92,122 @@ function launchConfetti() {
     }, 500);
 }
 
-function formatTimeLeft(minutes, seconds = 0) {
-    if (minutes < 1) {
-        const totalSeconds = minutes * 60 + seconds;
+function formatNaturalTime(totalSeconds) {
+    if (totalSeconds < 60) {
         return `${totalSeconds} ${declOfNum(totalSeconds, ['секунда', 'секунды', 'секунд'])}`;
     }
-    
-    if (minutes < 60) {
-        return `${minutes} ${declOfNum(minutes, ['минута', 'минуты', 'минут'])}`;
+
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    if (totalMinutes < 60) {
+        return `${totalMinutes} ${declOfNum(totalMinutes, ['минута', 'минуты', 'минут'])}`;
     }
-    
-    const hours = Math.floor(minutes / 60);
-    const remainingMinutes = minutes % 60;
-    
+
+    const hours = Math.floor(totalMinutes / 60);
+    const remainingMinutes = totalMinutes % 60;
     if (remainingMinutes === 0) {
         return `${hours} ${declOfNum(hours, ['час', 'часа', 'часов'])}`;
     }
-    
+
     return `${hours} ${declOfNum(hours, ['час', 'часа', 'часов'])} и ${remainingMinutes} ${declOfNum(remainingMinutes, ['минута', 'минуты', 'минут'])}`;
+}
+
+function formatProgressTime(totalSeconds, targetTime, contextLabel) {
+    const safeSeconds = Math.max(0, Math.round(totalSeconds));
+    const totalMinutes = Math.floor(safeSeconds / 60);
+    const mode = PROGRESS_TIME_MODES[progressTimeModeIndex];
+
+    if (mode.id === 'digital') {
+        return {
+            primary: `${String(totalMinutes).padStart(2, '0')}:${String(safeSeconds % 60).padStart(2, '0')}`,
+            secondary: contextLabel
+        };
+    }
+    if (mode.id === 'seconds') {
+        return {
+            primary: `${safeSeconds} секунд`,
+            secondary: contextLabel
+        };
+    }
+    if (mode.id === 'hours-minutes') {
+        return {
+            primary: `${Math.floor(safeSeconds / 3600)} ч ${Math.floor((safeSeconds % 3600) / 60)} мин`,
+            secondary: contextLabel
+        };
+    }
+    if (mode.id === 'decimal-hours') {
+        return {
+            primary: `${(safeSeconds / 3600).toFixed(2).replace('.', ',')} часа`,
+            secondary: contextLabel
+        };
+    }
+    if (mode.id === 'target-time' && targetTime) {
+        let secondary = 'время окончания';
+        if (contextLabel === 'до пары') secondary = 'начало пары';
+        if (contextLabel === 'до перемены') secondary = 'конец пары';
+        if (contextLabel === 'до конца пар') secondary = 'конец занятий';
+        return { primary: targetTime, secondary };
+    }
+    return {
+        primary: formatNaturalTime(safeSeconds),
+        secondary: contextLabel
+    };
+}
+
+function renderProgressTime(totalSeconds, targetTime, contextLabel) {
+    const display = formatProgressTime(totalSeconds, targetTime, contextLabel);
+    document.getElementById('timerPassed').textContent = display.primary;
+    document.getElementById('timerLeft').textContent = display.secondary;
+    const progressBar = document.getElementById('progress_bar');
+    if (progressBar) {
+        const mode = PROGRESS_TIME_MODES[progressTimeModeIndex];
+        progressBar.dataset.timeMode = mode.id;
+        progressBar.setAttribute(
+            'aria-label',
+            `${display.primary}, ${display.secondary}. Сейчас выбран ${mode.label}`
+        );
+    }
+}
+
+function renderRestProgress(now) {
+    const mode = PROGRESS_TIME_MODES[progressTimeModeIndex];
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+    const seconds = now.getSeconds();
+    const secondsSinceMidnight = hours * 3600 + minutes * 60 + seconds;
+    const clock = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+    let primary = 'Приятного';
+    let secondary = 'отдыха!';
+
+    if (mode.id === 'digital') {
+        primary = `${clock}:${String(seconds).padStart(2, '0')}`;
+        secondary = 'сейчас';
+    } else if (mode.id === 'seconds') {
+        primary = `${secondsSinceMidnight} секунд`;
+        secondary = 'с начала суток';
+    } else if (mode.id === 'hours-minutes') {
+        primary = `${hours} ч ${minutes} мин`;
+        secondary = 'сейчас';
+    } else if (mode.id === 'decimal-hours') {
+        primary = `${(secondsSinceMidnight / 3600).toFixed(2).replace('.', ',')} часа`;
+        secondary = 'с начала суток';
+    } else if (mode.id === 'target-time') {
+        primary = clock;
+        secondary = `${now.getDate()} ${[
+            'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+            'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'
+        ][now.getMonth()]}`;
+    }
+
+    document.getElementById('timerPassed').textContent = primary;
+    document.getElementById('timerLeft').textContent = secondary;
+    const progressBar = document.getElementById('progress_bar');
+    if (progressBar) {
+        progressBar.dataset.timeMode = mode.id;
+        progressBar.setAttribute(
+            'aria-label',
+            `${primary}, ${secondary}. Сейчас выбран ${mode.label}`
+        );
+    }
 }
 
 function declOfNum(n, titles) {
@@ -137,14 +253,13 @@ function updateProgressBar(forceRest = false) {
     let timerLeft = 'отдыха!';
     let isInClass = false;
     let isActive = false;
+    let countdownSeconds = null;
+    let targetTime = null;
 
     if (isSunday || isHolidayToday || forceRest) {
         progress = 100;
-        timerPassed = 'Приятного';
-        timerLeft = 'отдыха!';
         document.getElementById('progress_line').style.width = (100 - progress) + '%';
-        document.getElementById('timerPassed').textContent = timerPassed;
-        document.getElementById('timerLeft').textContent = timerLeft;
+        renderRestProgress(now);
         lastState.wasInClass = false;
         lastState.lastPairEnd = null;
         return;
@@ -164,10 +279,9 @@ function updateProgressBar(forceRest = false) {
             const elapsedTime = (currentTime - startTime) + (currentSeconds / 60);
             progress = (elapsedTime / totalDuration) * 100;
             
-            const remainingMinutes = endTime - currentTime - 1;
-            const remainingSeconds = 60 - currentSeconds;
-            timerPassed = formatTimeLeft(remainingMinutes, remainingSeconds);
             timerLeft = i === schedule.length - 1 ? 'до конца пар' : 'до перемены';
+            countdownSeconds = endTime * 60 - (currentTime * 60 + currentSeconds);
+            targetTime = pair.end;
             isActive = true;
             isInClass = true;
             currentOrNextPairIndex = i;
@@ -184,12 +298,12 @@ function updateProgressBar(forceRest = false) {
         const [startHour, startMinute] = nextPair.start.split(':').map(Number);
         const startTime = startHour * 60 + startMinute;
 
-        const remainingMinutes = startTime - currentTime - 1;
-        const remainingSeconds = 60 - currentSeconds;
-        
-        if (remainingMinutes >= 0 || (remainingMinutes === -1 && remainingSeconds > 0)) {
-            timerPassed = formatTimeLeft(remainingMinutes, remainingSeconds);
+        const secondsUntilStart = startTime * 60 - (currentTime * 60 + currentSeconds);
+
+        if (secondsUntilStart > 0) {
             timerLeft = 'до пары';
+            countdownSeconds = secondsUntilStart;
+            targetTime = nextPair.start;
             progress = 0;
             isActive = true;
         }
@@ -203,6 +317,8 @@ function updateProgressBar(forceRest = false) {
         progress = 100;
         timerPassed = 'Приятного';
         timerLeft = 'отдыха!';
+        countdownSeconds = null;
+        targetTime = null;
 
         if (lastState.wasInClass && currentTime === lastEndTime && currentSeconds === 0) {
             if (window.launchSideConfetti) {
@@ -214,10 +330,23 @@ function updateProgressBar(forceRest = false) {
     lastState.wasInClass = isInClass;
     lastState.lastPairEnd = currentPair ? currentPair.end : null;
 
-    document.getElementById('timerPassed').textContent = timerPassed;
-    document.getElementById('timerLeft').textContent = timerLeft;
+    if (countdownSeconds !== null) {
+        renderProgressTime(countdownSeconds, targetTime, timerLeft);
+    } else {
+        renderRestProgress(now);
+    }
     document.getElementById('progress_line').style.width = `${100 - Math.min(100, Math.max(0, progress))}%`;
 }
+
+window.cycleProgressTimeMode = function() {
+    progressTimeModeIndex = (progressTimeModeIndex + 1) % PROGRESS_TIME_MODES.length;
+    updateProgressBar();
+    return PROGRESS_TIME_MODES[progressTimeModeIndex].id;
+};
+
+window.getProgressTimeMode = function() {
+    return PROGRESS_TIME_MODES[progressTimeModeIndex].id;
+};
 
 function getUpdateInterval() {
     const now = new Date();

@@ -5,8 +5,13 @@
 
 import os
 
-# Включить/выключить интеграцию с MAX
-MAX_ENABLED = True
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
+# MAX запускается только после явного включения в окружении.
+MAX_ENABLED = os.getenv("MAX_ENABLED", "False").lower() in ("true", "1", "yes")
 
 # ID чатов, которые мониторить на файлы расписания (из .env: MAX_WATCH_CHAT_IDS=-123,456)
 # Пустой список = мониторить все чаты (не рекомендуется)

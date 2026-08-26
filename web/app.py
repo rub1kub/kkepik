@@ -20,13 +20,53 @@ from functools import wraps
 from flask import session
 from flask_swagger_ui import get_swaggerui_blueprint
 from schedule_api import schedule_bp
-from config import API_URL
+from telegram_auth import authenticated_telegram_user
+from config import API_URL as SCHEDULE_API_URL
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 import uuid
 
+def load_env_value(key, env_file='/etc/kkepik/kkepik.ru.env'):
+    value = os.getenv(key, '')
+    if value:
+        return value
+    try:
+        with open(env_file, encoding='utf-8') as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                env_key, env_value = line.split('=', 1)
+                if env_key.strip() == key:
+                    return env_value.strip()
+    except OSError:
+        pass
+    return ''
+
+
 app = Flask(__name__)
-app.secret_key = 'super_secret_key_for_sessions'
-BOT_TOKEN = os.getenv('BOT_TOKEN', '7446409382:AAHZXyW-JQkiyk2Ln28bJWXe8asS4GGhUmM')
+app.secret_key = load_env_value('FLASK_SECRET_KEY') or secrets.token_hex(32)
+BOT_TOKEN = load_env_value('BOT_TOKEN')
+VPN_ADMIN_PASSWORD = load_env_value('VPN_ADMIN_PASSWORD')
+ADMIN_PASSWORD = load_env_value('ADMIN_PASSWORD')
+VPN_SSH_HOST = load_env_value('VPN_SSH_HOST')
+VPN_SSH_USERNAME = load_env_value('VPN_SSH_USERNAME')
+VPN_SSH_PASSWORD = load_env_value('VPN_SSH_PASSWORD')
+VPN_PUBLIC_HOST = load_env_value('VPN_PUBLIC_HOST') or VPN_SSH_HOST
+
+
+def connect_vpn_ssh(client):
+    if not all((VPN_SSH_HOST, VPN_SSH_USERNAME, VPN_SSH_PASSWORD)):
+        raise RuntimeError('VPN SSH credentials are not configured')
+    client.connect(
+        VPN_SSH_HOST,
+        username=VPN_SSH_USERNAME,
+        password=VPN_SSH_PASSWORD,
+        timeout=20,
+        allow_agent=False,
+        look_for_keys=False,
+    )
 
 # Простое кэширование для API данных
 api_cache = {
@@ -42,17 +82,17 @@ def is_event_active():
     """Проверяет, активен ли ивент (после 19:00 МСК 27 сентября 2025)"""
     import datetime
     import pytz
-    
+
     # Создаем московское время
     moscow_tz = pytz.timezone('Europe/Moscow')
     now_moscow = datetime.datetime.now(moscow_tz)
-    
+
     # Дата начала ивента: 27 сентября 2025, 19:00 МСК
     event_start = moscow_tz.localize(datetime.datetime(2025, 9, 27, 19, 0, 0))
-    
+
     is_active = now_moscow >= event_start
     app.logger.info(f"Event check: now={now_moscow}, start={event_start}, active={is_active}")
-    
+
     return is_active
 
 def get_cached_data(key):
@@ -90,6 +130,17 @@ def set_cached_user_data(user_id, value):
 # CORS support for API endpoints
 @app.after_request
 def after_request(response):
+    if request.path == '/service-worker.js':
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    elif (
+        request.path.startswith('/static/js/vendor/')
+        or request.path.startswith('/static/fonts/')
+        or request.path.startswith('/static/img/optimized/')
+    ):
+        response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    elif request.path.startswith('/static/'):
+        response.headers['Cache-Control'] = 'public, max-age=86400, stale-while-revalidate=604800'
+
     # Allow CORS for API endpoints and Telegram WebApp
     if request.path.startswith('/api/') or 'telegram' in request.headers.get('User-Agent', '').lower():
         response.headers.add('Access-Control-Allow-Origin', '*')
@@ -107,7 +158,7 @@ def handle_options(path):
     return response
 
 # Версия для предотвращения кэширования статических файлов
-STATIC_VERSION = "5.0.0"
+STATIC_VERSION = "20260826-11"
 
 log_path = os.path.join(os.path.dirname(__file__), 'log')
 logging.basicConfig(
@@ -153,7 +204,7 @@ swaggerui_blueprint = get_swaggerui_blueprint(
         'displayRequestDuration': True,
         'persistAuthorization': True,
         'layout': 'BaseLayout',  # Убираем верхнюю панель
-        'url': 'https://kkepik.ru/static/swagger.json',  # Устанавливаем полный URL для документации
+        'url': 'https://kkepik.rub1kub.ru/static/swagger.json',  # Устанавливаем полный URL для документации
         'validatorUrl': None  # Отключаем валидатор
     }
 )
@@ -207,7 +258,7 @@ def safe_db_operation(operation, max_retries=3, retry_delay=0.1):
 def init_db():
     with app.app_context():
         db = get_db()
-        
+
         # Проверяем существование колонки last_attendance_group_id
         cursor = db.cursor()
         columns = cursor.execute("PRAGMA table_info(users)").fetchall()
@@ -386,17 +437,17 @@ def init_db():
             FOREIGN KEY(game_id) REFERENCES sudoku_games(game_id)
         );
         '''
-        
+
         # Выполняем базовый скрипт
         db.executescript(base_script)
-        
+
         # Если колонка last_attendance_group_id не существует, добавляем её
         if not has_last_attendance_group:
             try:
                 db.execute('ALTER TABLE users ADD COLUMN last_attendance_group_id INTEGER DEFAULT NULL REFERENCES attendance_groups(id)')
             except Exception as e:
                 app.logger.error(f"Error adding last_attendance_group_id column: {e}")
-        
+
         # Создаем таблицу для поздравлений
         db.execute('''
             CREATE TABLE IF NOT EXISTS congratulations (
@@ -407,7 +458,7 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        
+
         # Добавляем поля для системы энергии
         try:
             db.execute('ALTER TABLE users ADD COLUMN energy_current INTEGER DEFAULT 150')
@@ -418,15 +469,15 @@ def init_db():
         except Exception as e:
             # Поля уже существуют
             pass
-        
+
         # Обновляем пользователей с energy_last_regen = 0 до текущего времени
         current_time = int(time.time() * 1000)
         db.execute('''
-            UPDATE users SET energy_last_regen = ? 
+            UPDATE users SET energy_last_regen = ?
             WHERE energy_last_regen IS NULL OR energy_last_regen = 0
         ''', (current_time,))
-        
-        
+
+
         # Создаем таблицу для апгрейдов пользователей
         db.execute('''
             CREATE TABLE IF NOT EXISTS user_upgrades (
@@ -437,7 +488,7 @@ def init_db():
                 FOREIGN KEY(user_id) REFERENCES users(id)
             )
         ''')
-        
+
         # Создаем таблицу для трат поздравлений
         db.execute('''
             CREATE TABLE IF NOT EXISTS congratulations_spent (
@@ -449,7 +500,7 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        
+
         db.commit()
 
 init_db()
@@ -461,13 +512,13 @@ def migrate_existing_upgrades():
         users_with_upgrades = db.execute('''
             SELECT DISTINCT user_id FROM user_upgrades
         ''').fetchall()
-        
+
         for user_row in users_with_upgrades:
             user_id = user_row['user_id']
             upgrades = db.execute('''
                 SELECT upgrade_type, level FROM user_upgrades WHERE user_id = ?
             ''', (user_id,)).fetchall()
-            
+
             for upgrade in upgrades:
                 apply_upgrade_effects(user_id, upgrade['upgrade_type'], upgrade['level'])
     except Exception as e:
@@ -481,17 +532,17 @@ def get_or_create_user(tg_id, username, first_name):
             db.execute('UPDATE users SET first_name = ?, username = ? WHERE tg_id = ?', (first_name, username, tg_id))
             db.commit()
             return user['id']
-        
+
         # При создании нового пользователя инициализируем энергию
         current_time = int(time.time() * 1000)
         db.execute('''
-            INSERT INTO users (tg_id, username, first_name, energy_current, energy_max, 
-                              energy_regen_rate, energy_regen_interval, energy_last_regen) 
+            INSERT INTO users (tg_id, username, first_name, energy_current, energy_max,
+                              energy_regen_rate, energy_regen_interval, energy_last_regen)
             VALUES (?, ?, ?, 150, 150, 2, 8000, ?)
         ''', (tg_id, username, first_name, current_time))
         db.commit()
         return db.execute('SELECT id FROM users WHERE tg_id = ?', (tg_id,)).fetchone()['id']
-    
+
     try:
         return safe_db_operation(_get_or_create_user)
     except Exception as e:
@@ -524,33 +575,33 @@ def get_user_energy(user_id):
     cached_user_data = get_cached_user_data(user_id)
     if cached_user_data and cached_user_data.get('energy'):
         return cached_user_data['energy']
-    
+
     db = get_db()
     user = db.execute('''
-        SELECT energy_current, energy_max, energy_regen_rate, energy_regen_interval, energy_last_regen 
+        SELECT energy_current, energy_max, energy_regen_rate, energy_regen_interval, energy_last_regen
         FROM users WHERE tg_id = ?
     ''', (user_id,)).fetchone()
-    
+
     if not user:
         app.logger.warning(f"User not found in get_user_energy: {user_id}")
         return None
-    
+
     current_time = int(time.time() * 1000)  # миллисекунды
     last_regen = user['energy_last_regen'] or current_time
     time_passed = current_time - last_regen
-    
+
     # Вычисляем сколько энергии восстановилось
     if time_passed >= user['energy_regen_interval']:
         regen_count = time_passed // user['energy_regen_interval']
         new_energy = min(user['energy_max'], user['energy_current'] + regen_count * user['energy_regen_rate'])
         new_last_regen = last_regen + (regen_count * user['energy_regen_interval'])
-        
+
         # Обновляем в БД
         db.execute('''
             UPDATE users SET energy_current = ?, energy_last_regen = ? WHERE tg_id = ?
         ''', (new_energy, new_last_regen, user_id))
         db.commit()
-        
+
         return {
             'current': new_energy,
             'max': user['energy_max'],
@@ -558,7 +609,7 @@ def get_user_energy(user_id):
             'regen_interval': user['energy_regen_interval'],
             'last_regen': new_last_regen
         }
-    
+
     return {
         'current': user['energy_current'],
         'max': user['energy_max'],
@@ -572,7 +623,7 @@ def consume_user_energy(user_id, amount=1):
     energy = get_user_energy(user_id)
     if not energy or energy['current'] < amount:
         return False
-    
+
     db = get_db()
     db.execute('''
         UPDATE users SET energy_current = energy_current - ? WHERE tg_id = ?
@@ -587,15 +638,15 @@ def get_user_upgrades(user_id):
     user = db.execute('SELECT id FROM users WHERE tg_id = ?', (user_id,)).fetchone()
     if not user:
         return {'capacity': 1, 'speed': 1}
-    
+
     upgrades = db.execute('''
         SELECT upgrade_type, level FROM user_upgrades WHERE user_id = ?
     ''', (user['id'],)).fetchall()
-    
+
     result = {'capacity': 1, 'speed': 1}
     for upgrade in upgrades:
         result[upgrade['upgrade_type']] = upgrade['level']
-    
+
     return result
 
 def get_upgrade_cost(upgrade_type, current_level):
@@ -603,86 +654,86 @@ def get_upgrade_cost(upgrade_type, current_level):
     base_costs = {'capacity': 50, 'speed': 30}
     if upgrade_type not in base_costs:
         return None
-    
+
     return base_costs[upgrade_type] * (2 ** (current_level - 1))
 
 def apply_upgrade_effects(user_id, upgrade_type, level):
     """Применить эффекты апгрейда к энергии пользователя"""
     db = get_db()
-    
+
     if upgrade_type == 'capacity':
         # Увеличиваем максимальную энергию на 30 за каждый уровень (от базовых 150)
         new_max = 150 + (level - 1) * 30
-        
+
         # Получаем текущую энергию
         current_energy = db.execute('SELECT energy_current FROM users WHERE tg_id = ?', (user_id,)).fetchone()['energy_current']
-        
+
         # Увеличиваем текущую энергию на разницу между новым и старым максимумом
         old_max = 150 + max(0, (level - 2)) * 30  # Предыдущий максимум (минимум 150)
         energy_bonus = new_max - old_max  # Бонус энергии (+30)
         new_current = current_energy + energy_bonus
-        
+
         # Обновляем максимальную и текущую энергию
         db.execute('UPDATE users SET energy_max = ?, energy_current = ? WHERE tg_id = ?', (new_max, new_current, user_id))
     elif upgrade_type == 'speed':
         # Уменьшаем интервал регенерации на 1 секунду за каждый уровень (от базовых 8 сек)
         new_interval = max(3000, 8000 - (level - 1) * 1000)
         db.execute('UPDATE users SET energy_regen_interval = ? WHERE tg_id = ?', (new_interval, user_id))
-    
+
     db.commit()
 
 def buy_upgrade(user_id, upgrade_type):
     """Купить апгрейд"""
     db = get_db()
-    
+
     # Получаем текущий уровень апгрейда
     current_upgrades = get_user_upgrades(user_id)
     current_level = current_upgrades.get(upgrade_type, 1)
-    
+
     # Вычисляем стоимость
     cost = get_upgrade_cost(upgrade_type, current_level)
     if cost is None:
         return {'success': False, 'message': 'Неизвестный тип апгрейда'}
-    
+
     # Проверяем баланс пользователя (поздравления минус траты)
     earned = db.execute('''
         SELECT COUNT(*) as count FROM congratulations WHERE user_id = ?
     ''', (user_id,)).fetchone()['count']
-    
+
     spent = db.execute('''
         SELECT COALESCE(SUM(amount), 0) as total FROM congratulations_spent WHERE user_id = ?
     ''', (user_id,)).fetchone()['total']
-    
+
     current_balance = earned - spent
-    
+
     if current_balance < cost:
         return {'success': False, 'message': 'Недостаточно поздравлений'}
-    
+
     # Записываем трату поздравлений на апгрейд
     db.execute('''
-        INSERT INTO congratulations_spent (user_id, amount, reason, timestamp) 
+        INSERT INTO congratulations_spent (user_id, amount, reason, timestamp)
         VALUES (?, ?, ?, ?)
     ''', (user_id, cost, f'upgrade_{upgrade_type}', int(time.time() * 1000)))
-    
+
     # Получаем внутренний ID пользователя
     user = db.execute('SELECT id FROM users WHERE tg_id = ?', (user_id,)).fetchone()
     if not user:
         return {'success': False, 'message': 'Пользователь не найден'}
-    
+
     # Обновляем или создаем запись апгрейда
     new_level = current_level + 1
     db.execute('''
         INSERT OR REPLACE INTO user_upgrades (user_id, upgrade_type, level)
         VALUES (?, ?, ?)
     ''', (user['id'], upgrade_type, new_level))
-    
+
     # Применяем эффекты апгрейда
     apply_upgrade_effects(user_id, upgrade_type, new_level)
-    
+
     db.commit()
-    
+
     return {
-        'success': True, 
+        'success': True,
         'new_level': new_level,
         'new_balance': current_balance - cost
     }
@@ -716,7 +767,190 @@ def check_init_data(init_data):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html', STATIC_VERSION=STATIC_VERSION)
+
+
+@app.route('/service-worker.js')
+def service_worker():
+    response = send_file(
+        os.path.join(app.static_folder, 'service-worker.js'),
+        mimetype='application/javascript',
+    )
+    response.headers['Service-Worker-Allowed'] = '/'
+    return response
+
+
+def _bootstrap_upstream_result(response):
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {'error': 'Некорректный ответ сервера расписания'}
+    return response.status_code, payload
+
+
+def _fetch_bootstrap_user(user_id):
+    try:
+        response = requests.get(f'{SCHEDULE_API_URL}/user/{user_id}', timeout=5)
+        return _bootstrap_upstream_result(response)
+    except requests.RequestException:
+        return 503, {'error': 'Сервис профиля временно недоступен'}
+
+
+def _fetch_bootstrap_schedule(user_id, schedule_date):
+    try:
+        response = requests.post(
+            f'{SCHEDULE_API_URL}/getUserSchedule/{user_id}',
+            json={'date': schedule_date},
+            headers={'Content-Type': 'application/json'},
+            timeout=10,
+        )
+        return _bootstrap_upstream_result(response)
+    except requests.RequestException:
+        return 503, {'error': 'Сервис расписания временно недоступен'}
+
+
+def _adjacent_study_date(schedule_date, direction):
+    candidate = schedule_date + timedelta(days=direction)
+    while candidate.weekday() == 6:
+        candidate += timedelta(days=direction)
+    return candidate
+
+
+def _schedule_has_real_lessons(payload):
+    if not isinstance(payload, dict) or not isinstance(payload.get('schedule'), list):
+        return False
+
+    for item in payload['schedule']:
+        if not isinstance(item, str):
+            continue
+        for line in item.splitlines():
+            normalized = line.strip().replace('—', '–')
+            if not normalized or 'пара' not in normalized.casefold():
+                continue
+            details = normalized.split('–', 1)[-1].strip()
+            if details and details.casefold() != 'нет':
+                return True
+    return False
+
+
+def _adjacent_bootstrap_payload(schedule_date, status, payload):
+    available = status == 200 and _schedule_has_real_lessons(payload)
+    return {
+        'date': schedule_date.strftime('%d.%m.%Y'),
+        'available': available,
+        'status': status,
+        'schedule': payload if available else None,
+    }
+
+
+@app.route('/api/bootstrap')
+def api_bootstrap():
+    telegram_user = authenticated_telegram_user(request)
+    if not telegram_user:
+        return jsonify({'success': False, 'error': 'Требуется авторизация Telegram'}), 401
+
+    schedule_date = request.args.get('date', '').strip()
+    try:
+        parsed_date = datetime.strptime(schedule_date, '%d.%m.%Y')
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Неверный формат даты'}), 400
+
+    previous_date = _adjacent_study_date(parsed_date, -1)
+    next_date = _adjacent_study_date(parsed_date, 1)
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        user_future = executor.submit(_fetch_bootstrap_user, telegram_user['id'])
+        schedule_future = executor.submit(
+            _fetch_bootstrap_schedule,
+            telegram_user['id'],
+            schedule_date,
+        )
+        previous_future = executor.submit(
+            _fetch_bootstrap_schedule,
+            telegram_user['id'],
+            previous_date.strftime('%d.%m.%Y'),
+        )
+        next_future = executor.submit(
+            _fetch_bootstrap_schedule,
+            telegram_user['id'],
+            next_date.strftime('%d.%m.%Y'),
+        )
+        user_status, user_payload = user_future.result()
+        schedule_status, schedule_payload = schedule_future.result()
+        previous_status, previous_payload = previous_future.result()
+        next_status, next_payload = next_future.result()
+
+    if isinstance(user_payload, dict):
+        role = user_payload.get('role')
+        if role in {'Я преподаватель', 'teacher'}:
+            user_payload['role'] = 'teacher'
+        elif role in {'Я студент', 'student'}:
+            user_payload['role'] = 'student'
+
+    favorites = []
+    reactions = []
+    user_reactions = []
+    try:
+        db = get_db()
+        local_user_id = get_or_create_user(
+            telegram_user['id'],
+            telegram_user.get('username'),
+            telegram_user.get('first_name'),
+        )
+        if local_user_id:
+            favorite_rows = db.execute(
+                'SELECT id, entity_type, entity_id, entity_name, created_at '
+                'FROM favorite_entities WHERE user_id = ? ORDER BY created_at DESC',
+                (local_user_id,),
+            ).fetchall()
+            favorites = [dict(row) for row in favorite_rows]
+
+            reaction_date = parsed_date.strftime('%Y-%m-%d')
+            reaction_rows = db.execute(
+                'SELECT reaction, COUNT(*) AS count FROM schedule_reactions '
+                'WHERE date = ? GROUP BY reaction',
+                (reaction_date,),
+            ).fetchall()
+            reactions = [
+                {'reaction': row['reaction'], 'count': row['count']}
+                for row in reaction_rows
+            ]
+            own_reaction_rows = db.execute(
+                'SELECT reaction FROM schedule_reactions '
+                'WHERE user_id = ? AND date = ?',
+                (local_user_id, reaction_date),
+            ).fetchall()
+            user_reactions = [row['reaction'] for row in own_reaction_rows]
+    except sqlite3.Error as error:
+        app.logger.warning('Bootstrap local data unavailable: %s', error)
+
+    response = jsonify({
+        'success': True,
+        'requested_date': schedule_date,
+        'reaction_date': parsed_date.strftime('%Y-%m-%d'),
+        'server_time': datetime.now(timezone.utc).isoformat(),
+        'user': user_payload if user_status == 200 else None,
+        'user_status': user_status,
+        'schedule': schedule_payload if schedule_status == 200 else None,
+        'schedule_status': schedule_status,
+        'adjacent': {
+            'previous': _adjacent_bootstrap_payload(
+                previous_date,
+                previous_status,
+                previous_payload,
+            ),
+            'next': _adjacent_bootstrap_payload(
+                next_date,
+                next_status,
+                next_payload,
+            ),
+        },
+        'favorites': favorites,
+        'reactions': reactions,
+        'user_reactions': user_reactions,
+    })
+    response.headers['Cache-Control'] = 'private, no-store'
+    return response
 
 @app.route('/test')
 def test_page():
@@ -761,7 +995,7 @@ def api_congratulate():
     # Проверяем, активен ли ивент
     if is_event_active():
         return jsonify({'success': False, 'message': 'Игра приостановлена для проведения ивента'}), 503
-    
+
     try:
         data = request.get_json() or {}
         ip = request.headers.get('X-Forwarded-For', request.remote_addr)
@@ -796,18 +1030,18 @@ def api_congratulate():
             count = 1
         if count > 50:
             count = 50
-        
+
         if not user_id:
             return jsonify({'success': False, 'message': 'Неверные данные пользователя'})
 
         # Лимиты по IP (дополнительно к user rate-limit)
         if not ip:
             ip = '0.0.0.0'
-        
+
         # Проверка на спам (максимум 10 поздравлений в секунду от одного пользователя)
         current_time = int(time.time() * 1000)
         db = get_db()
-        
+
         # Получаем количество поздравлений пользователя за последнюю секунду
         one_second_ago = current_time - 1000
         recent_congratulations = db.execute(
@@ -845,7 +1079,7 @@ def api_congratulate():
             available_clicks = energy['current'] if energy else 0
             if available_clicks <= 0:
                 return jsonify({
-                    'success': False, 
+                    'success': False,
                     'message': 'Недостаточно энергии',
                     'energy': energy,
                     'error_type': 'insufficient_energy'
@@ -866,7 +1100,7 @@ def api_congratulate():
                 [(u, n, t) for (u, n, t, _ip) in rows]
             )
         db.commit()
-        
+
         # Сбрасываем кэш после добавления поздравлений
         api_cache['total_congratulations']['timestamp'] = 0
         api_cache['rating']['timestamp'] = 0
@@ -874,17 +1108,17 @@ def api_congratulate():
         # Сбрасываем кэш пользовательских данных
         if user_id in api_cache['user_data']:
             api_cache['user_data'][user_id]['timestamp'] = 0
-        
+
         # Тратим энергию
         if not consume_user_energy(user_id, accepted):
             app.logger.warning(f"Не удалось потратить энергию для пользователя {user_id}")
-        
+
         # Получаем общее количество поздравлений
         total = db.execute('SELECT COUNT(*) as count FROM congratulations').fetchone()['count']
-        
+
         # Получаем обновленную энергию
         updated_energy = get_user_energy(user_id)
-        
+
         response = jsonify({
             'success': True,
             'total': total,
@@ -893,14 +1127,14 @@ def api_congratulate():
             'message': 'Поздравление отправлено!',
             'energy': updated_energy
         })
-        
+
         # Добавляем CORS заголовки
         response.headers.add('Access-Control-Allow-Origin', '*')
         response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Telegram-Init-Data')
         response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-        
+
         return response
-        
+
     except sqlite3.OperationalError as e:
         if "database is locked" in str(e):
             app.logger.error(f"Ошибка в api_congratulate: database is locked")
@@ -919,15 +1153,15 @@ def api_congratulate_data():
         # Пытаемся получить данные из разных источников
         init_data = request.args.get('tgWebAppData') or request.headers.get('X-Telegram-Init-Data')
         user_id = None
-        
+
         app.logger.info(f"API congratulate-data: initData present: {bool(init_data)}")
-        
+
         if init_data:
             try:
                 # Проверяем подпись initData и достаем user_id
                 check_result = check_init_data(init_data)
                 app.logger.info(f"check_init_data result: {check_result}")
-                
+
                 if check_result:
                     params = parse_init_data_params(init_data)
                     user_obj = json.loads(params.get('user', '{}'))
@@ -942,27 +1176,27 @@ def api_congratulate_data():
                 app.logger.warning(f"Exception parsing initData: {e}")
         else:
             app.logger.warning("No initData provided")
-        
-        # Если не удалось получить user_id из Telegram данных, 
+
+        # Если не удалось получить user_id из Telegram данных,
         # используем заголовок X-User-ID (если есть)
         if not user_id:
             user_id = request.headers.get('X-User-ID')
-        
+
         current_time = int(time.time() * 1000)
-        
+
         db = get_db()
-        
+
         # Получаем общее количество поздравлений (с кэшированием)
         total = get_cached_data('total_congratulations')
         if total is None:
             total = db.execute('SELECT COUNT(*) as count FROM congratulations').fetchone()['count']
             set_cached_data('total_congratulations', total)
-        
+
         # Получаем количество поздравлений пользователя, энергию и апгрейды
         user_count = 0
         user_energy = None
         user_upgrades = None
-        
+
         # Проверяем кэш пользовательских данных
         cached_user_data = get_cached_user_data(user_id) if user_id else None
         if cached_user_data:
@@ -977,26 +1211,26 @@ def api_congratulate_data():
                     user_obj = json.loads(params.get('user', '{}'))
                     if user_obj:
                         get_or_create_user(
-                            int(user_id), 
-                            user_obj.get('username', ''), 
+                            int(user_id),
+                            user_obj.get('username', ''),
                             user_obj.get('first_name', 'Аноним')
                         )
                 except Exception as e:
                     app.logger.warning(f"Failed to create user: {e}")
-            
+
             # Вычисляем реальный баланс (заработанные минус потраченные)
             earned = db.execute(
                 'SELECT COUNT(*) as count FROM congratulations WHERE user_id = ?',
                 (user_id,)
             ).fetchone()['count']
-            
+
             spent = db.execute(
                 'SELECT COALESCE(SUM(amount), 0) as total FROM congratulations_spent WHERE user_id = ?',
                 (user_id,)
             ).fetchone()['total']
-            
+
             user_count = earned - spent
-            
+
             # Фолбэк: если пользователь есть в congratulations, но нет в users - создаем его
             user_energy = get_user_energy(user_id)
             if not user_energy and earned > 0:
@@ -1007,31 +1241,31 @@ def api_congratulate_data():
                     (user_id,)
                 ).fetchone()
                 user_name = last_congratulation['user_name'] if last_congratulation else 'Аноним'
-                
+
                 # Создаем пользователя с дефолтными данными
                 get_or_create_user(int(user_id), '', user_name)
                 user_energy = get_user_energy(user_id)
-                
+
             user_upgrades = get_user_upgrades(user_id)
-            
+
             # Сохраняем в кэш
             set_cached_user_data(user_id, {
                 'count': user_count,
                 'energy': user_energy,
                 'upgrades': user_upgrades
             })
-        
+
         # Получаем рейтинг пользователей (с кэшированием)
         rating_list = get_cached_data('rating')
         if rating_list is None:
             rating = db.execute('''
-                SELECT 
+                SELECT
                     c.user_id AS user_id,
                     (
-                        SELECT c2.user_name 
-                        FROM congratulations c2 
-                        WHERE c2.user_id = c.user_id 
-                        ORDER BY c2.timestamp DESC 
+                        SELECT c2.user_name
+                        FROM congratulations c2
+                        WHERE c2.user_id = c.user_id
+                        ORDER BY c2.timestamp DESC
                         LIMIT 1
                     ) AS user_name,
                     COUNT(*) AS count
@@ -1040,7 +1274,7 @@ def api_congratulate_data():
                 ORDER BY count DESC
                 LIMIT 20
             ''').fetchall()
-            
+
             rating_list = []
             for row in rating:
                 rating_list.append({
@@ -1049,19 +1283,19 @@ def api_congratulate_data():
                     'count': row['count']
                 })
             set_cached_data('rating', rating_list)
-        
+
         # Получаем статистику (с кэшированием)
         stats = get_cached_data('stats')
         if stats is None:
             stats = {}
-            
+
             # Общее количество поздравлений
             stats['total_congratulations'] = total
-            
+
             # Количество уникальных пользователей
             unique_users = db.execute('SELECT COUNT(DISTINCT user_id) as count FROM congratulations').fetchone()['count']
             stats['unique_users'] = unique_users
-            
+
             # Онлайн (пользователи, которые поздравляли за последние 5 минут)
             five_minutes_ago = current_time - (5 * 60 * 1000)
             online_users = db.execute(
@@ -1069,7 +1303,7 @@ def api_congratulate_data():
                 (five_minutes_ago,)
             ).fetchone()['count']
             stats['online_users'] = online_users
-            
+
             # Поздравлений за последний час
             one_hour_ago = current_time - (60 * 60 * 1000)
             recent_congratulations = db.execute(
@@ -1077,13 +1311,13 @@ def api_congratulate_data():
                 (one_hour_ago,)
             ).fetchone()['count']
             stats['recent_congratulations'] = recent_congratulations
-            
+
             # Среднее количество поздравлений на пользователя
             avg_per_user = total / unique_users if unique_users > 0 else 0
             stats['avg_per_user'] = round(avg_per_user, 1)
-            
+
             set_cached_data('stats', stats)
-        
+
         response = jsonify({
             'success': True,
             'total': total,
@@ -1093,14 +1327,14 @@ def api_congratulate_data():
             'energy': user_energy,
             'upgrades': user_upgrades
         })
-        
+
         # Добавляем CORS заголовки
         response.headers.add('Access-Control-Allow-Origin', '*')
         response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Telegram-Init-Data')
         response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-        
+
         return response
-        
+
     except sqlite3.OperationalError as e:
         if "database is locked" in str(e):
             app.logger.error(f"Ошибка в api_congratulate_data: database is locked")
@@ -1118,14 +1352,14 @@ def api_buy_upgrade():
     try:
         data = request.get_json() or {}
         upgrade_type = data.get('upgrade_type')
-        
+
         if not upgrade_type or upgrade_type not in ['capacity', 'speed']:
             return jsonify({'success': False, 'message': 'Неверный тип апгрейда'}), 400
-        
+
         # Получаем user_id из initData
         init_data = request.headers.get('X-Telegram-Init-Data') or data.get('initData')
         user_id = None
-        
+
         if init_data:
             try:
                 if check_init_data(init_data):
@@ -1135,18 +1369,18 @@ def api_buy_upgrade():
                         user_id = str(user_obj.get('id'))
             except Exception:
                 pass
-        
+
         if not user_id:
             return jsonify({'success': False, 'message': 'Неверные данные пользователя'}), 403
-        
+
         # Покупаем апгрейд
         result = buy_upgrade(user_id, upgrade_type)
-        
+
         if result['success']:
             # Возвращаем обновленные данные
             updated_energy = get_user_energy(user_id)
             updated_upgrades = get_user_upgrades(user_id)
-            
+
             return jsonify({
                 'success': True,
                 'message': 'Апгрейд успешно куплен',
@@ -1157,7 +1391,7 @@ def api_buy_upgrade():
             })
         else:
             return jsonify(result), 400
-        
+
     except Exception as e:
         app.logger.error(f"Ошибка в api_buy_upgrade: {e}")
         return jsonify({'success': False, 'message': 'Внутренняя ошибка сервера'}), 500
@@ -1185,7 +1419,7 @@ def validate():
 @app.route('/games/<game_name>')
 def game_page(game_name):
     html_file = f'{game_name}.html'
-    return render_template(f'games/{html_file}')
+    return render_template(f'games/{html_file}', STATIC_VERSION=STATIC_VERSION)
 
 @app.route('/api/rating/<game>')
 def api_rating(game):
@@ -1243,15 +1477,15 @@ def attendance_list():
 
         db = get_db()
         user = db.execute('''
-            SELECT u.last_attendance_group_id, ag.id as group_exists 
-            FROM users u 
-            LEFT JOIN attendance_groups ag ON u.last_attendance_group_id = ag.id 
+            SELECT u.last_attendance_group_id, ag.id as group_exists
+            FROM users u
+            LEFT JOIN attendance_groups ag ON u.last_attendance_group_id = ag.id
             WHERE u.tg_id = ?
         ''', (tg_id,)).fetchone()
 
         if user and user['last_attendance_group_id'] and user['group_exists']:
             return redirect(url_for('attendance_view', group_id=user['last_attendance_group_id'], tgWebAppData=init_data))
-        
+
         return render_template('attendance/list_groups.html')
     except Exception as e:
         app.logger.error(f'Error in attendance_list: {e}')
@@ -1283,13 +1517,13 @@ def api_create_attendance_group():
 
         name = data.get('name')
         students = data.get('students', [])
-        
+
         if not name or not students:
             return jsonify({'success': False, 'error': 'Неверные данные'})
 
         db = get_db()
         user_id = get_or_create_user(tg_id, user_data.get('username'), user_data.get('first_name'))
-        
+
         cursor = db.cursor()
         # Создаем группу
         cursor.execute(
@@ -1304,13 +1538,13 @@ def api_create_attendance_group():
                 'INSERT INTO students (group_id, name) VALUES (?, ?)',
                 (group_id, student_name)
             )
-        
+
         # Устанавливаем группу как активную для пользователя
         cursor.execute(
             'UPDATE users SET last_attendance_group_id = ? WHERE id = ?',
             (group_id, user_id)
         )
-        
+
         db.commit()
         return jsonify({'success': True, 'group_id': group_id})
     except Exception as e:
@@ -1320,13 +1554,13 @@ def api_create_attendance_group():
 def api_get_attendance(group_id, year, month):
     try:
         db = get_db()
-        
+
         # Получаем информацию о группе
         group = db.execute(
             'SELECT name FROM attendance_groups WHERE id = ?',
             (group_id,)
         ).fetchone()
-        
+
         if not group:
             return jsonify({'success': False, 'error': 'Группа не найдена'})
 
@@ -1342,15 +1576,15 @@ def api_get_attendance(group_id, year, month):
             attendance = {}
             attendance_rows = db.execute('''
                 SELECT strftime('%d', date) as day, absences, excused_absences
-                FROM attendance 
-                WHERE student_id = ? 
-                AND strftime('%Y', date) = ? 
+                FROM attendance
+                WHERE student_id = ?
+                AND strftime('%Y', date) = ?
                 AND strftime('%m', date) = ?
             ''', (student['id'], str(year), str(month).zfill(2))).fetchall()
 
             total_absences = 0
             total_excused = 0
-            
+
             for row in attendance_rows:
                 day = int(row['day'])
                 attendance[day] = {
@@ -1398,16 +1632,16 @@ def api_update_attendance():
             absences = ?,
             excused_absences = ?
         ''', (student_id, date, absences, excused_absences, absences, excused_absences))
-        
+
         # Получаем обновленные суммы
         totals = db.execute('''
-            SELECT 
+            SELECT
                 SUM(absences) as total_absences,
                 SUM(excused_absences) as total_excused
             FROM attendance
             WHERE student_id = ?
         ''', (student_id,)).fetchone()
-        
+
         db.commit()
 
         return jsonify({
@@ -1424,19 +1658,19 @@ def api_list_groups():
     init_data = request.args.get('tgWebAppData')
     if not init_data or not check_init_data(init_data):
         return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-    
+
     try:
         # Правильно парсим init_data
         params = parse_init_data_params(init_data)
         user_data = json.loads(params.get('user', '{}'))
         tg_id = user_data.get('id')
-        
+
         if not tg_id:
             return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-            
+
         user_id = get_or_create_user(tg_id, user_data.get('username'), user_data.get('first_name'))
         db = get_db()
-        
+
         # Получаем группы, где пользователь является создателем или администратором
         groups = db.execute('''
             SELECT DISTINCT g.id, g.name, g.created_at,
@@ -1447,7 +1681,7 @@ def api_list_groups():
             WHERE g.creator_id = ? OR ga.user_id = ?
             ORDER BY g.created_at DESC
         ''', (user_id, user_id, user_id)).fetchall()
-        
+
         return jsonify({
             'success': True,
             'groups': [{
@@ -1467,42 +1701,42 @@ def api_get_group(group_id):
     init_data = request.args.get('tgWebAppData')
     if not init_data or not check_init_data(init_data):
         return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-    
+
     try:
         params = parse_init_data_params(init_data)
         user_data = json.loads(params.get('user', '{}'))
         tg_id = user_data.get('id')
-        
+
         if not tg_id:
             return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-            
+
         current_user_id = get_or_create_user(tg_id, user_data.get('username'), user_data.get('first_name'))
         db = get_db()
-        
+
         # Получаем информацию о группе
         group = db.execute('''
-            SELECT id, name, creator_id FROM attendance_groups 
+            SELECT id, name, creator_id FROM attendance_groups
             WHERE id = ?
         ''', (group_id,)).fetchone()
-        
+
         if not group:
             return jsonify({'success': False, 'error': 'Группа не найдена'})
-        
+
         # Получаем список студентов
         students = db.execute('''
-            SELECT id, name FROM students 
-            WHERE group_id = ? 
+            SELECT id, name FROM students
+            WHERE group_id = ?
             ORDER BY name
         ''', (group_id,)).fetchall()
-        
+
         # Получаем список администраторов
         admins = db.execute('''
-            SELECT u.id, u.first_name as name, u.username 
-            FROM users u 
-            JOIN group_admins ga ON u.id = ga.user_id 
+            SELECT u.id, u.first_name as name, u.username
+            FROM users u
+            JOIN group_admins ga ON u.id = ga.user_id
             WHERE ga.group_id = ?
         ''', (group_id,)).fetchall()
-        
+
         return jsonify({
             'success': True,
             'group': {
@@ -1527,18 +1761,18 @@ def api_update_group(group_id):
     try:
         name = data.get('name')
         students = data.get('students', [])
-        
+
         if not name or not students:
             return jsonify({'success': False, 'error': 'Неверные данные'})
 
         db = get_db()
         # Обновляем название группы
         db.execute('UPDATE attendance_groups SET name = ? WHERE id = ?', (name, group_id))
-        
+
         # Получаем текущих студентов
         current_students = db.execute('SELECT id, name FROM students WHERE group_id = ?', (group_id,)).fetchall()
         current_names = {s['name']: s['id'] for s in current_students}
-        
+
         # Обновляем студентов
         for student_name in students:
             if student_name in current_names:
@@ -1547,11 +1781,11 @@ def api_update_group(group_id):
             else:
                 # Добавляем нового студента
                 db.execute('INSERT INTO students (group_id, name) VALUES (?, ?)', (group_id, student_name))
-        
+
         # Удаляем оставшихся студентов
         for student_id in current_names.values():
             db.execute('DELETE FROM students WHERE id = ?', (student_id,))
-        
+
         db.commit()
         return jsonify({'success': True})
     except Exception as e:
@@ -1579,68 +1813,68 @@ def api_add_admin(group_id):
     init_data = data.get('tgWebAppData')
     if not init_data or not check_init_data(init_data):
         return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-    
+
     try:
         params = parse_init_data_params(init_data)
         user_data = json.loads(params.get('user', '{}'))
         tg_id = user_data.get('id')
         if not tg_id:
             return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-            
+
         identifier = data.get('identifier')
         if not identifier:
             return jsonify({'success': False, 'error': 'Не указан идентификатор пользователя'})
-        
+
         db = get_db()
         current_user_id = get_or_create_user(tg_id, user_data.get('username'), user_data.get('first_name'))
-        
+
         # Проверяем, является ли текущий пользователь создателем группы
         owner = db.execute('''
-            SELECT creator_id FROM attendance_groups 
+            SELECT creator_id FROM attendance_groups
             WHERE id = ?
         ''', (group_id,)).fetchone()
-        
+
         if not owner or owner['creator_id'] != current_user_id:
             return jsonify({'success': False, 'error': 'Недостаточно прав'})
-        
+
         # Ищем пользователя по username или id
         if identifier.startswith('@'):
             username = identifier[1:]  # Убираем @ из начала
             user = db.execute('''
-                SELECT id, first_name, username 
-                FROM users 
+                SELECT id, first_name, username
+                FROM users
                 WHERE username = ? COLLATE NOCASE
             ''', (username,)).fetchone()
         else:
             try:
                 user_id = int(identifier)
                 user = db.execute('''
-                    SELECT id, first_name, username 
-                    FROM users 
+                    SELECT id, first_name, username
+                    FROM users
                     WHERE id = ?
                 ''', (user_id,)).fetchone()
             except ValueError:
                 return jsonify({'success': False, 'error': 'Неверный формат ID'})
-        
+
         if not user:
             return jsonify({'success': False, 'error': 'Пользователь не найден'})
-        
+
         # Проверяем, не является ли пользователь уже администратором
         existing_admin = db.execute('''
-            SELECT 1 FROM group_admins 
+            SELECT 1 FROM group_admins
             WHERE group_id = ? AND user_id = ?
         ''', (group_id, user['id'])).fetchone()
-        
+
         if existing_admin:
             return jsonify({'success': False, 'error': 'Пользователь уже является администратором'})
-        
+
         # Добавляем пользователя как администратора
         db.execute('''
-            INSERT INTO group_admins (group_id, user_id) 
+            INSERT INTO group_admins (group_id, user_id)
             VALUES (?, ?)
         ''', (group_id, user['id']))
         db.commit()
-        
+
         return jsonify({
             'success': True,
             'admin': {
@@ -1659,39 +1893,39 @@ def api_remove_admin(group_id):
     init_data = data.get('tgWebAppData')
     if not init_data or not check_init_data(init_data):
         return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-    
+
     try:
         # Правильно парсим init_data
         params = parse_init_data_params(init_data)
         user_data = json.loads(params.get('user', '{}'))
         tg_id = user_data.get('id')
-        
+
         if not tg_id:
             return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-            
+
         admin_id = data.get('admin_id')
         if not admin_id:
             return jsonify({'success': False, 'error': 'Не указан ID администратора'})
-        
+
         db = get_db()
         current_user_id = get_or_create_user(tg_id, user_data.get('username'), user_data.get('first_name'))
-        
+
         # Проверяем, является ли текущий пользователь создателем группы
         owner = db.execute('''
-            SELECT creator_id FROM attendance_groups 
+            SELECT creator_id FROM attendance_groups
             WHERE id = ?
         ''', (group_id,)).fetchone()
-        
+
         if not owner or owner['creator_id'] != current_user_id:
             return jsonify({'success': False, 'error': 'Недостаточно прав'})
-        
+
         # Удаляем администратора
         db.execute('''
-            DELETE FROM group_admins 
+            DELETE FROM group_admins
             WHERE group_id = ? AND user_id = ?
         ''', (group_id, admin_id))
         db.commit()
-        
+
         return jsonify({'success': True})
     except Exception as e:
         app.logger.error(f'Error in api_remove_admin: {str(e)}')
@@ -1705,38 +1939,38 @@ def vpn_page():
 def api_get_user_key():
     data = request.get_json()
     init_data = data.get('tgWebAppData')
-    
+
     if not init_data or not check_init_data(init_data):
         return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-    
+
     try:
         # Получаем данные пользователя
         params = parse_init_data_params(init_data)
         user_data = json.loads(params.get('user', '{}'))
         tg_id = user_data.get('id')
-        
+
         if not tg_id:
             return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-            
+
         # Получаем ID пользователя из базы
         db = get_db()
         user_id = get_or_create_user(tg_id, user_data.get('username'), user_data.get('first_name'))
-        
+
         # Проверяем, есть ли уже ключ у пользователя
         key = db.execute('SELECT key_data FROM vpn_keys WHERE user_id = ?', (user_id,)).fetchone()
-        
+
         if key:
             return jsonify({
                 'success': True,
                 'hasKey': True,
                 'key': key['key_data']
             })
-        
+
         return jsonify({
             'success': True,
             'hasKey': False
         })
-        
+
     except Exception as e:
         app.logger.error(f'Error in api_get_user_key: {str(e)}')
         return jsonify({'success': False, 'error': str(e)})
@@ -1761,52 +1995,52 @@ def get_container_stats(ssh):
 def find_optimal_port(ssh):
     """Поиск оптимального порта с наименьшей нагрузкой"""
     stats = get_container_stats(ssh)
-    
+
     # Проверяем общую нагрузку на сервер
     stdin, stdout, stderr = ssh.exec_command("uptime")
     load = float(stdout.read().decode().split('load average:')[1].split(',')[0].strip())
-    
+
     if load > 5.0:  # Если загрузка сервера высокая
         raise Exception("Сервер перегружен, попробуйте позже")
-    
+
     # Если есть существующие контейнеры, выбираем наименее загруженный
     if stats:
         optimal_port = min(stats.items(), key=lambda x: x[1]['cpu'])[0]
         if stats[optimal_port]['cpu'] < 80:  # Если нагрузка на контейнер приемлемая
             return int(optimal_port)
-    
+
     # Если нет контейнеров или все перегружены, создаем новый порт
     port = 8081
     stdin, stdout, stderr = ssh.exec_command('netstat -tuln | grep LISTEN')
     used_ports = stdout.read().decode()
-    
+
     while f":{port}" in used_ports:
         port += 1
-    
+
     return port
 
 @app.route('/api/vpn/generate_key', methods=['POST'])
 def api_generate_vpn_key():
     data = request.get_json()
     init_data = data.get('tgWebAppData')
-    
+
     if not init_data or not check_init_data(init_data):
         return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-    
+
     try:
         # Получаем данные пользователя
         params = parse_init_data_params(init_data)
         user_data = json.loads(params.get('user', '{}'))
         tg_id = user_data.get('id')
         username = user_data.get('username', 'user')
-        
+
         if not tg_id:
             return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-            
+
         # Получаем ID пользователя из базы
         db = get_db()
         user_id = get_or_create_user(tg_id, user_data.get('username'), user_data.get('first_name'))
-        
+
         # Проверяем, есть ли уже ключ у пользователя
         existing_key = db.execute('SELECT key_data FROM vpn_keys WHERE user_id = ?', (user_id,)).fetchone()
         if existing_key:
@@ -1818,31 +2052,24 @@ def api_generate_vpn_key():
         # Создаем SSH клиент
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        
+
         try:
-            ssh.connect(
-                '87.120.84.187',
-                username='root',
-                password='403090WOW',
-                timeout=20,
-                allow_agent=False,
-                look_for_keys=False
-            )
-            
+            connect_vpn_ssh(ssh)
+
             # Находим оптимальный порт
             try:
                 port = find_optimal_port(ssh)
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)})
-            
+
             # Создаем ключ с именем пользователя
             sanitized_username = ''.join(c for c in f"{username}_{tg_id}" if c.isalnum() or c in '_-')
-            
+
             # Проверяем и удаляем существующий контейнер, если он есть
             ssh.exec_command(f'docker stop vless-{port} 2>/dev/null || true')
             ssh.exec_command(f'docker rm vless-{port} 2>/dev/null || true')
             ssh.exec_command(f'rm -f /root/vless/config_{port}.json 2>/dev/null || true')
-            
+
             # Генерируем UUID для пользователя
             user_uuid = str(uuid.uuid4())
 
@@ -1887,21 +2114,21 @@ def api_generate_vpn_key():
                 raise Exception(f"Ошибка при создании контейнера: {error}")
 
             # Формируем ссылку VLESS
-            key = f"vless://{user_uuid}@87.120.84.187:{port}?encryption=none#ВПН_от_РУБИКА_{sanitized_username}"
+            key = f"vless://{user_uuid}@{VPN_PUBLIC_HOST}:{port}?encryption=none#ВПН_от_РУБИКА_{sanitized_username}"
 
             # Сохраняем ключ в базу
             db.execute('INSERT INTO vpn_keys (user_id, port, key_data) VALUES (?, ?, ?)',
                       (user_id, port, key))
             db.commit()
-            
+
             return jsonify({
                 'success': True,
                 'key': key
             })
-            
+
         finally:
             ssh.close()
-            
+
     except Exception as e:
         app.logger.error(f'Error in api_generate_vpn_key: {str(e)}')
         return jsonify({
@@ -1913,28 +2140,21 @@ def api_generate_vpn_key():
 def api_list_vpn_keys():
     data = request.get_json()
     init_data = data.get('tgWebAppData')
-    
+
     if not init_data or not check_init_data(init_data):
         return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-    
+
     try:
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        
+
         try:
-            ssh.connect(
-                '87.120.84.187',
-                username='root',
-                password='403090WOW',
-                timeout=20,
-                allow_agent=False,
-                look_for_keys=False
-            )
-            
+            connect_vpn_ssh(ssh)
+
             # Получаем список контейнеров
             stdin, stdout, stderr = ssh.exec_command('docker ps --format "{{.Names}}" | grep vless-')
             containers = stdout.read().decode().strip().split('\n')
-            
+
             keys = []
             for container in containers:
                 if not container:
@@ -1944,7 +2164,7 @@ def api_list_vpn_keys():
                 stdin, stdout, stderr = ssh.exec_command(f'cat {config_path}')
                 config = json.loads(stdout.read().decode())
                 user_uuid = config['inbounds'][0]['settings']['clients'][0]['id']
-                key = f"vless://{user_uuid}@87.120.84.187:{port}?encryption=none#ВПН_от_РУБИКА"
+                key = f"vless://{user_uuid}@{VPN_PUBLIC_HOST}:{port}?encryption=none#ВПН_от_РУБИКА"
                 keys.append({
                     'port': port,
                     'key': key
@@ -1953,10 +2173,10 @@ def api_list_vpn_keys():
                 'success': True,
                 'keys': keys
             })
-            
+
         finally:
             ssh.close()
-            
+
     except Exception as e:
         app.logger.error(f'Error in api_list_vpn_keys: {str(e)}')
         return jsonify({
@@ -1968,59 +2188,52 @@ def api_list_vpn_keys():
 def api_delete_vpn_key():
     data = request.get_json()
     init_data = data.get('tgWebAppData')
-    
+
     if not init_data or not check_init_data(init_data):
         return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-    
+
     try:
         # Получаем данные пользователя
         params = parse_init_data_params(init_data)
         user_data = json.loads(params.get('user', '{}'))
         tg_id = user_data.get('id')
-        
+
         if not tg_id:
             return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-            
+
         # Получаем ID пользователя из базы
         db = get_db()
         user_id = get_or_create_user(tg_id, user_data.get('username'), user_data.get('first_name'))
-        
+
         # Получаем ключ пользователя
         key = db.execute('SELECT port FROM vpn_keys WHERE user_id = ?', (user_id,)).fetchone()
-        
+
         if not key:
             return jsonify({'success': False, 'error': 'Ключ не найден'})
-            
+
         # Создаем SSH клиент
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        
+
         try:
-            ssh.connect(
-                '87.120.84.187',
-                username='root',
-                password='403090WOW',
-                timeout=20,
-                allow_agent=False,
-                look_for_keys=False
-            )
-            
+            connect_vpn_ssh(ssh)
+
             # Останавливаем и удаляем контейнер
             ssh.exec_command(f'docker stop vless-{key["port"]}')
             ssh.exec_command(f'docker rm vless-{key["port"]}')
-            
+
             # Удаляем конфиг
             ssh.exec_command(f'rm -f /root/vless/config_{key["port"]}.json')
-            
+
             # Удаляем ключ из базы
             db.execute('DELETE FROM vpn_keys WHERE user_id = ?', (user_id,))
             db.commit()
-            
+
             return jsonify({'success': True})
-            
+
         finally:
             ssh.close()
-            
+
     except Exception as e:
         app.logger.error(f'Error in api_delete_vpn_key: {str(e)}')
         return jsonify({
@@ -2043,35 +2256,28 @@ def vpn_admin():
     try:
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        
-        ssh.connect(
-            '87.120.84.187',
-            username='root',
-            password='403090WOW',
-            timeout=20,
-            allow_agent=False,
-            look_for_keys=False
-        )
-        
+
+        connect_vpn_ssh(ssh)
+
         # Получаем статистику контейнеров
         stats = get_container_stats(ssh)
-        
+
         # Получаем общую нагрузку на сервер
         stdin, stdout, stderr = ssh.exec_command("uptime")
         server_load = stdout.read().decode().strip()
-        
+
         # Получаем использование диска
         stdin, stdout, stderr = ssh.exec_command("df -h /")
         disk_usage = stdout.read().decode().strip()
-        
+
         # Получаем список активных пользователей
         stdin, stdout, stderr = ssh.exec_command(
             "netstat -tn | grep ESTABLISHED | grep -E ':808[0-9]+' | wc -l"
         )
         active_users = stdout.read().decode().strip()
-        
+
         ssh.close()
-        
+
         return render_template(
             'vpn/admin.html',
             stats=stats,
@@ -2079,14 +2285,15 @@ def vpn_admin():
             disk_usage=disk_usage,
             active_users=active_users
         )
-        
+
     except Exception as e:
         return f"Ошибка: {str(e)}", 500
 
 @app.route('/vpn/admin/login', methods=['GET', 'POST'])
 def vpn_admin_login():
     if request.method == 'POST':
-        if request.form.get('password') == '403090WOW':
+        submitted_password = request.form.get('password', '')
+        if VPN_ADMIN_PASSWORD and hmac.compare_digest(submitted_password, VPN_ADMIN_PASSWORD):
             session['admin_authenticated'] = True
             return redirect(url_for('vpn_admin'))
         else:
@@ -2110,7 +2317,8 @@ def superadmin_required(f):
 @app.route('/admin/login', methods=['GET', 'POST'])
 def admin_login():
     if request.method == 'POST':
-        if request.form.get('password') == '403090WOW':
+        submitted_password = request.form.get('password', '')
+        if ADMIN_PASSWORD and hmac.compare_digest(submitted_password, ADMIN_PASSWORD):
             session['superadmin_authenticated'] = True
             return redirect(url_for('admin_dashboard'))
         else:
@@ -2126,15 +2334,15 @@ def admin_logout():
 @superadmin_required
 def admin_dashboard():
     db = get_db()
-    
+
     # Получаем статистику по всем таблицам
     tables_info = {}
     cursor = db.cursor()
-    
+
     # Получаем список всех таблиц
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
     tables = cursor.fetchall()
-    
+
     for table in tables:
         table_name = table[0]
         # Получаем количество записей
@@ -2143,12 +2351,12 @@ def admin_dashboard():
         # Получаем структуру таблицы
         cursor.execute(f"PRAGMA table_info({table_name})")
         columns = cursor.fetchall()
-        
+
         tables_info[table_name] = {
             'count': count,
             'columns': columns
         }
-    
+
     return render_template('admin/dashboard.html', tables_info=tables_info)
 
 @app.route('/admin/clicker')
@@ -2156,13 +2364,13 @@ def admin_dashboard():
 def admin_clicker():
     """Управление кликером"""
     db = get_db()
-    
+
     # Получаем статистику кликера
     total_congratulations = db.execute('SELECT COUNT(*) as count FROM congratulations').fetchone()['count']
     unique_users = db.execute('SELECT COUNT(DISTINCT user_id) as count FROM congratulations').fetchone()['count']
     users_with_energy = db.execute('SELECT COUNT(*) as count FROM users').fetchone()['count']
     total_spent = db.execute('SELECT COALESCE(SUM(amount), 0) as total FROM congratulations_spent').fetchone()['total']
-    
+
     # Топ пользователей
     top_users = db.execute('''
         SELECT c.user_id, c.user_name, COUNT(*) as congratulations_count,
@@ -2177,7 +2385,7 @@ def admin_clicker():
         ORDER BY congratulations_count DESC
         LIMIT 10
     ''').fetchall()
-    
+
     stats = {
         'total_congratulations': total_congratulations,
         'unique_users': unique_users,
@@ -2185,7 +2393,7 @@ def admin_clicker():
         'total_spent': total_spent,
         'top_users': top_users
     }
-    
+
     return render_template('admin/clicker.html', stats=stats)
 
 @app.route('/admin/clicker/update-settings', methods=['POST'])
@@ -2196,47 +2404,47 @@ def admin_clicker_update_settings():
         data = request.get_json()
         setting_type = data.get('type')
         value = data.get('value')
-        
+
         if not setting_type or value is None:
             return jsonify({'success': False, 'message': 'Недостаточно данных'})
-        
+
         db = get_db()
-        
+
         if setting_type == 'base_energy':
             # Обновляем базовую энергию для всех пользователей без апгрейдов
             db.execute('''
-                UPDATE users 
-                SET energy_max = ?, energy_current = CASE 
-                    WHEN energy_current > ? THEN energy_current 
-                    ELSE ? 
+                UPDATE users
+                SET energy_max = ?, energy_current = CASE
+                    WHEN energy_current > ? THEN energy_current
+                    ELSE ?
                 END
                 WHERE id NOT IN (
                     SELECT DISTINCT user_id FROM user_upgrades WHERE upgrade_type = 'capacity'
                 )
             ''', (int(value), int(value), int(value)))
-            
+
         elif setting_type == 'regen_interval':
             # Обновляем время восстановления для всех пользователей без апгрейдов скорости
             db.execute('''
-                UPDATE users 
+                UPDATE users
                 SET energy_regen_interval = ?
                 WHERE id NOT IN (
                     SELECT DISTINCT user_id FROM user_upgrades WHERE upgrade_type = 'speed'
                 )
             ''', (int(value),))
-            
+
         elif setting_type == 'regen_rate':
             # Обновляем скорость восстановления для всех пользователей
             db.execute('UPDATE users SET energy_regen_rate = ?', (int(value),))
-            
+
         else:
             return jsonify({'success': False, 'message': 'Неизвестный тип настройки'})
-        
+
         db.commit()
         app.logger.info(f"Admin updated {setting_type} to {value}")
-        
+
         return jsonify({'success': True, 'message': f'Настройка {setting_type} обновлена'})
-        
+
     except Exception as e:
         app.logger.error(f"Error updating clicker settings: {e}")
         return jsonify({'success': False, 'message': 'Ошибка сервера'})
@@ -2249,25 +2457,25 @@ def admin_clicker_set_user_energy():
         data = request.get_json()
         user_id = data.get('user_id')
         energy_amount = data.get('energy_amount')
-        
+
         if not user_id or energy_amount is None:
             return jsonify({'success': False, 'message': 'Недостаточно данных'})
-        
+
         db = get_db()
-        
+
         # Проверяем существует ли пользователь
         user = db.execute('SELECT * FROM users WHERE id = ?', (str(user_id),)).fetchone()
         if not user:
             return jsonify({'success': False, 'message': 'Пользователь не найден'})
-        
+
         # Устанавливаем энергию
         db.execute('UPDATE users SET energy_current = ? WHERE id = ?', (int(energy_amount), str(user_id)))
         db.commit()
-        
+
         app.logger.info(f"Admin set energy {energy_amount} for user {user_id}")
-        
+
         return jsonify({'success': True, 'message': f'Энергия установлена: {energy_amount}'})
-        
+
     except Exception as e:
         app.logger.error(f"Error setting user energy: {e}")
         return jsonify({'success': False, 'message': 'Ошибка сервера'})
@@ -2278,18 +2486,18 @@ def admin_clicker_reset_all_energy():
     """Сбросить всю энергию до максимума"""
     try:
         db = get_db()
-        
+
         # Восстанавливаем энергию всех пользователей до максимума
         db.execute('UPDATE users SET energy_current = energy_max')
         db.commit()
-        
+
         # Получаем количество обновленных пользователей
         updated_count = db.execute('SELECT COUNT(*) as count FROM users').fetchone()['count']
-        
+
         app.logger.info(f"Admin reset energy for {updated_count} users")
-        
+
         return jsonify({'success': True, 'message': f'Энергия восстановлена для {updated_count} пользователей'})
-        
+
     except Exception as e:
         app.logger.error(f"Error resetting all energy: {e}")
         return jsonify({'success': False, 'message': 'Ошибка сервера'})
@@ -2300,32 +2508,32 @@ def admin_clicker_clear_upgrades():
     """Очистить все апгрейды"""
     try:
         db = get_db()
-        
+
         # Удаляем все апгрейды
         upgrades_count = db.execute('SELECT COUNT(*) as count FROM user_upgrades').fetchone()['count']
         db.execute('DELETE FROM user_upgrades')
-        
+
         # Сбрасываем потраченные поздравления
         spent_count = db.execute('SELECT COUNT(*) as count FROM congratulations_spent').fetchone()['count']
         db.execute('DELETE FROM congratulations_spent')
-        
+
         # Сбрасываем энергию всех пользователей к базовым значениям
         db.execute('''
-            UPDATE users 
-            SET energy_max = 100, 
-                energy_current = 100, 
+            UPDATE users
+            SET energy_max = 100,
+                energy_current = 100,
                 energy_regen_interval = 20000
         ''')
-        
+
         db.commit()
-        
+
         app.logger.info(f"Admin cleared {upgrades_count} upgrades and {spent_count} spent records")
-        
+
         return jsonify({
-            'success': True, 
+            'success': True,
             'message': f'Очищено {upgrades_count} апгрейдов и {spent_count} трат'
         })
-        
+
     except Exception as e:
         app.logger.error(f"Error clearing upgrades: {e}")
         return jsonify({'success': False, 'message': 'Ошибка сервера'})
@@ -2338,17 +2546,17 @@ def admin_clicker_add_congratulations():
         data = request.get_json()
         user_id = data.get('user_id')
         amount = data.get('amount')
-        
+
         if not user_id or amount is None:
             return jsonify({'success': False, 'message': 'Недостаточно данных'})
-        
+
         db = get_db()
-        
+
         # Проверяем существует ли пользователь
         user = db.execute('SELECT * FROM users WHERE id = ?', (str(user_id),)).fetchone()
         if not user:
             return jsonify({'success': False, 'message': 'Пользователь не найден'})
-        
+
         # Добавляем поздравления
         current_time = int(time.time() * 1000)
         for _ in range(int(amount)):
@@ -2356,13 +2564,13 @@ def admin_clicker_add_congratulations():
                 'INSERT INTO congratulations (user_id, user_name, timestamp) VALUES (?, ?, ?)',
                 (str(user_id), 'Admin Bonus', current_time)
             )
-        
+
         db.commit()
-        
+
         app.logger.info(f"Admin added {amount} congratulations to user {user_id}")
-        
+
         return jsonify({'success': True, 'message': f'Добавлено {amount} поздравлений'})
-        
+
     except Exception as e:
         app.logger.error(f"Error adding congratulations: {e}")
         return jsonify({'success': False, 'message': 'Ошибка сервера'})
@@ -2373,39 +2581,39 @@ def admin_clicker_full_wipe():
     """ПОЛНЫЙ ВАЙП всех данных кликера - НЕОБРАТИМО!"""
     try:
         db = get_db()
-        
+
         # Получаем статистику перед удалением для логирования
         total_congratulations = db.execute('SELECT COUNT(*) as count FROM congratulations').fetchone()['count']
         total_users = db.execute('SELECT COUNT(*) as count FROM users').fetchone()['count']
         total_upgrades = db.execute('SELECT COUNT(*) as count FROM user_upgrades').fetchone()['count']
         total_spent = db.execute('SELECT COUNT(*) as count FROM congratulations_spent').fetchone()['count']
-        
+
         # ПОЛНОЕ УДАЛЕНИЕ ВСЕХ ДАННЫХ
         # Удаляем все поздравления
         db.execute('DELETE FROM congratulations')
-        
+
         # Удаляем всех пользователей (энергия, настройки)
         db.execute('DELETE FROM users')
-        
+
         # Удаляем все апгрейды
         db.execute('DELETE FROM user_upgrades')
-        
+
         # Удаляем все записи о тратах
         db.execute('DELETE FROM congratulations_spent')
-        
+
         # Сбрасываем автоинкремент счетчики
         db.execute('DELETE FROM sqlite_sequence WHERE name IN ("congratulations", "users", "user_upgrades", "congratulations_spent")')
-        
+
         db.commit()
-        
+
         # Логируем критическое действие
         app.logger.critical(f"ПОЛНЫЙ ВАЙП ДАННЫХ КЛИКЕРА! Удалено: {total_congratulations} поздравлений, {total_users} пользователей, {total_upgrades} апгрейдов, {total_spent} записей трат")
-        
+
         return jsonify({
-            'success': True, 
+            'success': True,
             'message': f'ПОЛНЫЙ ВАЙП ЗАВЕРШЕН! Удалено: {total_congratulations} поздравлений, {total_users} пользователей, {total_upgrades} апгрейдов, {total_spent} записей трат'
         })
-        
+
     except Exception as e:
         app.logger.error(f"Error during full wipe: {e}")
         return jsonify({'success': False, 'message': 'Ошибка при выполнении полного вайпа'})
@@ -2415,31 +2623,31 @@ def admin_clicker_full_wipe():
 def admin_table(table_name):
     db = get_db()
     cursor = db.cursor()
-    
+
     # Получаем информацию о структуре таблицы
     cursor.execute(f"PRAGMA table_info({table_name})")
     columns = cursor.fetchall()
-    
+
     # Получаем информацию о первичном ключе
     cursor.execute(f"PRAGMA index_list({table_name})")
     indexes = cursor.fetchall()
-    
+
     primary_keys = []
     for index in indexes:
         if index[2]:  # Если это первичный ключ
             cursor.execute(f"PRAGMA index_info({index[1]})")
             index_info = cursor.fetchall()
             primary_keys.extend(col[2] for col in index_info)
-    
+
     # Если первичных ключей нет, используем первую колонку
     if not primary_keys:
         primary_keys = [columns[0][1]]
-    
+
     # Получаем данные таблицы
     cursor.execute(f"SELECT * FROM {table_name}")
     rows = cursor.fetchall()
-    
-    return render_template('admin/table.html', 
+
+    return render_template('admin/table.html',
                          table_name=table_name,
                          columns=columns,
                          rows=rows,
@@ -2450,26 +2658,26 @@ def admin_table(table_name):
 def admin_edit_row(table_name):
     db = get_db()
     cursor = db.cursor()
-    
+
     # Получаем информацию о структуре таблицы
     cursor.execute(f"PRAGMA table_info({table_name})")
     columns = cursor.fetchall()
-    
+
     # Получаем информацию о первичном ключе
     cursor.execute(f"PRAGMA index_list({table_name})")
     indexes = cursor.fetchall()
-    
+
     primary_keys = []
     for index in indexes:
         if index[2]:  # Если это первичный ключ
             cursor.execute(f"PRAGMA index_info({index[1]})")
             index_info = cursor.fetchall()
             primary_keys.extend(col[2] for col in index_info)
-    
+
     # Если первичных ключей нет, используем первую колонку
     if not primary_keys:
         primary_keys = [columns[0][1]]
-    
+
     if request.method == 'POST':
         try:
             # Получаем все поля из формы
@@ -2482,20 +2690,20 @@ def admin_edit_row(table_name):
                         where_values.append(request.form[col_name])
                     else:
                         fields[col_name] = request.form[col_name]
-            
+
             # Формируем SQL запрос для обновления
             set_clause = ", ".join([f"{k} = ?" for k in fields.keys()])
             where_clause = " AND ".join([f"{k} = ?" for k in primary_keys])
             sql = f"UPDATE {table_name} SET {set_clause} WHERE {where_clause}"
-            
+
             # Выполняем запрос
             cursor.execute(sql, list(fields.values()) + where_values)
             db.commit()
-            
+
             return redirect(url_for('admin_table', table_name=table_name))
         except Exception as e:
             return f"Ошибка: {str(e)}", 500
-    
+
     # Получаем значения для WHERE из параметров запроса
     where_values = []
     where_conditions = []
@@ -2504,15 +2712,15 @@ def admin_edit_row(table_name):
         if value is not None:
             where_values.append(value)
             where_conditions.append(f"{key} = ?")
-    
+
     # Получаем данные строки
     where_clause = " AND ".join(where_conditions)
     cursor.execute(f"SELECT * FROM {table_name} WHERE {where_clause}", where_values)
     row = cursor.fetchone()
-    
+
     if not row:
         return f"Запись не найдена", 404
-    
+
     return render_template('admin/edit_row.html',
                          table_name=table_name,
                          columns=columns,
@@ -2525,24 +2733,24 @@ def admin_delete_row(table_name):
     try:
         db = get_db()
         cursor = db.cursor()
-        
+
         # Получаем информацию о первичном ключе
         cursor.execute(f"PRAGMA index_list({table_name})")
         indexes = cursor.fetchall()
-        
+
         primary_keys = []
         for index in indexes:
             if index[2]:  # Если это первичный ключ
                 cursor.execute(f"PRAGMA index_info({index[1]})")
                 index_info = cursor.fetchall()
                 primary_keys.extend(col[2] for col in index_info)
-        
+
         # Если первичных ключей нет, используем первую колонку
         if not primary_keys:
             cursor.execute(f"PRAGMA table_info({table_name})")
             columns = cursor.fetchall()
             primary_keys = [columns[0][1]]
-        
+
         # Формируем условие WHERE
         where_values = []
         where_conditions = []
@@ -2551,11 +2759,11 @@ def admin_delete_row(table_name):
             if value is not None:
                 where_values.append(value)
                 where_conditions.append(f"{key} = ?")
-        
+
         where_clause = " AND ".join(where_conditions)
         cursor.execute(f"DELETE FROM {table_name} WHERE {where_clause}", where_values)
         db.commit()
-        
+
         return redirect(url_for('admin_table', table_name=table_name))
     except Exception as e:
         return f"Ошибка: {str(e)}", 500
@@ -2569,15 +2777,15 @@ def api_submit_2048():
     move_number = data.get('move_number')
     board_state = data.get('board_state')
     move_hash = data.get('move_hash')
-    
-    if not all([init_data, score is not None, game_id, move_number is not None, 
+
+    if not all([init_data, score is not None, game_id, move_number is not None,
                 board_state, move_hash]):
         return {'error': 'missing data'}, 400
-    
+
     # Проверка initData
     if not check_init_data(init_data):
         return {'error': 'auth'}, 403
-    
+
     # Получаем данные пользователя
     try:
         params = parse_init_data_params(init_data)
@@ -2585,41 +2793,41 @@ def api_submit_2048():
         user = json.loads(user_data)
     except:
         return {'error': 'invalid user data'}, 400
-    
+
     tg_id = user.get('id')
     if not tg_id:
         return {'error': 'no tg_id'}, 400
-    
+
     user_id = get_or_create_user(tg_id, user.get('username', ''), user.get('first_name', 'Пользователь'))
-    
+
     # Проверяем валидность хода
     is_valid, error = verify_2048_move(game_id, user_id, board_state, score, move_number)
     if not is_valid:
         return {'error': error}, 400
-    
+
     # Проверяем хеш хода
     message = f"{game_id}:{user_id}:{move_number}:{board_state}:{score}"
     hash_value = 0
     for char in message:
         hash_value = (hash_value * 31 + ord(char)) & 0xFFFFFFFF
     expected_hash = format(hash_value, 'x')
-    
+
     if move_hash != expected_hash:
         return {'error': 'invalid move hash'}, 400
-    
+
     # Сохраняем ход
     db = get_db()
     db.execute(
         'INSERT INTO game_moves_2048 (user_id, game_id, move_number, board_state, score, timestamp, move_hash) VALUES (?, ?, ?, ?, ?, ?, ?)',
         (user_id, game_id, move_number, board_state, score, time.time(), move_hash)
     )
-    
+
     # Обновляем сессию
     db.execute(
         'UPDATE game_sessions_2048 SET last_move_time = ?, current_score = ?, moves_count = ? WHERE game_id = ?',
         (time.time(), score, move_number, game_id)
     )
-    
+
     # Обновляем рейтинг только если это лучший результат
     cur = db.execute('SELECT score FROM rating_2048 WHERE user_id = ?', (user_id,)).fetchone()
     if not cur or score > cur['score']:
@@ -2627,7 +2835,7 @@ def api_submit_2048():
             db.execute('UPDATE rating_2048 SET score = ? WHERE user_id = ?', (score, user_id))
         else:
             db.execute('INSERT INTO rating_2048 (user_id, score) VALUES (?, ?)', (user_id, score))
-    
+
     db.commit()
     return {'ok': True, 'score': score}
 
@@ -2635,63 +2843,63 @@ def api_submit_2048():
 def new_game_2048():
     data = request.get_json()
     init_data = data.get('tgWebAppData')
-    
+
     if not check_init_data(init_data):
         return {'error': 'auth'}, 403
-    
+
     params = parse_init_data_params(init_data)
     user_data = params.get('user', '{}')
     try:
         user = json.loads(user_data)
     except Exception:
         return {'error': 'invalid user data'}, 400
-    
+
     tg_id = user.get('id')
     if not tg_id:
         return {'error': 'no tg_id'}, 400
-    
+
     user_id = get_or_create_user(tg_id, user.get('username', ''), user.get('first_name', 'Пользователь'))
-    
+
     # Создаем новую игровую сессию
     game_id = hashlib.sha256(f"{user_id}:{time.time()}".encode()).hexdigest()
     current_time = time.time()
-    
+
     db = get_db()
     db.execute(
         'INSERT INTO game_sessions_2048 (game_id, user_id, start_time, last_move_time, current_score, moves_count) VALUES (?, ?, ?, ?, 0, 0)',
         (game_id, user_id, current_time, current_time)
     )
     db.commit()
-    
+
     return {'ok': True, 'game_id': game_id, 'user_id': user_id}
 
 # Добавим функцию проверки валидности хода змейки
 def verify_snake_move(game_id, user_id, snake_state, food_position, score, move_number):
     db = get_db()
-    
+
     # Проверяем существование игровой сессии
     session = db.execute(
         'SELECT * FROM game_sessions_snake WHERE game_id = ? AND user_id = ?',
         (game_id, user_id)
     ).fetchone()
-    
+
     if not session:
         return False, "НЕ ЛОМАЙ ЗМЕЙКУ ПЖ"
-    
+
     # Проверяем время между ходами
     current_time = time.time()
     if (current_time - session['last_move_time']) * 1000 < MAX_SNAKE_SPEED:
         return False, "НЕ ЛОМАЙ ЗМЕЙКУ ПЖ"
-    
+
     # Проверяем корректность номера хода
     if move_number != session['moves_count'] + 1:
         return False, "НЕ ЛОМАЙ ЗМЕЙКУ ПЖ"
-    
+
     # Проверяем прирост очков
     score_delta = score - session['current_score']
     if score_delta > MAX_SNAKE_SCORE_PER_FOOD or score_delta < 0:
         return False, "НЕ ЛОМАЙ ЗМЕЙКУ ПЖ"
-    
+
     # Проверяем длину змейки
     try:
         snake = json.loads(snake_state)
@@ -2699,11 +2907,11 @@ def verify_snake_move(game_id, user_id, snake_state, food_position, score, move_
             return False, "НЕ ЛОМАЙ ЗМЕЙКУ ПЖ"
     except:
         return False, "НЕ ЛОМАЙ ЗМЕЙКУ ПЖ"
-    
+
     # Проверяем общий счет
     if score > MAX_SNAKE_TOTAL_SCORE:
         return False, "НЕ ЛОМАЙ ЗМЕЙКУ ПЖ"
-    
+
     return True, None
 
 # Обновим route для отправки счета змейки
@@ -2717,15 +2925,15 @@ def api_submit_snake():
     snake_state = data.get('snake_state')
     food_position = data.get('food_position')
     move_hash = data.get('move_hash')
-    
-    if not all([init_data, score is not None, game_id, move_number is not None, 
+
+    if not all([init_data, score is not None, game_id, move_number is not None,
                 snake_state, food_position, move_hash]):
         return {'error': 'missing data'}, 400
-    
+
     # Проверка initData
     if not check_init_data(init_data):
         return {'error': 'auth'}, 403
-    
+
     # Получаем данные пользователя
     try:
         params = parse_init_data_params(init_data)
@@ -2733,47 +2941,47 @@ def api_submit_snake():
         user = json.loads(user_data)
     except:
         return {'error': 'invalid user data'}, 400
-    
+
     tg_id = user.get('id')
     if not tg_id:
         return {'error': 'no tg_id'}, 400
-    
+
     user_id = get_or_create_user(tg_id, user.get('username', ''), user.get('first_name', 'Пользователь'))
-    
+
     # Проверяем валидность хода
     is_valid, error = verify_snake_move(game_id, user_id, snake_state, food_position, score, move_number)
     if not is_valid:
         return {'error': error}, 400
-    
+
     # Создаем хеш для проверки
     message = f"{game_id}:{user_id}:{move_number}:{snake_state}:{food_position}:{score}"
     hash_value = 0
     for char in message:
         hash_value = (hash_value * 31 + ord(char)) & 0xFFFFFFFF
     expected_hash = format(hash_value, 'x')
-    
+
     app.logger.info(f"Server hash calculation:")
     app.logger.info(f"Message: {message}")
     app.logger.info(f"Expected hash: {expected_hash}")
     app.logger.info(f"Received hash: {move_hash}")
-    
+
     if move_hash != expected_hash:
         return {'error': 'invalid move hash'}, 400
-    
+
     # Сохраняем ход
     db = get_db()
     db.execute(
         'INSERT INTO game_moves_snake (user_id, game_id, move_number, snake_state, food_position, score, timestamp, move_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         (user_id, game_id, move_number, snake_state, food_position, score, time.time(), move_hash)
     )
-    
+
     # Обновляем сессию
     snake = json.loads(snake_state)
     db.execute(
         'UPDATE game_sessions_snake SET last_move_time = ?, current_score = ?, snake_length = ?, moves_count = ? WHERE game_id = ?',
         (time.time(), score, len(snake), move_number, game_id)
     )
-    
+
     # Обновляем рейтинг только если это лучший результат
     cur = db.execute('SELECT score FROM rating_snake WHERE user_id = ?', (user_id,)).fetchone()
     if not cur or score > cur['score']:
@@ -2781,7 +2989,7 @@ def api_submit_snake():
             db.execute('UPDATE rating_snake SET score = ? WHERE user_id = ?', (score, user_id))
         else:
             db.execute('INSERT INTO rating_snake (user_id, score) VALUES (?, ?)', (user_id, score))
-    
+
     db.commit()
     return {'ok': True, 'score': score}
 
@@ -2790,34 +2998,34 @@ def api_submit_snake():
 def new_game_snake():
     data = request.get_json()
     init_data = data.get('tgWebAppData')
-    
+
     if not check_init_data(init_data):
         return {'error': 'auth'}, 403
-    
+
     params = parse_init_data_params(init_data)
     user_data = params.get('user', '{}')
     try:
         user = json.loads(user_data)
     except Exception:
         return {'error': 'invalid user data'}, 400
-    
+
     tg_id = user.get('id')
     if not tg_id:
         return {'error': 'no tg_id'}, 400
-    
+
     user_id = get_or_create_user(tg_id, user.get('username', ''), user.get('first_name', 'Пользователь'))
-    
+
     # Создаем новую игровую сессию
     game_id = hashlib.sha256(f"{user_id}:{time.time()}".encode()).hexdigest()
     current_time = time.time()
-    
+
     db = get_db()
     db.execute(
         'INSERT INTO game_sessions_snake (game_id, user_id, start_time, last_move_time, current_score, snake_length, moves_count) VALUES (?, ?, ?, ?, 0, 3, 0)',
         (game_id, user_id, current_time, current_time)
     )
     db.commit()
-    
+
     return {'ok': True, 'game_id': game_id, 'user_id': user_id}
 
 # Добавляем функцию проверки валидности хода 2048
@@ -2868,7 +3076,7 @@ def verify_2048_move(game_id, user_id, board_state, score, move_number):
 
 @app.route('/schedule_search')
 def schedule_search():
-    return render_template('schedule_search.html')
+    return render_template('schedule_search.html', STATIC_VERSION=STATIC_VERSION)
 
 # Игра "Морской бой"
 import random
@@ -3138,24 +3346,24 @@ def exit_battleship_game():
     game_id = data.get('gameId')
     player_id = str(data.get('playerId'))
     reason = data.get('reason', 'player_exit')
-    
+
     if not game_id or not player_id:
         return jsonify({'success': False, 'error': 'Не указан код игры или ID игрока'})
-    
+
     if game_id not in battleship_games:
         return jsonify({'success': False, 'error': 'Игра не найдена'})
-    
+
     game = battleship_games[game_id]
     if player_id not in game['players']:
         return jsonify({'success': False, 'error': 'Вы не являетесь участником этой игры'})
-    
+
     # Если игра еще не закончена, отмечаем победителем другого игрока
     if game['status'] != 'finished':
         game['status'] = 'finished'
         opponent_id = next(id for id in game['players'].keys() if id != player_id)
         game['winner'] = opponent_id
         game['exit_reason'] = reason
-    
+
     return jsonify({
         'success': True,
         'gameState': game
@@ -3168,24 +3376,24 @@ def surrender_battleship_game():
     game_id = data.get('gameId')
     player_id = str(data.get('playerId'))
     reason = data.get('reason', 'surrender')
-    
+
     if not game_id or not player_id:
         return jsonify({'success': False, 'error': 'Не указан код игры или ID игрока'})
-    
+
     if game_id not in battleship_games:
         return jsonify({'success': False, 'error': 'Игра не найдена'})
-    
+
     game = battleship_games[game_id]
     if player_id not in game['players']:
         return jsonify({'success': False, 'error': 'Вы не являетесь участником этой игры'})
-    
+
     # Если игра еще не закончена, отмечаем победителем другого игрока
     if game['status'] != 'finished':
         game['status'] = 'finished'
         opponent_id = next(id for id in game['players'].keys() if id != player_id)
         game['winner'] = opponent_id
         game['exit_reason'] = reason
-    
+
     return jsonify({
         'success': True,
         'gameState': game
@@ -3196,10 +3404,10 @@ def validate_board(board):
     # Проверка размеров доски
     if len(board) != 10 or any(len(row) != 10 for row in board):
         return False
-    
+
     # Подсчет кораблей
     ship_counts = defaultdict(int)
-    
+
     # Проверка каждой клетки
     for row in range(10):
         for col in range(10):
@@ -3209,13 +3417,13 @@ def validate_board(board):
                     for dc in [-1, 0, 1]:
                         if dr == 0 and dc == 0:
                             continue
-                        
+
                         nr, nc = row + dr, col + dc
                         if 0 <= nr < 10 and 0 <= nc < 10 and board[nr][nc] == 1:
                             # Проверка, что это часть того же корабля
                             if not is_same_ship(board, row, col, nr, nc):
                                 return False
-    
+
     # Подсчет кораблей
     for row in range(10):
         for col in range(10):
@@ -3225,11 +3433,11 @@ def validate_board(board):
                     # Подсчет размера корабля
                     ship_size = get_ship_size(board, row, col)
                     ship_counts[ship_size] += 1
-    
+
     # Проверка количества кораблей
     if ship_counts[4] != 1 or ship_counts[3] != 2 or ship_counts[2] != 3 or ship_counts[1] != 4:
         return False
-    
+
     return True
 
 # Проверка, является ли клетка частью того же корабля
@@ -3237,7 +3445,7 @@ def is_same_ship(board, row1, col1, row2, col2):
     # Проверка, что клетки находятся в одной строке или столбце
     if row1 != row2 and col1 != col2:
         return False
-    
+
     # Проверка, что между клетками нет пустых клеток
     if row1 == row2:
         # Горизонтальный корабль
@@ -3251,7 +3459,7 @@ def is_same_ship(board, row1, col1, row2, col2):
         for row in range(min_row, max_row + 1):
             if board[row][col1] != 1:
                 return False
-    
+
     return True
 
 # Проверка, является ли клетка частью уже посчитанного корабля
@@ -3261,7 +3469,7 @@ def is_part_of_counted_ship(board, row, col):
         for dc in [-1, 0, 1]:
             if dr == 0 and dc == 0:
                 continue
-            
+
             nr, nc = row + dr, col + dc
             if 0 <= nr < 10 and 0 <= nc < 10 and board[nr][nc] == 1:
                 # Проверка, что это часть того же корабля
@@ -3269,7 +3477,7 @@ def is_part_of_counted_ship(board, row, col):
                     # Проверка, что соседняя клетка находится выше или левее
                     if nr < row or (nr == row and nc < col):
                         return True
-    
+
     return False
 
 # Получение размера корабля
@@ -3277,7 +3485,7 @@ def get_ship_size(board, row, col):
     # Проверка, горизонтальный или вертикальный корабль
     is_horizontal = False
     is_vertical = False
-    
+
     # Проверка соседних клеток
     if col > 0 and board[row][col - 1] == 1:
         is_horizontal = True
@@ -3287,17 +3495,17 @@ def get_ship_size(board, row, col):
         is_vertical = True
     elif row < 9 and board[row + 1][col] == 1:
         is_vertical = True
-    
+
     # Подсчет размера корабля
     size = 1
-    
+
     if is_horizontal:
         # Подсчет влево
         c = col - 1
         while c >= 0 and board[row][c] == 1:
             size += 1
             c -= 1
-        
+
         # Подсчет вправо
         c = col + 1
         while c < 10 and board[row][c] == 1:
@@ -3309,13 +3517,13 @@ def get_ship_size(board, row, col):
         while r >= 0 and board[r][col] == 1:
             size += 1
             r -= 1
-        
+
         # Подсчет вниз
         r = row + 1
         while r < 10 and board[r][col] == 1:
             size += 1
             r += 1
-    
+
     return size
 
 # Проверка, потоплен ли корабль
@@ -3323,11 +3531,11 @@ def is_ship_sunk(board, row, col):
     # Проверка, что клетка содержит корабль
     if board[row][col] != 2:  # 2 - попадание
         return False
-    
+
     # Проверка, горизонтальный или вертикальный корабль
     is_horizontal = False
     is_vertical = False
-    
+
     # Проверка соседних клеток
     if col > 0 and board[row][col - 1] in [1, 2]:
         is_horizontal = True
@@ -3337,7 +3545,7 @@ def is_ship_sunk(board, row, col):
         is_vertical = True
     elif row < 9 and board[row + 1][col] in [1, 2]:
         is_vertical = True
-    
+
     # Проверка, все ли клетки корабля поражены
     if is_horizontal:
         # Проверка влево
@@ -3346,7 +3554,7 @@ def is_ship_sunk(board, row, col):
             if board[row][c] == 1:  # Есть неповрежденная клетка
                 return False
             c -= 1
-        
+
         # Проверка вправо
         c = col + 1
         while c < 10 and board[row][c] in [1, 2]:
@@ -3360,14 +3568,14 @@ def is_ship_sunk(board, row, col):
             if board[r][col] == 1:  # Есть неповрежденная клетка
                 return False
             r -= 1
-        
+
         # Проверка вниз
         r = row + 1
         while r < 10 and board[r][col] in [1, 2]:
             if board[r][col] == 1:  # Есть неповрежденная клетка
                 return False
             r += 1
-    
+
     return True
 
 # Проверка, потоплены ли все корабли
@@ -3377,7 +3585,7 @@ def are_all_ships_sunk(board):
         for col in range(10):
             if board[row][col] == 1:  # Есть неповрежденная клетка корабля
                 return False
-    
+
     return True
 
 @app.route('/games/battleship')
@@ -3389,12 +3597,12 @@ def battleship():
 def get_battleship_games():
     # Фильтруем только игры в статусе 'waiting'
     available_games = {}
-    
+
     for game_id, game in battleship_games.items():
         if game['status'] == 'waiting':
             # Получаем ID создателя игры
             host_id = list(game['players'].keys())[0] if game['players'] else None
-            
+
             # Получаем имя или username создателя игры из базы данных
             host_name = "Игрок"
             if host_id:
@@ -3408,7 +3616,7 @@ def get_battleship_games():
                             host_name = user['first_name']
                 except Exception as e:
                     app.logger.error(f'Error getting host name: {e}')
-            
+
             available_games[game_id] = {
                 'id': game_id,
                 'created_at': game['created_at'],
@@ -3416,7 +3624,7 @@ def get_battleship_games():
                 'host_name': host_name,
                 'status': game['status']
             }
-    
+
     return jsonify({
         'success': True,
         'games': available_games
@@ -3427,47 +3635,47 @@ def get_battleship_games():
 def get_schedule_reactions():
     init_data = request.args.get('tgWebAppData')
     date = request.args.get('date')
-    
+
     if not init_data or not check_init_data(init_data):
         return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-    
+
     if not date:
         return jsonify({'success': False, 'error': 'Не указана дата'})
-    
+
     try:
         # Получаем данные пользователя
         params = parse_init_data_params(init_data)
         user_data = json.loads(params.get('user', '{}'))
         tg_id = user_data.get('id')
-        
+
         if not tg_id:
             return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-        
+
         # Получаем ID пользователя из базы
         db = get_db()
         user_id = get_or_create_user(tg_id, user_data.get('username'), user_data.get('first_name'))
-        
+
         # Получаем все реакции на расписание за указанную дату
         reactions = db.execute('''
-            SELECT reaction, COUNT(*) as count 
-            FROM schedule_reactions 
-            WHERE date = ? 
+            SELECT reaction, COUNT(*) as count
+            FROM schedule_reactions
+            WHERE date = ?
             GROUP BY reaction
         ''', (date,)).fetchall()
-        
+
         # Получаем реакции текущего пользователя
         user_reactions = db.execute('''
-            SELECT reaction 
-            FROM schedule_reactions 
+            SELECT reaction
+            FROM schedule_reactions
             WHERE user_id = ? AND date = ?
         ''', (user_id, date)).fetchall()
-        
+
         # Формируем список реакций пользователя
         user_reactions_list = [r['reaction'] for r in user_reactions]
-        
+
         # Формируем список всех реакций с количеством
         reactions_list = [{'reaction': r['reaction'], 'count': r['count']} for r in reactions]
-        
+
         return jsonify({
             'success': True,
             'reactions': reactions_list,
@@ -3483,76 +3691,76 @@ def toggle_schedule_reaction():
     init_data = data.get('tgWebAppData')
     date = data.get('date')
     reaction = data.get('reaction')
-    
+
     if not init_data or not check_init_data(init_data):
         return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-    
+
     if not date or not reaction:
         return jsonify({'success': False, 'error': 'Не указана дата или реакция'})
-    
+
     try:
         # Получаем данные пользователя
         params = parse_init_data_params(init_data)
         user_data = json.loads(params.get('user', '{}'))
         tg_id = user_data.get('id')
-        
+
         if not tg_id:
             return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-        
+
         # Получаем ID пользователя из базы
         db = get_db()
         user_id = get_or_create_user(tg_id, user_data.get('username'), user_data.get('first_name'))
-        
+
         # Проверяем, есть ли уже такая реакция у пользователя
         existing_reaction = db.execute('''
-            SELECT id FROM schedule_reactions 
+            SELECT id FROM schedule_reactions
             WHERE user_id = ? AND date = ? AND reaction = ?
         ''', (user_id, date, reaction)).fetchone()
-        
+
         if existing_reaction:
             # Если реакция уже есть, удаляем её
             db.execute('''
-                DELETE FROM schedule_reactions 
+                DELETE FROM schedule_reactions
                 WHERE user_id = ? AND date = ? AND reaction = ?
             ''', (user_id, date, reaction))
             action = 'removed'
         else:
             # Если реакции нет, сначала удаляем все существующие реакции пользователя
             db.execute('''
-                DELETE FROM schedule_reactions 
+                DELETE FROM schedule_reactions
                 WHERE user_id = ? AND date = ?
             ''', (user_id, date))
-            
+
             # Затем добавляем новую реакцию
             db.execute('''
-                INSERT INTO schedule_reactions (user_id, date, reaction) 
+                INSERT INTO schedule_reactions (user_id, date, reaction)
                 VALUES (?, ?, ?)
             ''', (user_id, date, reaction))
             action = 'added'
-        
+
         db.commit()
-        
+
         # Получаем обновленные данные о реакциях
         reactions = db.execute('''
-            SELECT reaction, COUNT(*) as count 
-            FROM schedule_reactions 
-            WHERE date = ? 
+            SELECT reaction, COUNT(*) as count
+            FROM schedule_reactions
+            WHERE date = ?
             GROUP BY reaction
         ''', (date,)).fetchall()
-        
+
         # Получаем реакции текущего пользователя
         user_reactions = db.execute('''
-            SELECT reaction 
-            FROM schedule_reactions 
+            SELECT reaction
+            FROM schedule_reactions
             WHERE user_id = ? AND date = ?
         ''', (user_id, date)).fetchall()
-        
+
         # Формируем список реакций пользователя
         user_reactions_list = [r['reaction'] for r in user_reactions]
-        
+
         # Формируем список всех реакций с количеством
         reactions_list = [{'reaction': r['reaction'], 'count': r['count']} for r in reactions]
-        
+
         return jsonify({
             'success': True,
             'action': action,
@@ -3760,50 +3968,50 @@ def api_save_subject_hours():
     try:
         data = request.get_json()
         init_data = data.get('tgWebAppData')
-        
+
         if not init_data or not check_init_data(init_data):
             return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-        
+
         # Получаем данные
         subject_name = data.get('subject_name', '').strip()
         teacher_name = data.get('teacher_name', '').strip()
         group_name = data.get('group_name', '').strip()
         planned_hours = float(data.get('planned_hours', 0))
         completed_hours = float(data.get('completed_hours', 0))
-        
+
         # Валидация
         if not subject_name or not teacher_name:
             return jsonify({'success': False, 'error': 'Не указан предмет или преподаватель'})
-        
+
         if planned_hours < 0 or completed_hours < 0:
             return jsonify({'success': False, 'error': 'Часы не могут быть отрицательными'})
-        
+
         if planned_hours > 1000 or completed_hours > 1000:
             return jsonify({'success': False, 'error': 'Слишком большое значение часов'})
-        
+
         # Получаем пользователя
         params = parse_init_data_params(init_data)
         user_data = json.loads(params.get('user', '{}'))
         tg_id = user_data.get('id')
-        
+
         if not tg_id:
             return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-            
+
         user_id = get_or_create_user(tg_id, user_data.get('username'), user_data.get('first_name'))
-        
+
         db = get_db()
-        
+
         # Используем INSERT OR REPLACE для обновления существующих записей
         db.execute('''
-            INSERT OR REPLACE INTO subject_hours 
+            INSERT OR REPLACE INTO subject_hours
             (user_id, subject_name, teacher_name, group_name, planned_hours, completed_hours, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ''', (user_id, subject_name, teacher_name, group_name, planned_hours, completed_hours))
-        
+
         db.commit()
-        
+
         return jsonify({'success': True, 'message': 'Часы сохранены'})
-        
+
     except ValueError as e:
         return jsonify({'success': False, 'error': 'Неверный формат числа'})
     except Exception as e:
@@ -3815,28 +4023,28 @@ def api_get_subject_hours():
     """Получение всех часов пользователя"""
     try:
         init_data = request.args.get('tgWebAppData')
-        
+
         if not init_data or not check_init_data(init_data):
             return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-        
+
         # Получаем пользователя
         params = parse_init_data_params(init_data)
         user_data = json.loads(params.get('user', '{}'))
         tg_id = user_data.get('id')
-        
+
         if not tg_id:
             return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-            
+
         user_id = get_or_create_user(tg_id, user_data.get('username'), user_data.get('first_name'))
-        
+
         db = get_db()
         cursor = db.execute('''
             SELECT subject_name, teacher_name, group_name, planned_hours, completed_hours, updated_at
-            FROM subject_hours 
+            FROM subject_hours
             WHERE user_id = ?
             ORDER BY updated_at DESC
         ''', (user_id,))
-        
+
         hours = []
         for row in cursor.fetchall():
             hours.append({
@@ -3847,9 +4055,9 @@ def api_get_subject_hours():
                 'completed_hours': row['completed_hours'],
                 'updated_at': row['updated_at']
             })
-        
+
         return jsonify({'success': True, 'hours': hours})
-        
+
     except Exception as e:
         app.logger.error(f'Error in api_get_subject_hours: {str(e)}')
         return jsonify({'success': False, 'error': 'Ошибка сервера'})
@@ -3860,41 +4068,41 @@ def api_auto_deduct_hours():
     try:
         data = request.get_json()
         init_data = data.get('tgWebAppData')
-        
+
         if not init_data or not check_init_data(init_data):
             return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-        
+
         # Получаем данные о проведенной паре
         subject_name = data.get('subject_name', '').strip()
         teacher_name = data.get('teacher_name', '').strip()
         group_name = data.get('group_name', '').strip()
         lesson_duration = float(data.get('lesson_duration', 2))  # По умолчанию 2 часа (1 пара)
-        
+
         # Валидация
         if not subject_name or not teacher_name:
             return jsonify({'success': False, 'error': 'Не указан предмет или преподаватель'})
-        
+
         if lesson_duration <= 0 or lesson_duration > 8:
             return jsonify({'success': False, 'error': 'Неверная продолжительность пары'})
-        
+
         # Получаем пользователя
         params = parse_init_data_params(init_data)
         user_data = json.loads(params.get('user', '{}'))
         tg_id = user_data.get('id')
-        
+
         if not tg_id:
             return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-            
+
         user_id = get_or_create_user(tg_id, user_data.get('username'), user_data.get('first_name'))
-        
+
         db = get_db()
-        
+
         # Получаем текущие данные о часах
         cursor = db.execute('''
-            SELECT planned_hours, completed_hours FROM subject_hours 
+            SELECT planned_hours, completed_hours FROM subject_hours
             WHERE user_id = ? AND subject_name = ? AND teacher_name = ? AND group_name = ?
         ''', (user_id, subject_name, teacher_name, group_name))
-        
+
         row = cursor.fetchone()
         if not row:
             # Если записи нет, создаем с нулевыми планируемыми часами
@@ -3903,26 +4111,26 @@ def api_auto_deduct_hours():
         else:
             planned_hours = row['planned_hours']
             completed_hours = row['completed_hours'] + lesson_duration
-        
+
         # Обновляем запись
         db.execute('''
-            INSERT OR REPLACE INTO subject_hours 
+            INSERT OR REPLACE INTO subject_hours
             (user_id, subject_name, teacher_name, group_name, planned_hours, completed_hours, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ''', (user_id, subject_name, teacher_name, group_name, planned_hours, completed_hours))
-        
+
         db.commit()
-        
+
         remaining_hours = max(0, planned_hours - completed_hours)
-        
+
         return jsonify({
-            'success': True, 
+            'success': True,
             'message': f'Списано {lesson_duration} ч.',
             'planned_hours': planned_hours,
             'completed_hours': completed_hours,
             'remaining_hours': remaining_hours
         })
-        
+
     except ValueError as e:
         return jsonify({'success': False, 'error': 'Неверный формат числа'})
     except Exception as e:
@@ -4235,7 +4443,7 @@ def checkers_move():
 
 @app.route('/sudoku')
 def sudoku():
-    return render_template('sudoku.html')
+    return render_template('sudoku.html', STATIC_VERSION=STATIC_VERSION)
 
 
 
@@ -4246,35 +4454,35 @@ def sudoku_new_game():
         data = request.get_json()
         tgWebAppData = data.get('tgWebAppData')
         difficulty = data.get('difficulty', 'easy')
-        
+
         if not tgWebAppData:
             return jsonify({'success': False, 'error': 'No Telegram data'}), 400
-        
+
         # Валидация Telegram WebApp данных
         if not check_init_data(tgWebAppData):
             return jsonify({'success': False, 'error': 'Invalid Telegram data'}), 400
-        
+
         # Получаем данные пользователя
         params = parse_init_data_params(tgWebAppData)
         user_data = json.loads(params.get('user', '{}'))
         user_id = user_data.get('id')
-        
+
         if not user_id:
             return jsonify({'success': False, 'error': 'No user ID'}), 400
-        
+
         # Генерируем судоку
         puzzle, solution = generate_sudoku_puzzle(difficulty)
-        
+
         # Создаем игру в базе данных
         game_id = str(uuid.uuid4())
-        
+
         db = get_db()
         db.execute('''
             INSERT INTO sudoku_games (game_id, user_id, difficulty, puzzle, solution, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (game_id, user_id, difficulty, json.dumps(puzzle), json.dumps(solution), int(time.time())))
         db.commit()
-        
+
         return jsonify({
             'success': True,
             'game_id': game_id,
@@ -4283,7 +4491,7 @@ def sudoku_new_game():
             'solution': solution,
             'difficulty': difficulty
         })
-        
+
     except Exception as e:
         app.logger.error(f"Error creating sudoku game: {e}")
         return jsonify({'success': False, 'error': 'Internal server error'}), 500
@@ -4297,55 +4505,55 @@ def sudoku_submit_score():
         completion_time = data.get('completion_time')
         difficulty = data.get('difficulty')
         hints_used = data.get('hints_used', 0)
-        
+
         if not tgWebAppData or not game_id or completion_time is None:
             return jsonify({'success': False, 'error': 'Missing required data'}), 400
-        
+
         # Валидация Telegram WebApp данных
         if not check_init_data(tgWebAppData):
             return jsonify({'success': False, 'error': 'Invalid Telegram data'}), 400
-        
+
         # Получаем данные пользователя
         params = parse_init_data_params(tgWebAppData)
         user_data = json.loads(params.get('user', '{}'))
         user_id = user_data.get('id')
         first_name = user_data.get('first_name', 'Игрок')
-        
+
         if not user_id:
             return jsonify({'success': False, 'error': 'No user ID'}), 400
-        
+
         # Валидация времени (защита от накрутки)
         if completion_time < 10 or completion_time > 3600:  # от 10 секунд до 1 часа
             return jsonify({'success': False, 'error': 'Invalid completion time'}), 400
-        
+
         # Проверяем, что игра существует и принадлежит пользователю
         db = get_db()
         game = db.execute('''
-            SELECT * FROM sudoku_games 
+            SELECT * FROM sudoku_games
             WHERE game_id = ? AND user_id = ?
         ''', (game_id, user_id)).fetchone()
-        
+
         if not game:
             return jsonify({'success': False, 'error': 'Game not found'}), 404
-        
+
         # Проверяем, не был ли уже отправлен результат
         existing_score = db.execute('''
-            SELECT * FROM sudoku_scores 
+            SELECT * FROM sudoku_scores
             WHERE game_id = ?
         ''', (game_id,)).fetchone()
-        
+
         if existing_score:
             return jsonify({'success': False, 'error': 'Score already submitted'}), 400
-        
+
         # Сохраняем результат
         db.execute('''
             INSERT INTO sudoku_scores (game_id, user_id, first_name, difficulty, completion_time, hints_used, submitted_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (game_id, user_id, first_name, difficulty, completion_time, hints_used, int(time.time())))
         db.commit()
-        
+
         return jsonify({'success': True})
-        
+
     except Exception as e:
         app.logger.error(f"Error submitting sudoku score: {e}")
         return jsonify({'success': False, 'error': 'Internal server error'}), 500
@@ -4354,7 +4562,7 @@ def sudoku_submit_score():
 def sudoku_rating():
     try:
         db = get_db()
-        
+
         # Получаем лучшие результаты по каждой сложности
         rating = db.execute('''
             SELECT first_name, difficulty, MIN(completion_time) as best_time
@@ -4363,12 +4571,12 @@ def sudoku_rating():
             ORDER BY best_time ASC
             LIMIT 50
         ''').fetchall()
-        
+
         return jsonify({
             'success': True,
             'rating': [dict(row) for row in rating]
         })
-        
+
     except Exception as e:
         app.logger.error(f"Error getting sudoku rating: {e}")
         return jsonify({'success': False, 'error': 'Internal server error'}), 500
@@ -4378,30 +4586,30 @@ def generate_sudoku_puzzle(difficulty):
     # Создаем полное решение
     board = [[0 for _ in range(9)] for _ in range(9)]
     solution = [[0 for _ in range(9)] for _ in range(9)]
-    
+
     # Заполняем диагональные блоки 3x3
     fill_diagonal_boxes(board)
-    
+
     # Решаем остальные клетки
     solve_sudoku(board)
-    
+
     # Копируем решение
     for i in range(9):
         for j in range(9):
             solution[i][j] = board[i][j]
-    
+
     # Удаляем числа в зависимости от сложности
     cells_to_remove = {'easy': 40, 'medium': 50, 'hard': 60}.get(difficulty, 40)
-    
+
     removed = 0
     while removed < cells_to_remove:
         row = random.randint(0, 8)
         col = random.randint(0, 8)
-        
+
         if board[row][col] != 0:
             board[row][col] = 0
             removed += 1
-    
+
     return board, solution
 
 def fill_diagonal_boxes(board):
@@ -4413,7 +4621,7 @@ def fill_box(board, row, col):
     """Заполняет блок 3x3 случайными числами"""
     numbers = list(range(1, 10))
     random.shuffle(numbers)
-    
+
     index = 0
     for i in range(3):
         for j in range(3):
@@ -4440,12 +4648,12 @@ def is_valid_sudoku_move(board, row, col, num):
     for c in range(9):
         if c != col and board[row][c] == num:
             return False
-    
+
     # Проверяем столбец (исключая текущую позицию)
     for r in range(9):
         if r != row and board[r][col] == num:
             return False
-    
+
     # Проверяем блок 3x3 (исключая текущую позицию)
     box_row = (row // 3) * 3
     box_col = (col // 3) * 3
@@ -4453,8 +4661,8 @@ def is_valid_sudoku_move(board, row, col, num):
         for c in range(box_col, box_col + 3):
             if (r != row or c != col) and board[r][c] == num:
                 return False
-    
+
     return True
 
 if __name__ == '__main__':
-    app.run(debug=True) 
+    app.run(debug=True)

@@ -38,6 +38,12 @@ def _clean(text: str) -> str:
     return _normalize_dashes(text) if text else ""
 
 
+def _looks_like_complete_teacher_name(text: str) -> bool:
+    """True для полного ФИО вида 'Фамилия И.О.' или 'Фамилия ИО'."""
+    text = _clean(text).replace("_", " ")
+    return bool(re.fullmatch(r"[А-ЯЁ][А-ЯЁа-яё-]+ [А-ЯЁ]\.?[А-ЯЁ]\.?", text))
+
+
 # ──────────────────────────────────────────────
 # Извлечение структуры
 # ──────────────────────────────────────────────
@@ -103,9 +109,13 @@ def _chars_to_runs(chars: list, gap: float = 12.0,
         split = (curr_x - prev_x > gap or
                  curr_x < prev_x - 1.5 or
                  (prev_font and curr_font and prev_font != curr_font))
-        # Split: точка + backward uppercase (граница между ФИО преподавателей)
-        if not split and prev_text == "." and curr_text.isupper() and curr_x < prev_x:
-            split = True
+        # Split: точка + uppercase.
+        # Backward-x покрывает порядок "вторая подгруппа → первая".
+        # Complete teacher-name покрывает склейку "Шостак А.И.Сидоренко О.М."
+        if not split and prev_text == "." and curr_text.isupper():
+            current_text = "".join(ch["text"] for ch in current)
+            if curr_x < prev_x or _looks_like_complete_teacher_name(current_text):
+                split = True
         # Split: lowercase→UPPERCASE (склеенные дисциплины "проектИстория", "86-бПрактика")
         if not split and prev_text.islower() and curr_text.isupper():
             split = True

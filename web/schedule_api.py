@@ -5,6 +5,8 @@ import requests
 from config import API_URL
 import os
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from telegram_auth import authenticated_telegram_user
 
 schedule_bp = Blueprint('schedule', __name__)
 limiter = Limiter(
@@ -13,20 +15,104 @@ limiter = Limiter(
     default_limits=["10 per second"]
 )
 
-@schedule_bp.route('/api/user/<int:user_id>')
+def _get_authenticated_user_id():
+    telegram_user = authenticated_telegram_user(request)
+    return telegram_user['id'] if telegram_user else None
+
+
+def _json_from_upstream(response):
+    try:
+        return response.json()
+    except ValueError:
+        return {"error": "Ошибка сервера"}
+
+
+def _public_user_payload(payload):
+    if not isinstance(payload, dict):
+        return payload
+    role = payload.get("role")
+    if role in {"Я преподаватель", "teacher"}:
+        payload["role"] = "teacher"
+    elif role in {"Я студент", "student"}:
+        payload["role"] = "student"
+    return payload
+
+
+_CATALOG_KINDS = ("groups", "teachers", "audiences")
+
+
+def _fetch_catalog_values(kind):
+    response = requests.get(f"{API_URL}/{kind}", timeout=5)
+    if response.status_code == 404:
+        return []
+    response.raise_for_status()
+    payload = _json_from_upstream(response)
+    values = payload.get(kind, []) if isinstance(payload, dict) else []
+    if not isinstance(values, list):
+        return []
+    return [value.strip() for value in values if isinstance(value, str) and value.strip()]
+
+
+def _catalog_json_response(payload):
+    response = jsonify(payload)
+    response.headers['Cache-Control'] = 'private, max-age=60, stale-while-revalidate=300'
+    return response
+
+
+def _single_catalog_response(kind):
+    try:
+        values = _fetch_catalog_values(kind)
+    except requests.RequestException:
+        values = []
+    return _catalog_json_response({kind: values})
+
+
+@schedule_bp.route('/api/schedule/catalog')
 @limiter.limit("10 per second")
-def get_user(user_id):
+def get_schedule_catalog():
+    """Return current-academic-year entities in one mobile-friendly request."""
+    with ThreadPoolExecutor(max_workers=len(_CATALOG_KINDS)) as executor:
+        futures = {
+            kind: executor.submit(_fetch_catalog_values, kind)
+            for kind in _CATALOG_KINDS
+        }
+        payload = {}
+        for kind, future in futures.items():
+            try:
+                payload[kind] = future.result()
+            except requests.RequestException:
+                payload[kind] = []
+    return _catalog_json_response(payload)
+
+
+# Keep old clients quiet while cached schedule-search assets expire.
+@schedule_bp.route('/api/groups')
+@limiter.limit("10 per second")
+def get_groups_catalog():
+    return _single_catalog_response('groups')
+
+
+@schedule_bp.route('/api/teachers')
+@limiter.limit("10 per second")
+def get_teachers_catalog():
+    return _single_catalog_response('teachers')
+
+
+@schedule_bp.route('/api/audiences')
+@limiter.limit("10 per second")
+def get_audiences_catalog():
+    return _single_catalog_response('audiences')
+
+
+@schedule_bp.route('/api/me')
+@limiter.limit("10 per second")
+def get_me():
     """
-    Получение данных пользователя
+    Получение данных авторизованного пользователя
     ---
     tags:
       - Расписание
     parameters:
-      - name: user_id
-        in: path
-        type: integer
-        required: true
-        description: ID пользователя
     responses:
       200:
         description: Данные пользователя успешно получены
@@ -54,25 +140,24 @@ def get_user(user_id):
         description: Ошибка сервера
     """
     try:
-        response = requests.get(f"{API_URL}/user/{user_id}")
-        return jsonify(response.json()), response.status_code
-    except Exception as e:
+        user_id = _get_authenticated_user_id()
+        if not user_id:
+            return jsonify({"error": "Требуется авторизация Telegram"}), 401
+        response = requests.get(f"{API_URL}/user/{user_id}", timeout=5)
+        return jsonify(_public_user_payload(_json_from_upstream(response))), response.status_code
+    except requests.RequestException:
         return jsonify({"error": "Ошибка сервера"}), 500
 
-@schedule_bp.route('/api/schedule/user/<int:user_id>', methods=['POST'])
+
+@schedule_bp.route('/api/schedule/me', methods=['POST'])
 @limiter.limit("10 per second")
-def get_user_schedule(user_id):
+def get_my_schedule():
     """
-    Получение расписания пользователя
+    Получение расписания авторизованного пользователя
     ---
     tags:
       - Расписание
     parameters:
-      - name: user_id
-        in: path
-        type: integer
-        required: true
-        description: ID пользователя
       - name: body
         in: body
         required: true
@@ -122,13 +207,17 @@ def get_user_schedule(user_id):
         description: Ошибка сервера
     """
     try:
+        user_id = _get_authenticated_user_id()
+        if not user_id:
+            return jsonify({"error": "Требуется авторизация Telegram"}), 401
         response = requests.post(
             f"{API_URL}/getUserSchedule/{user_id}",
             json=request.json,
-            headers={'Content-Type': 'application/json'}
+            headers={'Content-Type': 'application/json'},
+            timeout=10,
         )
-        return jsonify(response.json()), response.status_code
-    except Exception as e:
+        return jsonify(_json_from_upstream(response)), response.status_code
+    except requests.RequestException:
         return jsonify({"error": "Ошибка сервера"}), 500
 
 @schedule_bp.route('/api/schedule/group', methods=['POST'])
@@ -298,13 +387,27 @@ def download_schedule(schedule_type, date):
             f"{API_URL}/schedule/download/{schedule_type}/{date}",
             stream=True
         )
-        
+
         if response.status_code == 200:
+            # Определяем тип и имя файла из ответа FastAPI
+            content_type = response.headers.get('content-type', 'application/octet-stream')
+            content_disp = response.headers.get('content-disposition', '')
+
+            # Извлекаем оригинальное имя файла из content-disposition
+            import re as _re
+            from urllib.parse import unquote
+            fname_match = _re.search(r"filename\*=utf-8''(.+)", content_disp)
+            if fname_match:
+                download_name = unquote(fname_match.group(1))
+            else:
+                ext = '.pdf' if 'pdf' in content_type else '.xlsx'
+                download_name = f"schedule_{schedule_type}_{date}{ext}"
+
             return send_file(
                 response.raw,
-                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                mimetype=content_type,
                 as_attachment=True,
-                download_name=f"schedule_{schedule_type}_{date}.xlsx"
+                download_name=download_name
             )
         else:
             return jsonify({"error": "Файл не найден"}), 404
@@ -369,4 +472,15 @@ def get_all_teachers():
         response = requests.get(f"{API_URL}/teachers")
         return jsonify(response.json()), response.status_code
     except Exception as e:
-        return jsonify({"error": "Ошибка сервера"}), 500 
+        return jsonify({"error": "Ошибка сервера"}), 500
+
+
+@schedule_bp.route('/api/audiences')
+@limiter.limit("10 per second")
+def get_all_audiences():
+    """Получение списка аудиторий текущего учебного года."""
+    try:
+        response = requests.get(f"{API_URL}/audiences", timeout=10)
+        return jsonify(_json_from_upstream(response)), response.status_code
+    except requests.RequestException:
+        return jsonify({"error": "Ошибка сервера"}), 500

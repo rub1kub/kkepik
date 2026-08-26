@@ -6,67 +6,57 @@
     <meta name="HandheldFriendly" content="true">
     <meta name="MobileOptimized" content="width">
     <title>KKEPIK</title>
+    <link rel="icon" href="data:,">
+    <script>
+        (function () {
+            var connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+            if (connection && (connection.saveData || /(^|-)2g$/.test(connection.effectiveType || ''))) {
+                document.documentElement.classList.add('low-data');
+            }
+        }());
+    </script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v={{ STATIC_VERSION }}">
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
-    <script src="{{ url_for('static', filename='js/swipe_detector.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script defer src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
+    <script defer src="{{ url_for('static', filename='js/app_bootstrap.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script defer src="{{ url_for('static', filename='js/effects.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script defer src="{{ url_for('static', filename='js/swipe_detector.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script defer src="{{ url_for('static', filename='js/schedule.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script defer src="{{ url_for('static', filename='js/main.js') }}?v={{ STATIC_VERSION }}"></script>
     <style>
         #loader {
-            position: fixed;
-            top: 0;
-            left: 0;
             width: 100%;
-            height: 100%;
-            background-color: var(--tg-theme-bg-color);
-            opacity: 0.85;
             display: flex;
-            flex-direction: column;
-            justify-content: center;
+            justify-content: flex-start;
             align-items: center;
-            z-index: 9999;
-            transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+            gap: 10px;
+            min-height: 34px;
+            margin-bottom: 10px;
+            color: var(--tg-theme-hint-color);
+            transition: opacity 0.18s ease-out;
         }
-        
+
         #loader.fade-out {
             opacity: 0;
-            transform: scale(1.1);
             pointer-events: none;
         }
-        
-        .loader-content {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            animation: fadeInDown 0.5s ease-out;
+
+        .loader-spinner {
+            width: 18px;
+            height: 18px;
+            flex: 0 0 18px;
+            border: 2px solid rgba(127, 127, 127, 0.22);
+            border-top-color: var(--tg-theme-button-color);
+            border-radius: 50%;
+            animation: loader-spin 0.8s linear infinite;
         }
-        
-        .loader-image {
-            max-width: 100px;
-            max-height: 100px;
-            margin-bottom: 20px;
-            animation: pulse 1.5s infinite ease-in-out;
-        }
-        
+
         .loader-text {
-            font-size: 18px;
+            font-size: 13px;
             font-weight: 500;
-            color: var(--tg-theme-text-color);
-            margin-top: 10px;
         }
-        
-        @keyframes pulse {
-            0% {
-                transform: scale(0.95);
-                opacity: 0.7;
-            }
-            50% {
-                transform: scale(1.05);
-                opacity: 1;
-            }
-            100% {
-                transform: scale(0.95);
-                opacity: 0.7;
-            }
+
+        @keyframes loader-spin {
+            to { transform: rotate(360deg); }
         }
         .beta-label {
             position: absolute;
@@ -87,22 +77,23 @@
     </style>
 </head>
 <body>
-    <div id="loader">
-        <div class="loader-content">
-            <img src="{{ url_for('static', filename='loader.gif') }}" alt="Загрузка..." class="loader-image">
-            <div class="loader-text">Загрузка...</div>
-        </div>
-    </div>
     <div id="auth-error" style="display:none;color:red;text-align:center;margin-top:30px;font-size:18px;">Ошибка авторизации через Telegram. Попробуйте открыть приложение заново.</div>
     <div class="menu-container" id="main-content" style="display:none;">
+        <div id="connection-status" class="connection-status" role="status" hidden></div>
+        <div id="loader" role="status" aria-live="polite">
+            <span class="loader-spinner" aria-hidden="true"></span>
+            <span class="loader-text">Загружаем расписание</span>
+        </div>
         <!-- Выбор группы/ФИО -->
         <div id="groupSelectorContainer" class="group-selector-container">
             <span id="currentGroupName" class="group-selector-current"></span>
-            <span id="groupSelectorArrow" class="group-selector-arrow">&#8250;</span>
+            <div id="groupQuickSwitch" class="group-quick-switch" role="tablist" aria-label="Отслеживаемые расписания" hidden></div>
+            <button id="groupSelectorManage" class="group-selector-manage" type="button" hidden>Добавить</button>
+            <span id="groupSelectorArrow" class="group-selector-arrow" hidden>&#8250;</span>
         </div>
         <div id="groupSelectorDropdown" class="group-selector-dropdown"></div>
         <div id="progressBox">
-            <div id="progress_bar">
+            <div id="progress_bar" role="button" tabindex="0" aria-label="Оставшееся время">
                 <div id="progress_line"></div>
                 <div id="timeBox">
                     <div class="text" id="timerPassed">--:--</div>
@@ -130,7 +121,7 @@
         </div>
         
         <!-- Контейнер для реакций и кнопки скачать -->
-        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+        <div id="scheduleActions" style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;" hidden>
             <div id="downloadScheduleBtn" class="download-btn">Скачать</div>
             <div id="schedule-reactions"></div>
         </div>
@@ -138,59 +129,65 @@
         <hr class="section-divider">
         <div class="games-grid">
             <a href="{{ url_for('schedule_search') }}?tgWebAppData={{ '{{' }} tgWebAppData {{ '}}' }}" class="game-card schedule-card">
-                <div class="game-icon">📅</div>
-                <div class="game-title">Поиск расписания</div>
-                <div class="game-description">Поиск расписания по группе или преподавателю</div>
+                <span class="schedule-card-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M7 3v3M17 3v3M4 9h16" />
+                        <rect x="4" y="5" width="16" height="16" rx="3" />
+                        <path d="M8 13h3M8 17h8" />
+                    </svg>
+                </span>
+                <span class="schedule-card-copy">
+                    <span class="game-title">Найти расписание</span>
+                    <span class="game-description">Группа, преподаватель или аудитория</span>
+                </span>
+                <svg class="schedule-card-arrow" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m9 18 6-6-6-6" />
+                </svg>
             </a>
-            <a href="{{ url_for('attendance_list') }}?tgWebAppData={{ '{{' }} tgWebAppData {{ '}}' }}" class="game-card attendance-card">
-                <div class="game-icon">📝</div>
-                <div class="game-title">Контроль посещаемости</div>
-                <div class="game-description">Ведите учёт посещаемости группы</div>
-            </a>
-            
-            <div class="games-container">
-                <a href="{{ url_for('sudoku') }}?tgWebAppData={{ '{{' }} tgWebAppData {{ '}}' }}" class="game-card">
-                    <div class="game-icon">🧩</div>
-                    <div class="game-title">Судоку</div>
-                    <div class="game-description">Логическая головоломка с числами</div>
-                    <div class="beta-label">BETA</div>
-                </a>
-                <a href="{{ url_for('game_page', game_name='2048') }}" class="game-card">
-                    <div class="game-icon">🎯</div>
-                    <div class="game-title">2048</div>
-                    <div class="game-description">Увлекательная головоломка с числами</div>
-                </a>
-                <a href="{{ url_for('game_page', game_name='snake') }}" class="game-card">
-                    <div class="game-icon">🐍</div>
-                    <div class="game-title">Змейка</div>
-                    <div class="game-description">Классическая игра на выживание</div>
-                </a>
-                <a href="{{ url_for('game_page', game_name='checkers') }}" class="game-card">
-                    <div class="game-icon">&#x265F;</div>
-                    <div class="game-title">Шашки</div>
-                    <div class="game-description">Классическая игра для двоих</div>
-                </a>
-                <a href="{{ url_for('battleship') }}?tgWebAppData={{ '{{' }} tgWebAppData {{ '}}' }}" class="game-card">
-                    <div class="game-icon">🚢</div>
-                    <div class="game-title">Морской бой</div>
-                    <div class="game-description">Классическая игра для двоих</div>
-                </a>
-                <a href="{{ url_for('game_page', game_name='tic-tac-toe') }}" class="game-card">
-                    <div class="game-icon">❌</div>
-                    <div class="game-title">Крестики-нолики</div>
-                    <div class="game-description">Классическая игра для двоих</div>
-                </a>
-                <a href="{{ url_for('game_page', game_name='bounce-ball') }}" class="game-card">
-                    <div class="game-icon">🏒</div>
-                    <div class="game-title">Аэрохокей</div>
-                    <div class="game-description">Захватывающая игра для двоих</div>
-                </a>
-                <div class="game-card" id="reviewCard" style="cursor: pointer;">
-                    <div class="game-icon">⭐️</div>
-                    <div class="game-title">Предложить идею</div>
-                    <div class="game-description">Поделитесь своим мнением и помогите нам стать лучше!</div>
+
+            <section class="compact-games-section" aria-labelledby="compact-games-title">
+                <h2 id="compact-games-title">Игры</h2>
+                <div class="compact-games-list">
+                    <a href="{{ url_for('game_page', game_name='snake') }}" class="compact-game-link">
+                        <span class="compact-game-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M5 5h9a4 4 0 0 1 0 8H9a3 3 0 0 0 0 6h8" />
+                                <circle cx="19" cy="19" r="1" />
+                            </svg>
+                        </span>
+                        <span>Змейка</span>
+                    </a>
+                    <a href="{{ url_for('sudoku') }}?tgWebAppData={{ '{{' }} tgWebAppData {{ '}}' }}" class="compact-game-link">
+                        <span class="compact-game-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <rect x="3" y="3" width="18" height="18" rx="2" />
+                                <path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
+                            </svg>
+                        </span>
+                        <span>Судоку</span>
+                    </a>
+                    <a href="{{ url_for('game_page', game_name='2048') }}" class="compact-game-link">
+                        <span class="compact-game-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <rect x="3" y="3" width="8" height="8" rx="2" />
+                                <rect x="13" y="3" width="8" height="8" rx="2" />
+                                <rect x="3" y="13" width="8" height="8" rx="2" />
+                                <rect x="13" y="13" width="8" height="8" rx="2" />
+                                <path d="M6 6.5h2L6 9h2M16 6h2v3M16 16h2v3M6 16h2v3" />
+                            </svg>
+                        </span>
+                        <span>2048</span>
+                    </a>
                 </div>
-            </div>
+            </section>
+
+            <button class="feedback-link" id="reviewCard" type="button" aria-haspopup="dialog" aria-controls="reviewModal">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M9 18h6M10 22h4" />
+                    <path d="M8.2 14.5A7 7 0 1 1 15.8 14.5C14.6 15.4 14 16.4 14 18h-4c0-1.6-.6-2.6-1.8-3.5Z" />
+                </svg>
+                Предложить идею
+            </button>
         </div>
     </div>
 
@@ -217,23 +214,7 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/schedule.js') }}?v={{ STATIC_VERSION }}"></script>
-    <script src="{{ url_for('static', filename='js/main.js') }}?v={{ STATIC_VERSION }}"></script>
-    <script src="{{ url_for('static', filename='js/image_cards.js') }}?v={{ STATIC_VERSION }}"></script>
-    <script src="{{ url_for('static', filename='js/schedule_reactions.js') }}?v={{ STATIC_VERSION }}"></script>
-    <script src="{{ url_for('static', filename='js/group_selector.js') }}?v={{ STATIC_VERSION }}"></script>
     <script>
-        // Скрываем лоадер после полной загрузки страницы
-        window.addEventListener('load', function() {
-            setTimeout(function() {
-                const loader = document.getElementById('loader');
-                loader.classList.add('fade-out');
-                setTimeout(function() {
-                    loader.style.display = 'none';
-                }, 750);
-            }, 750); // Небольшая задержка для плавности
-        });
-
         // Обработчик для плашки поздравлятора
         document.addEventListener('DOMContentLoaded', function() {
             const congratulatorCTA = document.getElementById('congratulatorCTA');

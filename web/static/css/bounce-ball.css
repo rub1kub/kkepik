@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap');
+@import url('./fonts.css');
 
 * {
     margin: 0;
@@ -251,4 +251,4 @@ body {
         padding: 8px 16px;
         font-size: 13px;
     }
-} 
+}

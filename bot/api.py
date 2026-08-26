@@ -10,7 +10,8 @@ from typing import Optional, List, Dict
 import os
 from pydantic import BaseModel
 import json
-from datetime import datetime
+from schedules.schedule_dates import current_college_date, is_current_schedule
+from schedules.schedule_catalog import extract_catalog_entries, get_catalog_values
 
 app = FastAPI(title="KKEPIK Bot API")
 
@@ -111,19 +112,16 @@ def load_schedule_df(
 
 def get_today_schedule(schedule_type: str) -> tuple[Optional[pd.DataFrame], Optional[str]]:
     """Загружает расписание на сегодня (.xlsx или .pdf)."""
-    today = datetime.now().strftime("%d.%m.%Y")
+    today = current_college_date().strftime("%d.%m.%Y")
     df = load_schedule_df(config.DATA_DIR, today, schedule_type)
     return (df, today) if df is not None else (None, None)
 
 
 def get_latest_schedule(schedule_type: str) -> tuple[Optional[pd.DataFrame], Optional[str]]:
-    """Загружает последнее доступное расписание (по mtime файла)."""
+    """Загружает последнее актуальное расписание (по mtime файла)."""
     from schedules.parser_all import _find_latest_schedule_file, _load_df_from_file
     fpath = _find_latest_schedule_file(schedule_type)
     if not fpath:
-        return None, None
-    df = _load_df_from_file(fpath)
-    if df is None:
         return None, None
     ext = os.path.splitext(fpath)[1].lower()
     if ext == ".pdf":
@@ -133,6 +131,11 @@ def get_latest_schedule(schedule_type: str) -> tuple[Optional[pd.DataFrame], Opt
         import re as _re
         m = _re.search(r'(\d{1,2}[._]\d{1,2}[._]\d{4})', fpath)
         date_str = m.group(1).replace('_', '.') if m else None
+    if not is_current_schedule(date_str):
+        return None, None
+    df = _load_df_from_file(fpath)
+    if df is None:
+        return None, None
     return df, date_str
 
 
@@ -462,9 +465,9 @@ async def download_schedule(schedule_type: str, date: str):
 async def get_all_groups():
     """Получение списка всех групп (.xlsx и .pdf)"""
     try:
-        # Сначала используем кэшированный DataFrame — быстрее и актуальнее
-        df = global_schedules.last_groups_df
-        groups = parser_all.get_all_groups(df)  # df=None → автопоиск в DATA_DIR
+        groups = get_catalog_values("groups")
+        if not groups and global_schedules.last_groups_df is not None:
+            groups = parser_all.get_all_groups(global_schedules.last_groups_df)
         if not groups:
             raise HTTPException(status_code=404, detail="Список групп не найден")
         return {"groups": groups}
@@ -478,11 +481,32 @@ async def get_all_groups():
 async def get_all_teachers():
     """Получение списка всех преподавателей (.xlsx и .pdf)"""
     try:
-        df = global_schedules.last_teachers_df
-        teachers = parser_all.get_all_teachers(df)
+        teachers = get_catalog_values("teachers")
+        if not teachers:
+            df = global_schedules.last_teachers_df
+            if df is None:
+                df = global_schedules.last_groups_df
+            if df is not None:
+                teachers = parser_all.get_all_teachers(df)
         if not teachers:
             raise HTTPException(status_code=404, detail="Список преподавателей не найден")
         return {"teachers": teachers}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/audiences")
+async def get_all_audiences():
+    """Получение списка аудиторий текущего учебного года."""
+    try:
+        audiences = get_catalog_values("audiences")
+        if not audiences and global_schedules.last_groups_df is not None:
+            audiences = extract_catalog_entries(global_schedules.last_groups_df)["audiences"]
+        if not audiences:
+            raise HTTPException(status_code=404, detail="Список аудиторий не найден")
+        return {"audiences": audiences}
     except HTTPException:
         raise
     except Exception as e:
@@ -493,8 +517,9 @@ async def get_all_teachers():
 async def get_groups_by_course():
     """Получение списка групп, сгруппированных по курсам"""
     try:
-        df = global_schedules.last_groups_df
-        groups = parser_all.get_all_groups(df)
+        groups = get_catalog_values("groups")
+        if not groups and global_schedules.last_groups_df is not None:
+            groups = parser_all.get_all_groups(global_schedules.last_groups_df)
         if not groups:
             raise HTTPException(status_code=404, detail="Список групп не найден")
         return {"groups_by_course": parser_all.get_groups_by_course(groups)}
@@ -508,8 +533,13 @@ async def get_groups_by_course():
 async def get_teachers_by_department():
     """Получение списка преподавателей, сгруппированных по кафедрам"""
     try:
-        df = global_schedules.last_teachers_df
-        teachers = parser_all.get_all_teachers(df)
+        teachers = get_catalog_values("teachers")
+        if not teachers:
+            df = global_schedules.last_teachers_df
+            if df is None:
+                df = global_schedules.last_groups_df
+            if df is not None:
+                teachers = parser_all.get_all_teachers(df)
         if not teachers:
             raise HTTPException(status_code=404, detail="Список преподавателей не найден")
         return {"teachers_by_department": parser_all.get_teachers_by_department(teachers)}
@@ -535,4 +565,4 @@ async def reload_schedule_cache():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=config.get_api_port())
+    uvicorn.run(app, host="127.0.0.1", port=config.get_api_port())

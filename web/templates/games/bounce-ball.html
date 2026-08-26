@@ -6,7 +6,7 @@
     <meta name="HandheldFriendly" content="true">
     <meta name="MobileOptimized" content="width">
     <title>Аэрохокей | KKEPIK Games</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/bounce-ball.css') }}">
 </head>
 <body>
@@ -34,4 +34,4 @@
     </div>
     <script src="{{ url_for('static', filename='js/bounce-ball.js') }}?v={{ STATIC_VERSION }}"></script>
 </body>
-</html> 
+</html>

@@ -6,7 +6,7 @@
     <meta name="HandheldFriendly" content="true">
     <meta name="MobileOptimized" content="width">
     <title>Казино | KKEPIK Games</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/casino.css') }}">
 </head>
 <body>
@@ -16,7 +16,7 @@
             <span>Ваш баланс:</span>
             <span class="casino-balance" id="casinoBalance">—</span>
         </div>
-        
+
         <!-- Слот-машина -->
         <div class="casino-slot-machine" id="casinoSlotMachine">
             <div class="casino-slot-reel" id="reel1">
@@ -35,7 +35,7 @@
                 <div class="casino-slot-symbol">🍌</div>
             </div>
         </div>
-        
+
         <form class="casino-bet-form" id="casinoBetForm" autocomplete="off">
             <input type="number" min="1" step="1" id="casinoBetInput" placeholder="Ставка" required>
             <button type="submit" class="casino-bet-btn">Сделать ставку</button>
@@ -48,4 +48,4 @@
     </div>
     <script src="{{ url_for('static', filename='js/casino.js') }}?v={{ STATIC_VERSION }}"></script>
 </body>
-</html> 
+</html>

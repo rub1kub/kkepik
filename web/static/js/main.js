@@ -1,7 +1,26 @@
 let tg = window.Telegram.WebApp;
 tg.expand();
 
-tg.BackButton.hide();
+function hideHomeBackButton(forceBridgeUpdate = false) {
+    if (window.location.pathname === '/' && tg && tg.BackButton) {
+        tg.BackButton.hide();
+        if (forceBridgeUpdate && window.Telegram?.WebView?.postEvent) {
+            window.Telegram.WebView.postEvent(
+                'web_app_setup_back_button',
+                false,
+                { is_visible: false }
+            );
+        }
+    }
+}
+
+hideHomeBackButton();
+window.addEventListener('pageshow', function(event) {
+    hideHomeBackButton(event.persisted);
+});
+document.addEventListener('visibilitychange', function() {
+    if (!document.hidden) hideHomeBackButton(true);
+});
 
 if (tg && tg.colorScheme) {
     document.documentElement.setAttribute('data-theme', tg.colorScheme);
@@ -17,34 +36,56 @@ if (!window.scheduleState.displayedDate) {
 async function authorize() {
     const initData = tg.initData;
     if (!initData) {
-        window.location.href = '/api/docs';
+        showAuthError('Откройте приложение из Telegram.');
         return;
     }
+    document.getElementById('main-content').style.display = '';
     try {
-        const resp = await fetch('/validate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tgWebAppData: initData })
-        });
-        const data = await resp.json();
+        const data = window.kkepikApp
+            ? await window.kkepikApp.ready
+            : { success: true };
         if (data.success) {
             document.getElementById('main-content').style.display = '';
+            if (data.user && data.user.name_or_group) {
+                document.getElementById('currentGroupName').textContent = data.user.name_or_group;
+            }
+            hideLoader();
         } else {
             showAuthError(data.error || 'Ошибка авторизации.');
         }
     } catch (e) {
-        showAuthError('Ошибка соединения с сервером.');
+        showAuthError(e.auth ? e.message : 'Нет связи с сервером. Попробуйте ещё раз.');
     }
 }
+
+function hideLoader() {
+    const loader = document.getElementById('loader');
+    if (!loader || loader.hidden) return;
+    loader.classList.add('fade-out');
+    setTimeout(function () {
+        loader.hidden = true;
+    }, 180);
+}
+
+window.kkepikHideLoader = hideLoader;
+
 function showAuthError(msg) {
-    document.getElementById('auth-error').textContent = msg;
-    document.getElementById('auth-error').style.display = '';
+    const error = document.getElementById('auth-error');
+    error.textContent = msg;
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'auth-retry-button';
+    retry.textContent = 'Повторить';
+    retry.addEventListener('click', function () { window.location.reload(); });
+    error.appendChild(document.createElement('br'));
+    error.appendChild(retry);
+    error.style.display = '';
     document.getElementById('main-content').style.display = 'none';
 }
 authorize();
 
 window.addEventListener('DOMContentLoaded', function() {
-    document.querySelectorAll('.game-card').forEach(card => {
+    document.querySelectorAll('.game-card, .compact-game-link').forEach(card => {
         card.addEventListener('click', () => {
             tg.HapticFeedback.impactOccurred('soft');
         });
@@ -61,9 +102,17 @@ window.addEventListener('DOMContentLoaded', function() {
 
     const progressBar = document.getElementById('progress_bar');
     if (progressBar) {
-        progressBar.addEventListener('click', function(e) {
+        progressBar.addEventListener('click', function() {
             tg.HapticFeedback.impactOccurred('medium');
-            launchSideConfetti();
+            if (window.cycleProgressTimeMode) {
+                window.cycleProgressTimeMode();
+            }
+            launchSideConfetti({ forceForInteraction: true });
+        });
+        progressBar.addEventListener('keydown', function(event) {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            progressBar.click();
         });
     }
 });
@@ -116,8 +165,8 @@ document.addEventListener('DOMContentLoaded', async function() {
         { start: '10:10', end: '11:25' },
         { start: '11:35', end: '12:50' },
         { start: '13:00', end: '14:15' },
-        { start: '14:25', end: '15:50' },
-        { start: '16:00', end: '17:15' }
+        { start: '14:25', end: '15:40' },
+        { start: '15:50', end: '17:05' }
     ];
 
     let currentDate = new Date();
@@ -142,8 +191,28 @@ document.addEventListener('DOMContentLoaded', async function() {
         isUpdating: false,
         initialized: false,
         currentEntity: null,
-        scheduleCache: new Map()
+        scheduleCache: new Map(),
+        usesBootstrapEntity: true,
+        hasRealLessons: false
     };
+
+    document.addEventListener('kkepik:bootstrap-updated', function (event) {
+        const bootstrap = event.detail;
+        const currentDateString = currentDate.toLocaleDateString('ru-RU');
+        if (!bootstrap || bootstrap.requested_date !== currentDateString) return;
+        if (bootstrap.schedule_status === 200 && bootstrap.schedule) {
+            window.scheduleState.scheduleCache.set(currentDateString, bootstrap.schedule);
+            window.scheduleState.currentScheduleData = bootstrap.schedule;
+        } else if (bootstrap.schedule_status && bootstrap.schedule_status < 500) {
+            window.scheduleState.scheduleCache.set(currentDateString, null);
+            window.scheduleState.currentScheduleData = null;
+        } else {
+            return;
+        }
+        if (typeof window.updateScheduleDisplay === 'function') {
+            checkAdjacentDays(window.updateScheduleDisplay);
+        }
+    });
 
     console.log('=== Initialization ===');
     console.log('Initial date:', displayedDate);
@@ -184,45 +253,82 @@ document.addEventListener('DOMContentLoaded', async function() {
         return holidays.includes(dateString);
     }
 
-    async function checkAdjacentDays(callback) {
-        console.log('[checkAdjacentDays] currentDate:', currentDate);
-        // Поиск предыдущего рабочего дня
-        let prevDate = new Date(currentDate);
+    function getAdjacentStudyDate(date, direction) {
+        const candidate = new Date(date);
         do {
-            prevDate.setDate(prevDate.getDate() - 1);
-        } while (prevDate.getDay() === 0 || isHoliday(prevDate));
-        // Поиск следующего рабочего дня
-        let nextDate = new Date(currentDate);
-        do {
-            nextDate.setDate(nextDate.getDate() + 1);
-        } while (nextDate.getDay() === 0 || isHoliday(nextDate));
+            candidate.setDate(candidate.getDate() + direction);
+        } while (candidate.getDay() === 0 || isHoliday(candidate));
+        return candidate;
+    }
 
-        let prevSchedule = null, nextSchedule = null;
+    function hasRealSchedule(scheduleData) {
+        if (!scheduleData || !Array.isArray(scheduleData.schedule)) return false;
+        return scheduleData.schedule.some(item => {
+            if (typeof item !== 'string') return false;
+            return item.split('\n').some(line => {
+                const normalized = line.trim().replace(/—/g, '–');
+                if (!normalized || !normalized.toLowerCase().includes('пара')) return false;
+                const details = normalized.split('–').slice(1).join('–').trim();
+                return Boolean(details) && details.toLowerCase() !== 'нет';
+            });
+        });
+    }
+
+    function getBootstrapAdjacent(direction, targetDate) {
+        if (!window.kkepikApp || window.scheduleState.usesBootstrapEntity === false) {
+            return undefined;
+        }
+        const bootstrap = window.kkepikApp.latest;
+        const key = direction < 0 ? 'previous' : 'next';
+        const item = bootstrap && bootstrap.adjacent && bootstrap.adjacent[key];
+        const targetDateString = targetDate.toLocaleDateString('ru-RU');
+        const currentDateString = currentDate.toLocaleDateString('ru-RU');
+        if (
+            !bootstrap
+            || bootstrap.requested_date !== currentDateString
+            || !item
+            || item.date !== targetDateString
+        ) {
+            return undefined;
+        }
+        if (item.available && item.schedule) {
+            window.scheduleState.scheduleCache.set(targetDateString, item.schedule);
+        }
+        return Boolean(item.available);
+    }
+
+    async function checkAdjacentDays(callback) {
+        const previousDate = getAdjacentStudyDate(currentDate, -1);
+        const nextDate = getAdjacentStudyDate(currentDate, 1);
+        const previousBootstrap = getBootstrapAdjacent(-1, previousDate);
+        const nextBootstrap = getBootstrapAdjacent(1, nextDate);
+
         hasPrevDay = false;
         hasNextDay = false;
+        updateNavigationIndicators();
 
-        if (prevDate.getDay() !== 0 && !isHoliday(prevDate)) {
-            prevSchedule = await loadScheduleForDate(prevDate);
-            hasPrevDay = prevSchedule && !prevSchedule.error500 && Array.isArray(prevSchedule.schedule);
-            console.log('[checkAdjacentDays] prevDate:', prevDate, 'hasPrevDay:', hasPrevDay);
-        }
-
-        if (nextDate.getDay() !== 0 && !isHoliday(nextDate)) {
-            nextSchedule = await loadScheduleForDate(nextDate);
-            hasNextDay = nextSchedule && !nextSchedule.error500 && Array.isArray(nextSchedule.schedule);
-            console.log('[checkAdjacentDays] nextDate:', nextDate, 'hasNextDay:', hasNextDay);
-        }
-
+        const [previousAvailable, nextAvailable] = await Promise.all([
+            previousBootstrap === undefined
+                ? loadScheduleForDate(previousDate).then(hasRealSchedule)
+                : previousBootstrap,
+            nextBootstrap === undefined
+                ? loadScheduleForDate(nextDate).then(hasRealSchedule)
+                : nextBootstrap,
+        ]);
+        hasPrevDay = previousAvailable;
+        hasNextDay = nextAvailable;
         updateNavigationIndicators();
         if (typeof callback === 'function') callback();
-        console.log('[checkAdjacentDays] END, currentDate:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
     }
 
     function updateNavigationIndicators() {
         const title = document.querySelector('.schedule-title');
+        if (!title) return;
         title.classList.toggle('has-prev', hasPrevDay);
         title.classList.toggle('has-next', hasNextDay);
     }
+
+    window.refreshScheduleNavigation = checkAdjacentDays;
 
     async function loadScheduleForDate(date) {
         if (date.getDay() === 0 || isHoliday(date)) {
@@ -236,6 +342,26 @@ document.addEventListener('DOMContentLoaded', async function() {
             console.log('Используем кэшированное расписание для:', dateString);
             return window.scheduleState.scheduleCache.get(dateString);
         }
+
+        if (window.kkepikApp && dateString === window.kkepikApp.requestedDate) {
+            try {
+                const bootstrap = await window.kkepikApp.ready;
+                if (bootstrap.schedule_status === 200 && bootstrap.schedule) {
+                    window.scheduleState.scheduleCache.set(dateString, bootstrap.schedule);
+                    return bootstrap.schedule;
+                }
+                if (bootstrap.schedule_status && bootstrap.schedule_status < 500) {
+                    window.scheduleState.scheduleCache.set(dateString, null);
+                    return null;
+                }
+            } catch (error) {
+                console.warn('Bootstrap недоступен:', error);
+            }
+        }
+
+        const cachedSchedule = window.kkepikApp
+            ? window.kkepikApp.getCachedSchedule(dateString)
+            : null;
 
         try {
             // Проверяем, есть ли выбранная группа/преподаватель
@@ -271,18 +397,19 @@ document.addEventListener('DOMContentLoaded', async function() {
                     if (response.ok) {
                         console.log('Успешно получено расписание для:', dateString);
                         window.scheduleState.scheduleCache.set(dateString, data);
+                        if (window.kkepikApp) window.kkepikApp.cacheSchedule(dateString, data);
                         return data;
                     }
                 }
             }
             
             // Если нет выбранной группы/преподавателя или запрос не удался, используем ID пользователя
-            const userId = tg.initDataUnsafe.user.id;
-            console.log('Отправляем запрос для пользователя:', userId, 'на дату:', dateString);
-            const response = await fetch(`/api/schedule/user/${userId}`, {
+            console.log('Отправляем запрос личного расписания на дату:', dateString);
+            const response = await fetch('/api/schedule/me', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'X-Telegram-Init-Data': tg.initData
                 },
                 body: JSON.stringify({ date: dateString })
             });
@@ -296,13 +423,15 @@ document.addEventListener('DOMContentLoaded', async function() {
             if (response.ok) {
                 console.log('Успешно получено расписание для:', dateString);
                 window.scheduleState.scheduleCache.set(dateString, data);
+                if (window.kkepikApp) window.kkepikApp.cacheSchedule(dateString, data);
                 return data;
             }
             console.log('Не удалось получить расписание для:', dateString);
-            return null;
+            window.scheduleState.scheduleCache.set(dateString, cachedSchedule);
+            return cachedSchedule;
         } catch (error) {
             console.error('Ошибка при получении расписания для', dateString + ':', error);
-            return null;
+            return cachedSchedule;
         }
     }
 
@@ -338,6 +467,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
             console.log('[initialLoad] Перешли на рабочий день:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
             await checkAdjacentDays(updateScheduleDisplay);
+            hideLoader();
             isInitialLoad = false;
             console.log('[initialLoad] END (после смены даты), currentDate:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
             return;
@@ -374,9 +504,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             return currentTime >= lastEndTime;
         }
         // Если все пары на сегодня закончились или расписания на сегодня нет — ищем ближайшее будущее расписание
-        if (isAllLessonsFinished(window.scheduleState.currentScheduleData, currentDate) ||
-            !window.scheduleState.currentScheduleData || !window.scheduleState.currentScheduleData.schedule ||
-            !window.scheduleState.currentScheduleData.schedule.some(lesson => lesson && !lesson.includes('Нет'))) {
+        if (isAllLessonsFinished(window.scheduleState.currentScheduleData, currentDate)) {
             const found = await findNextScheduleDate(currentDate);
             if (found) {
                 currentDate = found.date;
@@ -389,6 +517,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         document.querySelector('.schedule-column:last-child').style.display = 'none';
         document.querySelector('.schedule-column:first-child').style.flex = '1';
         await checkAdjacentDays(updateScheduleDisplay);
+        hideLoader();
         isInitialLoad = false;
         console.log('[initialLoad] END, currentDate:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
     }
@@ -406,81 +535,16 @@ document.addEventListener('DOMContentLoaded', async function() {
 
         if (window.scheduleState.currentScheduleData && window.scheduleState.currentScheduleData.error500) {
             const bellList = document.querySelector('#bell_list .row-container');
-            bellList.innerHTML = '';
-
-            // Скрываем schedule-title
-            const title = document.querySelector('.schedule-title');
-            if (title) title.style.display = 'none';
-
-            // Скрываем schedule-reactions
-            const reactions = document.getElementById('schedule-reactions');
-            if (reactions) reactions.style.display = 'none';
-
-            // Скрываем groupSelectorContainer
-            const groupSelectorContainer = document.getElementById('groupSelectorContainer');
-            if (groupSelectorContainer) groupSelectorContainer.style.display = 'none';
-
-            // Алерт над menu-container
-            let alert = document.getElementById('schedule-error-alert');
-            if (!alert) {
-                alert = document.createElement('div');
-                alert.id = 'schedule-error-alert';
-                alert.textContent = 'Расписание недоступно. Возможно вы неправильно зарегистрировались (или его попросту нет?)';
-                alert.style.background = 'var(--tg-theme-secondary-bg-color)';
-                alert.style.border = 'none';
-                alert.style.borderRadius = 'var(--border-radius)';
-                alert.style.padding = '6px 10px';
-                alert.style.margin = '0 0 8px 0';
-                alert.style.fontWeight = '400';
-                alert.style.fontSize = '13px';
-                alert.style.textAlign = 'center';
-                alert.style.width = '100%';
-                alert.style.color = 'var(--tg-theme-destructive-text-color)';
-                const menuContainer = document.querySelector('.menu-container');
-                if (menuContainer && menuContainer.parentNode) {
-                    menuContainer.parentNode.insertBefore(alert, menuContainer);
-                }
+            renderScheduleEmptyState(bellList, 'error');
+            window.scheduleState.hasRealLessons = false;
+            window.scheduleState.displayedDate = new Date(currentDate);
+            const scheduleActions = document.getElementById('scheduleActions');
+            if (scheduleActions) scheduleActions.hidden = true;
+            const downloadBtn = document.getElementById('downloadScheduleBtn');
+            if (downloadBtn) {
+                downloadBtn.removeAttribute('data-url');
+                downloadBtn.style.display = 'none';
             }
-
-            // Flex-контейнер для двух расписаний
-            const tablesRow = document.createElement('div');
-            tablesRow.style.display = 'flex';
-            tablesRow.style.gap = '16px';
-            tablesRow.style.justifyContent = 'center';
-
-            // Будний день
-            const weekdayTable = document.createElement('div');
-            weekdayTable.className = 'row-container';
-            weekdayTable.style.marginTop = '5px';
-            const weekdayTitle = document.createElement('div');
-            weekdayTitle.className = 'schedule-divider';
-            weekdayTitle.textContent = 'Будний день';
-            weekdayTable.appendChild(weekdayTitle);
-            WEEKDAY_SCHEDULE.slice(0, 4).forEach((pair, idx) => {
-                const row = document.createElement('div');
-                row.className = 'row';
-                row.innerHTML = `<div>${pair.start}</div><div class=\"lesson-name\">-</div><div>${pair.end}</div>`;
-                weekdayTable.appendChild(row);
-            });
-            tablesRow.appendChild(weekdayTable);
-
-            // Суббота
-            const saturdayTable = document.createElement('div');
-            saturdayTable.className = 'row-container';
-            saturdayTable.style.marginTop = '5px';
-            const saturdayTitle = document.createElement('div');
-            saturdayTitle.className = 'schedule-divider';
-            saturdayTitle.textContent = 'Суббота';
-            saturdayTable.appendChild(saturdayTitle);
-            SATURDAY_SCHEDULE.slice(0, 4).forEach((pair, idx) => {
-                const row = document.createElement('div');
-                row.className = 'row';
-                row.innerHTML = `<div>${pair.start}</div><div class=\"lesson-name\">-</div><div>${pair.end}</div>`;
-                saturdayTable.appendChild(row);
-            });
-            tablesRow.appendChild(saturdayTable);
-
-            bellList.appendChild(tablesRow);
             return;
         } else {
             // Показываем schedule-title обратно, если оно было скрыто
@@ -531,7 +595,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             currentLessons.schedule = normalizedSchedule;
         }
 
-        if (currentLessons) {
+        if (currentLessons && Array.isArray(currentLessons.schedule)) {
             const bellList = document.querySelector('#bell_list .row-container');
             bellList.style.opacity = '0';
 
@@ -540,20 +604,23 @@ document.addEventListener('DOMContentLoaded', async function() {
 
             const mainSchedule = [];
             const combinedSchedule = [];
+            const isTeacherSchedule = window.scheduleState.currentEntity?.entity_type === 'teacher'
+                || Boolean(currentLessons.teacher && !currentLessons.group);
 
             currentLessons.schedule.forEach((lesson, idx) => {
                 console.log(`[schedule] forEach lesson[${idx}]:`, lesson);
                 if (!lesson) return;
 
-                const match = lesson.match(/^▪️(\d+) пара – (.+)$/);
+                const match = String(lesson).match(/^[▪▫•]?\uFE0F?\s*(\d+)\s*пара(?:\s*\([^)]*\))?\s*[–—-]\s*(.+)$/iu);
                 if (!match) {
                     console.log(`[schedule] lesson[${idx}] не совпал с шаблоном`);
                     return;
                 }
 
-                const [_, pairNumber, lessonDetails] = match;
+                const [_, pairNumber, rawLessonDetails] = match;
+                const lessonDetails = rawLessonDetails.replace(/\s*\(совмещ\.?\)\s*/iu, ' ').trim();
 
-                if (lessonDetails.trim() === 'Нет') {
+                if (/^нет(?:\s+пары)?$/iu.test(lessonDetails)) {
                     // Для преподавателя явно добавляем строку "Нет" и прочерки
                     const emptyItem = {
                         pair_number: parseInt(pairNumber),
@@ -569,18 +636,37 @@ document.addEventListener('DOMContentLoaded', async function() {
                     return;
                 }
 
-                const parts = lessonDetails.split(' – ');
+                const parts = lessonDetails
+                    .split(/\s+[–—-]\s+/u)
+                    .map(part => part.trim())
+                    .filter(Boolean);
 
-                let subjectName, groupName, teacherName, classroom;
+                let subjectName = '';
+                let groupName = '';
+                let teacherName = '';
+                let classroom = '';
 
-                if (parts.length === 2) {
-                    [subjectName, teacherName] = parts;
-                } else if (parts.length === 3) {
-                    [subjectName, teacherName, classroom] = parts;
-                    groupName = currentLessons.group || '';
-                } else if (parts.length === 4) {
-                    [subjectName, teacherName, classroom] = parts;
-                    groupName = currentLessons.group || '';
+                if (isTeacherSchedule) {
+                    const teacherParts = [...parts];
+                    if (/^\d{2,3}-/u.test(teacherParts[0] || '')) {
+                        groupName = teacherParts.shift() || '';
+                    }
+                    if (teacherParts.length > 1 && looksLikeScheduleRoom(teacherParts[teacherParts.length - 1])) {
+                        classroom = teacherParts.pop() || '';
+                    }
+                    subjectName = teacherParts.join(' – ');
+                    teacherName = currentLessons.teacher
+                        || window.scheduleState.currentEntity?.entity_name
+                        || window.scheduleState.currentEntity?.entity_id
+                        || '';
+                } else {
+                    const studentParts = [...parts];
+                    subjectName = studentParts.shift() || '';
+                    if (studentParts.length > 1 && looksLikeScheduleRoom(studentParts[studentParts.length - 1])) {
+                        classroom = studentParts.pop() || '';
+                    }
+                    teacherName = studentParts.join(' – ');
+                    groupName = currentLessons.group || window.scheduleState.currentEntity?.entity_id || '';
                 }
 
                 const scheduleItem = {
@@ -588,7 +674,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                     subject_name: subjectName ? subjectName.trim() : '',
                     group_name: groupName ? groupName.trim() : '',
                     teacher_name: teacherName ? teacherName.trim() : '',
-                    classroom: classroom ? classroom.trim() : '',
+                    classroom: normalizeScheduleRoom(classroom),
                     is_combined: lesson.includes('(совмещ.)'),
                     is_empty: false
                 };
@@ -609,15 +695,25 @@ document.addEventListener('DOMContentLoaded', async function() {
             console.log('[schedule] combinedSchedule:', combinedSchedule);
             console.log('[schedule] Перед displayScheduleItems mainSchedule:', mainSchedule);
 
-            displayScheduleItems(mainSchedule, newContent, currentDate);
+            const hasMainLessons = mainSchedule.some(item => !item.is_empty);
+            const hasCombinedLessons = combinedSchedule.some(item => !item.is_empty);
+            window.scheduleState.hasRealLessons = hasMainLessons || hasCombinedLessons;
 
-            if (combinedSchedule.length > 0) {
+            if (hasMainLessons) {
+                displayScheduleItems(mainSchedule, newContent, currentDate);
+            }
+
+            if (hasCombinedLessons) {
                 const divider = document.createElement('div');
                 divider.className = 'schedule-divider';
                 divider.textContent = 'Совмещенные пары';
                 newContent.appendChild(divider);
 
                 displayScheduleItems(combinedSchedule, newContent, currentDate);
+            }
+
+            if (!window.scheduleState.hasRealLessons) {
+                renderScheduleEmptyState(newContent);
             }
 
             requestAnimationFrame(() => {
@@ -629,19 +725,17 @@ document.addEventListener('DOMContentLoaded', async function() {
             });
 
             // Вставка картинки только если newContent определён
-            if (window.addCornerImageToRows && newContent) {
+            if (window.scheduleState.hasRealLessons && window.addCornerImageToRows && newContent) {
                 window.addCornerImageToRows(newContent);
             }
         } else {
             const bellList = document.querySelector('#bell_list .row-container');
-            bellList.innerHTML = schedule.slice(0, 4).map((pair, index) => `
-                <div class="row ${index < 3 ? 'notlast' : ''}">
-                    <div>${pair.start}</div>
-                    <div class="lesson-name">-</div>
-                    <div>${pair.end}</div>
-                </div>
-            `).join('');
+            window.scheduleState.hasRealLessons = false;
+            renderScheduleEmptyState(bellList);
         }
+
+        const scheduleActions = document.getElementById('scheduleActions');
+        if (scheduleActions) scheduleActions.hidden = !window.scheduleState.hasRealLessons;
         
         // Обновляем глобальное состояние с текущей датой
         window.scheduleState.displayedDate = new Date(currentDate);
@@ -664,8 +758,8 @@ document.addEventListener('DOMContentLoaded', async function() {
             const pad = n => n.toString().padStart(2, '0');
             const dateObj = window.scheduleState.displayedDate || new Date();
             const dateStr = pad(dateObj.getDate()) + '.' + pad(dateObj.getMonth() + 1) + '.' + dateObj.getFullYear();
-            if (scheduleType) {
-                downloadUrl = `https://kkepik.ru/api/schedule/download/${scheduleType}/${dateStr}`;
+            if (scheduleType && window.scheduleState.hasRealLessons) {
+                downloadUrl = `https://kkepik.rub1kub.ru/api/schedule/download/${scheduleType}/${dateStr}`;
                 downloadBtn.setAttribute('data-url', downloadUrl);
                 downloadBtn.style.display = '';
                 console.log('[download] ссылка сформирована:', downloadUrl);
@@ -680,7 +774,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
         const event = new CustomEvent('scheduleDateChanged', {
             detail: {
-                date: currentDate.toISOString().split('T')[0]
+                date: formatDateForApi(currentDate)
             }
         });
         document.dispatchEvent(event);
@@ -691,44 +785,80 @@ document.addEventListener('DOMContentLoaded', async function() {
     let touchStartX = 0;
     let touchStartY = 0;
     let isSwiping = false;
+    let swipeAxis = null;
+    const SWIPE_AXIS_THRESHOLD = 10;
+    const HORIZONTAL_DOMINANCE = 1.2;
+
+    function resetScheduleSwipe() {
+        isSwiping = false;
+        swipeAxis = null;
+    }
 
     scheduleArea.addEventListener('touchstart', e => {
-        touchStartX = e.changedTouches[0].screenX;
-        touchStartY = e.changedTouches[0].screenY;
+        touchStartX = e.changedTouches[0].clientX;
+        touchStartY = e.changedTouches[0].clientY;
         isSwiping = true;
-
-        e.preventDefault();
-    }, { passive: false });
+        swipeAxis = null;
+    }, { passive: true });
 
     scheduleArea.addEventListener('touchmove', e => {
         if (!isSwiping) return;
 
-        const currentX = e.changedTouches[0].screenX;
-        const currentY = e.changedTouches[0].screenY;
+        const currentX = e.changedTouches[0].clientX;
+        const currentY = e.changedTouches[0].clientY;
         const swipeDistance = currentX - touchStartX;
-        const verticalDistance = Math.abs(currentY - touchStartY);
+        const verticalDistance = currentY - touchStartY;
+        const horizontalMagnitude = Math.abs(swipeDistance);
+        const verticalMagnitude = Math.abs(verticalDistance);
 
-        if (verticalDistance > Math.abs(swipeDistance)) {
-            isSwiping = false;
-            return;
+        if (swipeAxis === null) {
+            if (Math.max(horizontalMagnitude, verticalMagnitude) < SWIPE_AXIS_THRESHOLD) return;
+            if (verticalMagnitude >= horizontalMagnitude) {
+                swipeAxis = 'vertical';
+                isSwiping = false;
+                return;
+            }
+            if (horizontalMagnitude < verticalMagnitude * HORIZONTAL_DOMINANCE) return;
+            swipeAxis = 'horizontal';
         }
 
+        if (swipeAxis !== 'horizontal') return;
+        e.preventDefault();
+
+        if (horizontalMagnitude < 24) return;
         if (swipeDistance > 0 && !hasPrevDay) {
             tg.HapticFeedback.notificationOccurred('warning');
-            isSwiping = false;
+            resetScheduleSwipe();
         } else if (swipeDistance < 0 && !hasNextDay) {
             tg.HapticFeedback.notificationOccurred('warning');
-            isSwiping = false;
+            resetScheduleSwipe();
         }
-
-        e.preventDefault();
     }, { passive: false });
 
     scheduleArea.addEventListener('touchend', async e => {
         console.log('[touchend] START, currentDate:', currentDate);
         if (!isSwiping) return;
-        touchEndX = e.changedTouches[0].screenX;
+        const touchEndX = e.changedTouches[0].clientX;
+        const touchEndY = e.changedTouches[0].clientY;
         const swipeDistance = touchEndX - touchStartX;
+        const verticalDistance = touchEndY - touchStartY;
+        const isHorizontalGesture = swipeAxis === 'horizontal'
+            || (swipeAxis === null
+                && Math.abs(swipeDistance) > Math.abs(verticalDistance) * HORIZONTAL_DOMINANCE);
+
+        if (!isHorizontalGesture || Math.abs(swipeDistance) <= 50) {
+            resetScheduleSwipe();
+            return;
+        }
+
+        e.preventDefault();
+        if ((swipeDistance > 0 && !hasPrevDay) || (swipeDistance < 0 && !hasNextDay)) {
+            tg.HapticFeedback.notificationOccurred('warning');
+            resetScheduleSwipe();
+            return;
+        }
+
+        resetScheduleSwipe();
         if (Math.abs(swipeDistance) > 50) {
             if (swipeDistance > 0) {
                 let prevDate = new Date(currentDate);
@@ -764,14 +894,10 @@ document.addEventListener('DOMContentLoaded', async function() {
                 }
             }
         }
-        isSwiping = false;
-        e.preventDefault();
         console.log('[touchend] END, currentDate:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
     }, { passive: false });
 
-    scheduleArea.addEventListener('touchmove', e => {
-        e.preventDefault();
-    }, { passive: false });
+    scheduleArea.addEventListener('touchcancel', resetScheduleSwipe, { passive: true });
 
     const title = document.querySelector('.schedule-title');
 
@@ -779,7 +905,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         console.log('[title.click] START, currentDate:', currentDate);
         const rect = title.getBoundingClientRect();
         const x = e.clientX - rect.left;
-        if (x < 30) {
+        if (x < 44) {
             let prevDate = new Date(currentDate);
             do {
                 prevDate.setDate(prevDate.getDate() - 1);
@@ -795,7 +921,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                     checkAdjacentDays();
                 }
             }
-        } else if (x > rect.width - 30) {
+        } else if (x > rect.width - 44) {
             let nextDate = new Date(currentDate);
             do {
                 nextDate.setDate(nextDate.getDate() + 1);
@@ -853,7 +979,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         console.log('[keydown] END, currentDate:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
     });
 
-    initialLoad();
+    if (tg.initData) initialLoad();
 });
 
 function displaySchedule(schedule) {
@@ -886,10 +1012,107 @@ function displaySchedule(schedule) {
     }
 }
 
+function getCourseNumber(groupName) {
+    const value = String(groupName || '').toUpperCase();
+    const match = value.match(/Д\d{1,2}-([1-4])/u) || value.match(/-([1-4])(?=[А-ЯЁA-Z])/u);
+    return match ? Number(match[1]) : null;
+}
+
+function looksLikeScheduleRoom(value) {
+    return /^(?:ауд(?:итория)?\.?\s*)?(?:\d+[а-яa-z]?|спортзал|актовый|мастерская|полигон|библиотека)/iu.test(String(value || '').trim());
+}
+
+function normalizeScheduleRoom(value) {
+    return String(value || '').replace(/^ауд(?:итория)?\.?\s*/iu, '').trim();
+}
+
+function escapeScheduleText(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function renderScheduleEmptyState(container, type = 'empty') {
+    const state = document.createElement('div');
+    state.className = `schedule-empty-state schedule-empty-state-${type}`;
+
+    const title = document.createElement('strong');
+    title.textContent = type === 'error'
+        ? 'Не удалось загрузить расписание'
+        : 'Расписания пока нет';
+
+    const text = document.createElement('span');
+    text.textContent = type === 'error'
+        ? 'Проверьте соединение и попробуйте ещё раз.'
+        : 'На эту дату пары ещё не опубликованы.';
+
+    state.append(title, text);
+    container.replaceChildren(state);
+}
+
+function getSchedulePresentation(item, date, isTeacher) {
+    const scheduleData = window.scheduleState?.currentScheduleData || {};
+    const entity = window.scheduleState?.currentEntity || {};
+    const groupName = item.group_name || scheduleData.group || (entity.entity_type === 'group' ? entity.entity_id : '');
+    const course = getCourseNumber(groupName);
+    const subject = item.subject_name || 'Занятие';
+    const teacher = item.teacher_name || '';
+    const room = item.classroom || '';
+    const timeEmphasis = date.getDay() === 6 || (!isTeacher && course === 1 && date.getMonth() === 8);
+
+    if (isTeacher) {
+        return {
+            profileClass: 'schedule-priority-teacher',
+            primary: item.group_name || subject,
+            secondary: item.group_name ? subject : teacher,
+            room,
+            timeEmphasis
+        };
+    }
+
+    if (course === 1) {
+        return {
+            profileClass: 'schedule-priority-first-course',
+            primary: subject,
+            secondary: teacher,
+            room,
+            timeEmphasis
+        };
+    }
+
+    return {
+        profileClass: 'schedule-priority-upper-course',
+        primary: teacher || subject,
+        secondary: teacher ? subject : '',
+        room,
+        timeEmphasis
+    };
+}
+
+function renderEmptyPairRow(scheduleTime) {
+    const row = document.createElement('div');
+    row.className = 'row schedule-gap-row';
+    row.innerHTML = `
+        <div class="row-time row-time-start">${scheduleTime.start}</div>
+        <div class="lesson-name"><div class="lesson-primary">Нет пары</div></div>
+        <div class="row-time row-time-end">${scheduleTime.end}</div>
+    `;
+    return row;
+}
+
 function displayScheduleItems(items, container, date) {
     const isSaturday = date.getDay() === 6;
     const schedule = isSaturday ? SATURDAY_SCHEDULE : WEEKDAY_SCHEDULE;
     const isTeacher = window.scheduleState.currentEntity && window.scheduleState.currentEntity.entity_type === 'teacher';
+
+    items = Array.isArray(items) ? items : [];
+    if (!items.some(item => item && !item.is_empty)) {
+        renderScheduleEmptyState(container);
+        return;
+    }
 
     console.log('[schedule] displayScheduleItems: до обрезки items:', items);
     // Обрезаем последние подряд идущие пустые пары для преподавателя (если не все пары пустые)
@@ -906,21 +1129,6 @@ function displayScheduleItems(items, container, date) {
         }
     }
     console.log('[schedule] displayScheduleItems: после обрезки items:', items);
-
-    // Если преподаватель и все пары пустые (is_empty), рендерим "Нет" для всех пар
-    if (isTeacher && (!items || items.length === 0 || items.every(item => item.is_empty))) {
-        console.log('[schedule] displayScheduleItems: рендерим строки с Нет для всех пар');
-        for (let i = 0; i < schedule.length; i++) {
-            const pair = schedule[i];
-            const row = document.createElement('div');
-            row.className = 'row';
-            row.innerHTML = `
-                <div>${pair.start}</div>
-                <div class=\"lesson-name\">\n                    <div class=\"group\">Нет</div>\n                    <div class=\"teacher\">—</div>\n                </div>\n                <div>${pair.end}</div>\n            `;
-            container.appendChild(row);
-        }
-        return;
-    }
 
     // Создаём мапу: номер пары -> массив items
     const itemsByPair = {};
@@ -949,17 +1157,7 @@ function displayScheduleItems(items, container, date) {
     for (let i = 1; i < minPair; i++) {
         const scheduleTime = schedule[i - 1];
         if (!scheduleTime) continue;
-        const row = document.createElement('div');
-        row.className = 'row';
-        row.innerHTML = `
-            <div>${scheduleTime.start}</div>
-            <div class="lesson-name">
-                <div class="group">Нет</div>
-                <div class="teacher">— · —</div>
-            </div>
-            <div>${scheduleTime.end}</div>
-        `;
-        container.appendChild(row);
+        container.appendChild(renderEmptyPairRow(scheduleTime));
     }
 
     // Пары и прочерки между ними (от minPair до renderToPair)
@@ -972,48 +1170,28 @@ function displayScheduleItems(items, container, date) {
                 const row = document.createElement('div');
                 row.className = 'row';
                 if (item.is_empty) {
-                    row.innerHTML = `
-                        <div>${scheduleTime.start}</div>
-                        <div class="lesson-name">
-                            <div class="group">Нет</div>
-                            <div class="teacher">—</div>
-                        </div>
-                        <div>${scheduleTime.end}</div>
-                    `;
-                    container.appendChild(row);
+                    container.appendChild(renderEmptyPairRow(scheduleTime));
                 } else {
                     if (item.is_combined) {
                         row.classList.add('combined');
                     }
-                    const shortenedName = shortenSubjectName(item.subject_name);
-                    let teacherSurname = '';
-                    let classroom = '';
-                    if (item.teacher_name) {
-                        teacherSurname = item.teacher_name.split(' ')[0];
-                    }
-                    if (item.classroom) {
-                        classroom = item.classroom;
-                    }
-                    let teacherAndClass = '';
-                    if (teacherSurname && classroom) {
-                        teacherAndClass = `${teacherSurname} · ${classroom}`;
-                    } else if (teacherSurname) {
-                        teacherAndClass = teacherSurname;
-                    } else if (classroom) {
-                        teacherAndClass = classroom;
-                    }
-                    let groupInfo = '';
-                    if (isTeacher) {
-                        groupInfo = `<div class="group">${item.group_name}</div>`;
-                    }
+                    const presentation = getSchedulePresentation(item, date, isTeacher);
+                    row.classList.add(presentation.profileClass);
+                    row.classList.toggle('time-emphasis', presentation.timeEmphasis);
+                    const secondary = presentation.secondary
+                        ? `<div class="lesson-secondary">${escapeScheduleText(presentation.secondary)}</div>`
+                        : '';
+                    const room = presentation.room
+                        ? `<div class="lesson-room">аудитория ${escapeScheduleText(presentation.room)}</div>`
+                        : '';
                     row.innerHTML = `
-                        <div class="row-time">${scheduleTime.start}</div>
-                        <div class="lesson-name" title="${item.subject_name}">
-                            ${groupInfo}
-                            <div class="group">${shortenedName}</div>
-                            <div class="teacher">${teacherAndClass}</div>
+                        <div class="row-time row-time-start">${scheduleTime.start}</div>
+                        <div class="lesson-name" title="${escapeScheduleText(item.subject_name)}">
+                            <div class="lesson-primary">${escapeScheduleText(presentation.primary)}</div>
+                            ${secondary}
+                            ${room}
                         </div>
-                        <div>${scheduleTime.end}</div>
+                        <div class="row-time row-time-end">${scheduleTime.end}</div>
                     `;
 
                     // Модальное окно с деталями (всплывающее)
@@ -1220,7 +1398,7 @@ function displayScheduleItems(items, container, date) {
                         };
 
                         infoSection.appendChild(createInfoRow('Преподаватель', fullTeacher));
-                        infoSection.appendChild(createInfoRow('Кабинет', fullRoom));
+                        infoSection.appendChild(createInfoRow('Аудитория', fullRoom));
                         infoSection.appendChild(createInfoRow('Время', timeRange));
 
                         // Блок учёта часов
@@ -1654,16 +1832,7 @@ function displayScheduleItems(items, container, date) {
             });
         } else {
             // Прочерк между парами
-            const row = document.createElement('div');
-            row.className = 'row';
-            row.innerHTML = `
-                <div>${scheduleTime.start}</div>
-                <div class="lesson-name">
-                    <div class="group">-</div>
-                    <div class="teacher">длинный прочерк · длинный прочерк</div>
-                </div>
-                <div>${scheduleTime.end}</div>
-            `;
+            const row = renderEmptyPairRow(scheduleTime);
 
             // Обработчик для прочерков тоже нужен для консистентности
             const handleEmptyRowClick = (e) => {
@@ -1724,10 +1893,11 @@ function displayScheduleItems(items, container, date) {
 }
 
 // === Конфетти из границ страницы ===
-function launchSideConfetti() {
+function emitSideConfetti(confettiFunction) {
+    if (typeof confettiFunction !== 'function') return;
     const colors = ['#2ecc71', '#3498db', '#e74c3c']; // зелёный, синий, красный (новые оттенки)
     // Левая сторона
-    confetti({
+    confettiFunction({
         particleCount: 40,
         angle: 60,
         spread: 55,
@@ -1738,7 +1908,7 @@ function launchSideConfetti() {
         ticks: 250
     });
     // Правая сторона
-    confetti({
+    confettiFunction({
         particleCount: 40,
         angle: 120,
         spread: 55,
@@ -1748,6 +1918,15 @@ function launchSideConfetti() {
         scalar: 1.1,
         ticks: 250
     });
+}
+
+function launchSideConfetti(options = {}) {
+    if (options.forceForInteraction && window.kkepikLoadConfetti) {
+        return window.kkepikLoadConfetti({ forceForInteraction: true })
+            .then(emitSideConfetti);
+    }
+    emitSideConfetti(window.confetti);
+    return Promise.resolve();
 }
 
 // Делаем функцию доступной глобально
@@ -1839,7 +2018,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     localStorage.setItem('review_submitted', '1');
                     setTimeout(() => {
                         closeReviewModal();
-                        if (inviteBlock) inviteBlock.style.display = 'none';
+                        if (reviewCard) reviewCard.style.display = 'none';
                     }, 1200);
                 } else {
                     status.textContent = data.error || 'Ошибка отправки.';
@@ -1859,6 +2038,7 @@ window.updateScheduleForEntity = async function(entity) {
     
     // Сохраняем выбранную группу/преподавателя в глобальном состоянии
     window.scheduleState.currentEntity = entity;
+    window.scheduleState.usesBootstrapEntity = false;
     
     // Очищаем кэш расписания при смене группы/преподавателя
     window.scheduleState.scheduleCache.clear();
@@ -1885,9 +2065,16 @@ window.updateScheduleForEntity = async function(entity) {
             body: JSON.stringify(body)
         });
         const data = await resp.json();
-        if (data && data.schedule) {
+        if (resp.ok && data && data.schedule) {
             window.scheduleState.currentScheduleData = data;
-            updateScheduleDisplay();
+        } else if (resp.status >= 500) {
+            window.scheduleState.currentScheduleData = { error500: true };
+        } else {
+            window.scheduleState.currentScheduleData = null;
+        }
+        updateScheduleDisplay();
+        if (window.refreshScheduleNavigation) {
+            await window.refreshScheduleNavigation();
         }
     } catch (e) {
         console.error('Ошибка при получении расписания:', e);
@@ -1921,8 +2108,8 @@ function updateDownloadLink() {
     const pad = n => n.toString().padStart(2, '0');
     const dateStr = pad(dateObj.getDate()) + '.' + pad(dateObj.getMonth() + 1) + '.' + dateObj.getFullYear();
     let url = '';
-    if (scheduleType) {
-        url = `https://kkepik.ru/api/schedule/download/${scheduleType}/${dateStr}`;
+    if (scheduleType && window.scheduleState?.hasRealLessons === true) {
+        url = `https://kkepik.rub1kub.ru/api/schedule/download/${scheduleType}/${dateStr}`;
     }
     const btn = document.getElementById('downloadScheduleBtn');
     if (btn) {
@@ -1951,5 +2138,9 @@ document.addEventListener('scheduleDateChanged', function() {
 const btn = document.getElementById('downloadScheduleBtn');
 btn.addEventListener('click', function(e) {
             const url = btn.getAttribute('data-url');
+            if (!url) {
+                e.preventDefault();
+                return;
+            }
             tg.openLink(url);
 });

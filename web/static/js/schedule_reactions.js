@@ -15,6 +15,49 @@ let lastRequestId = 0;
 
 // Глобальный флаг загрузки реакций
 let reactionsLoaded = false;
+let reactionPollTimer = null;
+let fallbackReactions = [];
+let reactionRequestInFlight = false;
+let latestReactions = [];
+let latestUserReactions = [];
+let reactionFeedbackTimer = null;
+const REACTION_RECENTS_KEY = `kkepik:reaction-recent:v1:${tgUserId || 'anonymous'}`;
+const MAX_RECENT_REACTIONS = 6;
+
+function uniqueReactionList(reactions) {
+    return Array.from(new Set((Array.isArray(reactions) ? reactions : []).filter(Boolean)));
+}
+
+function readRecentReactions() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(REACTION_RECENTS_KEY) || '[]');
+        return uniqueReactionList(parsed).slice(0, MAX_RECENT_REACTIONS);
+    } catch (error) {
+        return [];
+    }
+}
+
+function rememberReaction(reaction) {
+    try {
+        const recent = readRecentReactions().filter(item => item !== reaction);
+        recent.unshift(reaction);
+        localStorage.setItem(REACTION_RECENTS_KEY, JSON.stringify(recent.slice(0, MAX_RECENT_REACTIONS)));
+    } catch (error) {}
+}
+
+function formatLocalIsoDate(date) {
+    return [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, '0'),
+        String(date.getDate()).padStart(2, '0')
+    ].join('-');
+}
+
+function parseLocalIsoDate(dateString) {
+    const match = String(dateString || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return new Date(dateString);
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
 
 // Функция для получения текущей даты из расписания
 function getCurrentScheduleDate() {
@@ -22,7 +65,7 @@ function getCurrentScheduleDate() {
     const scheduleTitle = document.querySelector('.schedule-title');
     if (!scheduleTitle) {
         // Если нет, возвращаем текущую дату
-        return new Date().toISOString().split('T')[0];
+        return formatLocalIsoDate(new Date());
     }
     
     // Пытаемся извлечь дату из заголовка расписания
@@ -44,14 +87,12 @@ function getCurrentScheduleDate() {
             // Создаем дату с текущим годом
             const year = new Date().getFullYear();
             const date = new Date(year, month, day);
-            
-            // Форматируем дату в ISO строку (YYYY-MM-DD)
-            return date.toISOString().split('T')[0];
+            return formatLocalIsoDate(date);
         }
     }
     
     // Если не удалось извлечь дату, возвращаем текущую дату
-    return new Date().toISOString().split('T')[0];
+    return formatLocalIsoDate(new Date());
 }
 
 function getInitialScheduleDate() {
@@ -59,8 +100,11 @@ function getInitialScheduleDate() {
     if (window.scheduleState && window.scheduleState.nextDate) {
         return window.scheduleState.nextDate;
     }
+    if (window.scheduleState && window.scheduleState.displayedDate) {
+        return formatLocalIsoDate(new Date(window.scheduleState.displayedDate));
+    }
     // Фолбэк — сегодня
-    return new Date().toISOString().split('T')[0];
+    return formatLocalIsoDate(new Date());
 }
 
 function setScheduleTitleToToday() {
@@ -70,7 +114,7 @@ function setScheduleTitleToToday() {
     ];
     // Используем getInitialScheduleDate вместо new Date()
     const dateStr = getInitialScheduleDate();
-    const now = new Date(dateStr);
+    const now = parseLocalIsoDate(dateStr);
     const day = now.getDate();
     const month = months[now.getMonth()];
     const title = `Расписание на ${day} ${month}`;
@@ -88,45 +132,67 @@ function setScheduleTitleToToday() {
 // Функция для инициализации реакций
 function initScheduleReactions() {
     setScheduleTitleToToday(); // Показываем актуальную дату до загрузки
-    // Загружаем реакции при инициализации с актуальной датой
-    loadReactions(getInitialScheduleDate());
-    
-    // Обновляем реакции каждые 5 секунд
-    setInterval(loadReactions, 5000);
-    
+    const initialDate = getInitialScheduleDate();
+    if (window.kkepikApp) {
+        window.kkepikApp.ready.then(data => {
+            if (data.reaction_date === initialDate) {
+                updateReactionsUI(data.reactions || [], data.user_reactions || []);
+            } else {
+                loadReactions(initialDate);
+            }
+        }).catch(function () {});
+    } else {
+        loadReactions(initialDate);
+    }
+
+    armReactionPolling();
+
     // Добавляем обработчик события изменения даты в расписании
     document.addEventListener('scheduleDateChanged', (event) => {
-        // Сбрасываем флаг первичной загрузки при изменении даты
         isFirstLoad = true;
-        // Загружаем реакции для новой даты
-        loadReactions();
+        fallbackReactions = [];
+        const date = event.detail && event.detail.date;
+        const bootstrap = window.kkepikApp && window.kkepikApp.latest;
+        if (bootstrap && bootstrap.reaction_date === date) {
+            updateReactionsUI(bootstrap.reactions || [], bootstrap.user_reactions || []);
+            return;
+        }
+        loadReactions(date);
     });
-}
 
-// Функция для валидации данных Telegram
-function validateTelegramData(initData) {
-    return fetch('/validate', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            tgWebAppData: initData
-        })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            return initData; // Возвращаем валидированные данные
+    document.addEventListener('kkepik:bootstrap-updated', event => {
+        const data = event.detail;
+        if (data && data.reaction_date === getCurrentScheduleDate()) {
+            updateReactionsUI(data.reactions || [], data.user_reactions || []);
+        }
+    });
+
+    document.addEventListener('visibilitychange', function () {
+        if (document.hidden) {
+            clearTimeout(reactionPollTimer);
+            reactionPollTimer = null;
         } else {
-            throw new Error(data.error || 'Ошибка валидации данных');
+            loadReactions();
+            armReactionPolling();
         }
     });
 }
 
+function validateTelegramData(initData) {
+    return initData ? Promise.resolve(initData) : Promise.reject(new Error('initData отсутствует'));
+}
+
+function armReactionPolling() {
+    clearTimeout(reactionPollTimer);
+    if (document.hidden || (window.kkepikApp && window.kkepikApp.lowData)) return;
+    reactionPollTimer = setTimeout(async function () {
+        await loadReactions();
+        armReactionPolling();
+    }, 60000);
+}
+
 // Функция для загрузки реакций
-function loadReactions(dateOverride) {
-    // Получаем текущую дату из расписания или используем переданную
+async function loadReactions(dateOverride) {
     const currentDate = dateOverride || getCurrentScheduleDate();
     const initData = tg_test.initData;
     if (!initData) return;
@@ -134,108 +200,85 @@ function loadReactions(dateOverride) {
     lastRequestId += 1;
     const requestId = lastRequestId;
 
-    validateTelegramData(initData)
-        .then(validatedData => {
-            fetch(`/api/schedule/reactions?date=${currentDate}&tgWebAppData=${encodeURIComponent(validatedData)}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (requestId !== lastRequestId) return; // Не актуальный ответ
-                    if (data.success) {
-                        if (!data.reactions || data.reactions.length === 0) {
-                            console.warn('Сервер вернул пустой массив реакций, делаем повторный запрос');
-                            setTimeout(() => {
-                                fetch(`/api/schedule/reactions?date=${currentDate}&tgWebAppData=${encodeURIComponent(validatedData)}`)
-                                    .then(response => response.json())
-                                    .then(retryData => {
-                                        if (requestId !== lastRequestId) return;
-                                        if (retryData.success) {
-                                            if (retryData.reactions && retryData.reactions.length > 0) {
-                                                updateReactionsUI(retryData.reactions, retryData.user_reactions);
-                                            } else {
-                                                console.warn('Повторный запрос вернул пустой массив реакций, показываем случайные реакции');
-                                                updateReactionsUI([], retryData.user_reactions || []);
-                                            }
-                                        }
-                                    });
-                            }, 500);
-                            return;
-                        }
-                        updateReactionsUI(data.reactions, data.user_reactions);
-                        if (isFirstLoad && data.reactions.length < 3) {
-                            setTimeout(() => {
-                                fetch(`/api/schedule/reactions?date=${currentDate}&tgWebAppData=${encodeURIComponent(validatedData)}`)
-                                    .then(response => response.json())
-                                    .then(retryData => {
-                                        if (requestId !== lastRequestId) return;
-                                        if (retryData.success && retryData.reactions.length > data.reactions.length) {
-                                            updateReactionsUI(retryData.reactions, retryData.user_reactions);
-                                        }
-                                    });
-                            }, 1000);
-                        }
-                    } else {
-                        console.error('Ошибка при загрузке реакций:', data.error);
-                    }
-                })
-                .catch(error => {
-                    if (requestId !== lastRequestId) return;
-                    console.error('Ошибка при загрузке реакций:', error);
-                });
-        })
-        .catch(error => {
-            if (requestId !== lastRequestId) return;
-            console.error('Ошибка валидации данных:', error);
-        });
+    try {
+        const response = await fetch(`/api/schedule/reactions?date=${currentDate}&tgWebAppData=${encodeURIComponent(initData)}`);
+        const data = await response.json();
+        if (requestId !== lastRequestId) return;
+        if (data.success) {
+            updateReactionsUI(data.reactions || [], data.user_reactions || []);
+        } else {
+            console.error('Ошибка при загрузке реакций:', data.error);
+        }
+    } catch (error) {
+        if (requestId === lastRequestId) {
+            console.error('Ошибка при загрузке реакций:', error);
+        }
+    }
 }
 
 // Функция для обновления UI с реакциями
 function updateReactionsUI(reactions, userReactions) {
     const reactionsContainer = document.getElementById('schedule-reactions');
-    // Теперь всегда продолжаем выполнение, даже если массив реакций пустой
+    if (!reactionsContainer) return;
     
     // Список популярных эмодзи для случайного выбора
     const defaultEmojis = [
         '👍', '👎', '❤️', '🔥', '😂', '😮', '😢', '😡', '🎉', '👏',
         '🙏', '👀', '🤔', '🤮', '💩', '👻', '👽', '🤖', '🤡', '🍑'
     ];
-    
-    // Отладочный вывод для проверки входящих данных
-    console.log('Входящие реакции:', reactions);
+    const allowAnimatedImages = !(window.kkepikApp && window.kkepikApp.lowData);
+    const customFallbacks = { 'AAA.webm': '✨', 'mirbi.gif': '🙂', 'smeshno.gif': '😂' };
     
     // Убедимся, что все реакции имеют числовое значение count
-    const normalizedReactions = reactions.map(r => ({
+    const normalizedReactions = (Array.isArray(reactions) ? reactions : []).map(r => ({
         ...r,
         count: parseInt(r.count) || 0
     }));
+    latestReactions = normalizedReactions.map(item => ({ ...item }));
+    latestUserReactions = Array.isArray(userReactions) ? [...userReactions] : [];
     
     // Сортируем реакции по количеству (от большего к меньшему)
     const sortedReactions = [...normalizedReactions].sort((a, b) => b.count - a.count);
     
-    // Отладочный вывод для проверки сортировки
-    console.log('Отсортированные реакции:', sortedReactions);
-    
-    // Берем только топ-3 реакции
-    const topReactions = sortedReactions.slice(0, 3);
-    
-    // Отладочный вывод для проверки топ-3 реакций
-    console.log('Топ-3 реакции:', topReactions);
-    
-    // Определяем, сколько случайных реакций нужно добавить
-    let randomReactionsCount = 0;
-    if (topReactions.length === 0) {
-        randomReactionsCount = 3; // Если нет реакций, показываем 3 случайные
-    } else if (topReactions.length === 1) {
-        randomReactionsCount = 2; // Если есть 1 реакция, добавляем 2 случайные
-    } else if (topReactions.length === 2) {
-        randomReactionsCount = 1; // Если есть 2 реакции, добавляем 1 случайную
+    // Выбранная пользователем реакция всегда остается на виду.
+    const selectedReaction = latestUserReactions[0];
+    const selectedReactionData = selectedReaction
+        ? sortedReactions.find(item => item.reaction === selectedReaction)
+        : null;
+    const topReactions = selectedReactionData
+        ? [selectedReactionData, ...sortedReactions.filter(item => item.reaction !== selectedReaction)].slice(0, 3)
+        : sortedReactions.slice(0, 3);
+
+    const fallbackCount = Math.max(0, 3 - topReactions.length);
+    const usedReactions = new Set(topReactions.map(item => item.reaction));
+    const fallbackCandidates = uniqueReactionList([
+        ...readRecentReactions(),
+        ...fallbackReactions,
+        ...defaultEmojis
+    ]);
+    fallbackReactions = [];
+    for (const emoji of fallbackCandidates) {
+        if (fallbackReactions.length >= fallbackCount) break;
+        if (!usedReactions.has(emoji)) {
+            fallbackReactions.push(emoji);
+        }
     }
-    // Если есть 3 или более реакций, не добавляем случайные
+
+    const desiredReactions = [
+        ...topReactions.map(item => item.reaction),
+        ...fallbackReactions
+    ];
     
     // Проверяем, существует ли уже список реакций
     let reactionsList = reactionsContainer.querySelector('.reactions-list');
-    
-    // Если это первичная загрузка (смена дня), всегда пересоздаём список реакций
-    if (isFirstLoad) {
+
+    const renderedReactions = reactionsList
+        ? [...reactionsList.querySelectorAll('.reaction-item')].map(item => item.dataset.reaction)
+        : [];
+    const reactionSetChanged = renderedReactions.length !== desiredReactions.length
+        || renderedReactions.some((reaction, index) => reaction !== desiredReactions[index]);
+
+    if (isFirstLoad || reactionSetChanged) {
         reactionsContainer.innerHTML = '';
         reactionsList = null;
     }
@@ -261,9 +304,11 @@ function updateReactionsUI(reactions, userReactions) {
             const reaction = reactionData.reaction;
             const count = reactionData.count;
             
-            const reactionItem = document.createElement('div');
+            const reactionItem = document.createElement('button');
+            reactionItem.type = 'button';
             reactionItem.className = 'reaction-item';
             reactionItem.dataset.reaction = reaction;
+            reactionItem.setAttribute('aria-label', `Реакция ${reaction}, ${count}`);
             
             // Добавляем класс animate и задержку анимации только при первичной загрузке
             if (isFirstLoad) {
@@ -275,17 +320,19 @@ function updateReactionsUI(reactions, userReactions) {
             if (isSelected) {
                 reactionItem.classList.add('selected');
             }
+            reactionItem.setAttribute('aria-pressed', String(Boolean(isSelected)));
             
             // Создаем элемент с эмодзи или gif и счетчиком
             let reactionContent = '';
-            if (reaction === 'AAA.webm') {
+            if (reaction === 'AAA.webm' && allowAnimatedImages) {
                 reactionContent = `<img class="reaction-gif reaction-emoji" src="/static/emoji/AAA.gif" width="16" height="16" style="vertical-align:middle;border-radius:6px;">`;
-            } else if (reaction === 'mirbi.gif') {
+            } else if (reaction === 'mirbi.gif' && allowAnimatedImages) {
                 reactionContent = `<img class="reaction-gif reaction-emoji" src="/static/emoji/mirbi.gif" width="16" height="16" style="vertical-align:middle;border-radius:6px;">`;
-            } else if (reaction === 'smeshno.gif') {
+            } else if (reaction === 'smeshno.gif' && allowAnimatedImages) {
                 reactionContent = `<img class="reaction-gif reaction-emoji" src="/static/emoji/smeshno.gif" width="16" height="16" style="vertical-align:middle;border-radius:6px;">`;
             } else {
-                reactionContent = `<span class="reaction-emoji" style="font-size:16px;line-height:1;">${reaction}</span>`;
+                const displayReaction = customFallbacks[reaction] || reaction;
+                reactionContent = `<span class="reaction-emoji" style="font-size:16px;line-height:1;">${displayReaction}</span>`;
             }
             reactionItem.innerHTML = `
                 ${reactionContent}
@@ -301,42 +348,28 @@ function updateReactionsUI(reactions, userReactions) {
             reactionElements.push(reactionItem);
         });
         
-        // Добавляем случайные реакции, если нужно
-        if (randomReactionsCount > 0) {
-            // Фильтруем эмодзи, которые уже используются
-            const usedEmojis = new Set(topReactions.map(r => r.reaction));
-            const availableEmojis = defaultEmojis.filter(emoji => !usedEmojis.has(emoji));
-            // Добавляем кастомную реакцию AAA.webm, если её нет среди топ-реакций
-            if (!usedEmojis.has('AAA.webm')) {
-                availableEmojis.unshift('AAA.webm');
-            }
-            if (!usedEmojis.has('mirbi.gif')) {
-                availableEmojis.unshift('mirbi.gif');
-            }
-            if (!usedEmojis.has('smeshno.gif')) {
-                availableEmojis.unshift('smeshno.gif');
-            }
-            // Перемешиваем массив доступных эмодзи
-            const shuffledEmojis = [...availableEmojis].sort(() => Math.random() - 0.5);
-            // Берем нужное количество случайных эмодзи
-            const randomEmojis = shuffledEmojis.slice(0, randomReactionsCount);
-            // Добавляем случайные реакции
-            randomEmojis.forEach((emoji, index) => {
-                const reactionItem = document.createElement('div');
+        // Дополняем список стабильными быстрыми реакциями.
+        if (fallbackReactions.length > 0) {
+            fallbackReactions.forEach(emoji => {
+                const reactionItem = document.createElement('button');
+                reactionItem.type = 'button';
                 reactionItem.className = 'reaction-item';
                 reactionItem.dataset.reaction = emoji;
+                reactionItem.setAttribute('aria-label', `Поставить реакцию ${emoji}`);
+                reactionItem.setAttribute('aria-pressed', 'false');
                 if (isFirstLoad) {
                     reactionItem.classList.add('animate');
                 }
                 let reactionContent = '';
-                if (emoji === 'AAA.webm') {
+                if (emoji === 'AAA.webm' && allowAnimatedImages) {
                     reactionContent = `<img class="reaction-gif reaction-emoji" src="/static/emoji/AAA.gif" width="16" height="16" style="vertical-align:middle;border-radius:6px;">`;
-                } else if (emoji === 'mirbi.gif') {
+                } else if (emoji === 'mirbi.gif' && allowAnimatedImages) {
                     reactionContent = `<img class="reaction-gif reaction-emoji" src="/static/emoji/mirbi.gif" width="16" height="16" style="vertical-align:middle;border-radius:6px;">`;
-                } else if (emoji === 'smeshno.gif') {
+                } else if (emoji === 'smeshno.gif' && allowAnimatedImages) {
                     reactionContent = `<img class="reaction-gif reaction-emoji" src="/static/emoji/smeshno.gif" width="16" height="16" style="vertical-align:middle;border-radius:6px;">`;
                 } else {
-                    reactionContent = `<span class="reaction-emoji" style="font-size:16px;line-height:1;">${emoji}</span>`;
+                    const displayEmoji = customFallbacks[emoji] || emoji;
+                    reactionContent = `<span class="reaction-emoji" style="font-size:16px;line-height:1;">${displayEmoji}</span>`;
                 }
                 reactionItem.innerHTML = `
                     ${reactionContent}
@@ -350,9 +383,11 @@ function updateReactionsUI(reactions, userReactions) {
         }
         
         // Добавляем кнопку для выбора других реакций
-        const moreButton = document.createElement('div');
+        const moreButton = document.createElement('button');
+        moreButton.type = 'button';
         moreButton.className = 'reaction-more';
         moreButton.innerHTML = '<span>+</span>';
+        moreButton.setAttribute('aria-label', 'Выбрать другую реакцию');
         moreButton.addEventListener('click', showReactionPicker);
         
         // Добавляем задержку анимации для кнопки "еще" только при первичной загрузке
@@ -385,6 +420,9 @@ function updateReactionsUI(reactions, userReactions) {
             if (countElement) {
                 countElement.textContent = count > 0 ? count : '';
             }
+            item.setAttribute('aria-label', count > 0
+                ? `Реакция ${emoji}, ${count}`
+                : `Поставить реакцию ${emoji}`);
             
             // Обновляем состояние выбранной реакции
             const isSelected = userReactions && userReactions.includes(emoji);
@@ -393,6 +431,7 @@ function updateReactionsUI(reactions, userReactions) {
             } else {
                 item.classList.remove('selected');
             }
+            item.setAttribute('aria-pressed', String(Boolean(isSelected)));
         });
     }
     
@@ -400,108 +439,119 @@ function updateReactionsUI(reactions, userReactions) {
     isFirstLoad = false;
     // После успешной загрузки реакций:
     reactionsLoaded = true;
-    // Скрываем лоадер и показываем реакции
-    const loader = document.getElementById('loader');
-    if (loader) loader.classList.add('fade-out');
-    setTimeout(() => { if (loader) loader.style.display = 'none'; }, 750);
     reactionsContainer.style.display = '';
 }
 
-// Функция для переключения реакции
-function toggleReaction(reaction) {
-    // Получаем текущую дату из расписания
+function buildOptimisticReactions(reaction, wasSelected) {
+    const counts = new Map(latestReactions.map(item => [item.reaction, item.count]));
+    const previousReaction = latestUserReactions[0];
+
+    if (wasSelected) {
+        counts.set(reaction, Math.max(0, (counts.get(reaction) || 0) - 1));
+    } else {
+        if (previousReaction && previousReaction !== reaction) {
+            counts.set(previousReaction, Math.max(0, (counts.get(previousReaction) || 0) - 1));
+        }
+        counts.set(reaction, (counts.get(reaction) || 0) + 1);
+    }
+
+    return [...counts.entries()]
+        .filter(([, count]) => count > 0)
+        .map(([itemReaction, count]) => ({ reaction: itemReaction, count }));
+}
+
+function setReactionControlsBusy(reaction, busy) {
+    const container = document.getElementById('schedule-reactions');
+    const list = container && container.querySelector('.reactions-list');
+    if (!list) return;
+
+    list.classList.toggle('is-busy', busy);
+    list.setAttribute('aria-busy', String(busy));
+    list.querySelectorAll('button').forEach(button => {
+        button.disabled = busy;
+        button.classList.toggle('is-pending', busy && button.dataset.reaction === reaction);
+    });
+}
+
+function showReactionFeedback(message) {
+    let feedback = document.querySelector('.reaction-feedback');
+    if (!feedback) {
+        feedback = document.createElement('div');
+        feedback.className = 'reaction-feedback';
+        feedback.setAttribute('role', 'status');
+        feedback.setAttribute('aria-live', 'polite');
+        document.body.appendChild(feedback);
+    }
+
+    clearTimeout(reactionFeedbackTimer);
+    feedback.textContent = message;
+    requestAnimationFrame(() => feedback.classList.add('show'));
+    reactionFeedbackTimer = setTimeout(() => feedback.classList.remove('show'), 2200);
+}
+
+// Переключаем реакцию оптимистично, но не допускаем повторных запросов.
+async function toggleReaction(reaction) {
     const currentDate = getCurrentScheduleDate();
     const initData = tg_test.initData;
-    
+
     if (!initData) {
-        console.error('initData не найден в Telegram WebApp');
+        showReactionFeedback('Откройте приложение из Telegram');
         return;
     }
-    
-    // Добавляем тактильную обратную связь при клике
-    if (tg_test.HapticFeedback) {
-        tg_test.HapticFeedback.impactOccurred('soft');
-    }
-    
-    // Находим элемент реакции, по которому кликнули
-    const reactionItems = document.querySelectorAll('.reaction-item');
-    let clickedItem = null;
-    
-    reactionItems.forEach(item => {
-        if (item.dataset.reaction === reaction) {
-            clickedItem = item;
-        }
-    });
-    
-    // Если нашли элемент, добавляем анимацию изменения цвета и подъема
-    if (clickedItem) {
-        // Добавляем класс для анимации изменения цвета
-        clickedItem.classList.add('exploding');
-        // Добавляем анимацию подъема
-        clickedItem.classList.add('animate-up');
-        // Создаем эффект конфетти
-        createConfetti(clickedItem);
-        // Удаляем классы анимации после завершения
-        setTimeout(() => {
-            clickedItem.classList.remove('exploding');
-            clickedItem.classList.remove('animate-up');
-        }, 350);
-    }
-    
-    // Сначала валидируем данные
-    validateTelegramData(initData)
-        .then(validatedData => {
-            // Отправляем запрос на сервер для переключения реакции
-            // На сервере реализована логика, которая:
-            // 1. Если реакция уже выбрана - удаляет её
-            // 2. Если реакция не выбрана - удаляет все предыдущие реакции пользователя и добавляет новую
-            // Таким образом, пользователь может иметь только одну активную реакцию
-            fetch('/api/schedule/reactions/toggle', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    tgWebAppData: validatedData,
-                    date: currentDate,
-                    reaction: reaction
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    // Обновляем UI с новыми данными о реакциях
-                    updateReactionsUI(data.reactions, data.user_reactions);
+    if (reactionRequestInFlight) return;
+    reactionRequestInFlight = true;
 
-                    // Если выбор был из модалки — запускаем конфетти на элементе из списка под расписанием
-                    if (window.__pendingReactionConfetti) {
-                        const reactionsContainer = document.getElementById('schedule-reactions');
-                        let target = null;
-                        if (reactionsContainer) {
-                            target = reactionsContainer.querySelector(`.reaction-item[data-reaction="${window.__pendingReactionConfetti}"]`)
-                                  || reactionsContainer.querySelector('.reaction-more')
-                                  || reactionsContainer;
-                        }
-                        if (target) {
-                            requestAnimationFrame(() => createConfetti(target));
-                        }
-                        window.__pendingReactionConfetti = null;
-                    }
-                } else {
-                    console.error('Ошибка при переключении реакции:', data.error);
-                }
+    const previousReactions = latestReactions.map(item => ({ ...item }));
+    const previousUserReactions = [...latestUserReactions];
+    const wasSelected = previousUserReactions.includes(reaction);
+    const optimisticReactions = buildOptimisticReactions(reaction, wasSelected);
+    const optimisticUserReactions = wasSelected ? [] : [reaction];
+
+    tg_test.HapticFeedback?.impactOccurred?.('soft');
+    updateReactionsUI(optimisticReactions, optimisticUserReactions);
+    setReactionControlsBusy(reaction, true);
+
+    try {
+        const validatedData = await validateTelegramData(initData);
+        const response = await fetch('/api/schedule/reactions/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                tgWebAppData: validatedData,
+                date: currentDate,
+                reaction
             })
-            .catch(error => {
-                console.error('Ошибка при переключении реакции:', error);
-            });
-        })
-        .catch(error => {
-            console.error('Ошибка валидации данных:', error);
         });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Сервер не принял реакцию');
+        }
+
+        if (data.action === 'added') {
+            rememberReaction(reaction);
+        }
+        updateReactionsUI(data.reactions || [], data.user_reactions || []);
+        if (data.action === 'added') {
+            const target = [...document.querySelectorAll('.reaction-item')]
+                .find(item => item.dataset.reaction === reaction);
+            if (target) requestAnimationFrame(() => createConfetti(target));
+        }
+    } catch (error) {
+        console.error('Ошибка при переключении реакции:', error);
+        updateReactionsUI(previousReactions, previousUserReactions);
+        showReactionFeedback('Не удалось поставить реакцию');
+        tg_test.HapticFeedback?.notificationOccurred?.('error');
+        loadReactions(currentDate);
+    } finally {
+        reactionRequestInFlight = false;
+        setReactionControlsBusy(reaction, false);
+    }
 }
 
 // Функция для создания эффекта конфетти
 function createConfetti(element) {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
     // Получаем позицию элемента
     const rect = element.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
@@ -519,8 +569,8 @@ function createConfetti(element) {
     }
     const emoji = (!isGif && emojiElement) ? emojiElement.textContent : '❤️'; // запасной вариант
 
-    // Создаем 15 частиц конфетти
-    for (let i = 0; i < 15; i++) {
+    // Небольшой локальный отклик не перекрывает расписание на телефоне.
+    for (let i = 0; i < 8; i++) {
         const confetti = document.createElement('div');
         confetti.className = 'confetti';
         if (isGif) {
@@ -571,115 +621,107 @@ function createConfetti(element) {
 }
 
 // Функция для отображения пикера реакций
-async function showReactionPicker() {
-    // Получаем текущие реакции с сервера ДО создания пикера
-    const currentDate = getCurrentScheduleDate();
-    const initData = tg_test.initData;
-    let serverReactions = [];
-    let userReactions = [];
+function showReactionPicker(event) {
+    if (document.querySelector('.reaction-picker-modal')) return;
+
+    const serverReactions = latestReactions.map(item => ({ ...item }));
+    const userReactions = [...latestUserReactions];
     const defaultEmojis = [
         '👍', '👎', '❤️', '🔥', '😂', '😮', '😢', '😡', '🎉', '👏',
         '🙏', '👀', '🤔', '🤮', '💩', '👻', '👽', '🤖', '🤡', '🍑'
     ];
-    if (initData) {
-        try {
-            const validatedData = await validateTelegramData(initData);
-            const response = await fetch(`/api/schedule/reactions?date=${currentDate}&tgWebAppData=${encodeURIComponent(validatedData)}`);
-            const data = await response.json();
-            if (data.success) {
-                serverReactions = data.reactions;
-                userReactions = data.user_reactions;
-            }
-        } catch (e) {
-            // Ошибка — просто покажем дефолтные эмодзи
-        }
-    }
+    const allowAnimatedImages = !(window.kkepikApp && window.kkepikApp.lowData);
+    const customFallbacks = { 'AAA.webm': '✨', 'mirbi.gif': '🙂', 'smeshno.gif': '😂' };
+    tg_test.HapticFeedback?.impactOccurred?.('soft');
+
     // Создаем модальное окно
     const modal = document.createElement('div');
     modal.className = 'reaction-picker-modal';
     // Создаем контейнер для пикера
-    const picker = document.createElement('div');
+    const picker = document.createElement('section');
     picker.className = 'reaction-picker';
+    picker.setAttribute('role', 'dialog');
+    picker.setAttribute('aria-modal', 'true');
+    picker.setAttribute('aria-labelledby', 'reaction-picker-title');
+    picker.tabIndex = -1;
+    const handle = document.createElement('div');
+    handle.className = 'reaction-picker-handle';
+    handle.setAttribute('aria-hidden', 'true');
     // Добавляем заголовок
-    const header = document.createElement('div');
+    const header = document.createElement('h2');
     header.className = 'reaction-picker-header';
+    header.id = 'reaction-picker-title';
     header.textContent = 'Выберите реакцию';
     // Добавляем список эмодзи
     const emojiList = document.createElement('div');
     emojiList.className = 'emoji-list';
     // Формируем итоговый список эмодзи
-    const serverEmojis = serverReactions.map(r => r.reaction);
-    const allReactions = [...defaultEmojis];
-    // Добавляем кастомную реакцию AAA.webm, если её нет
-    if (!allReactions.includes('AAA.webm')) {
-        allReactions.unshift('AAA.webm');
-    }
-    if (!allReactions.includes('mirbi.gif')) {
-        allReactions.unshift('mirbi.gif');
-    }
-    if (!allReactions.includes('smeshno.gif')) {
-        allReactions.unshift('smeshno.gif');
-    }
-    serverEmojis.forEach(reaction => {
-        if (!allReactions.includes(reaction)) {
-            allReactions.push(reaction);
-        }
-    });
+    const serverEmojis = [...serverReactions]
+        .sort((left, right) => right.count - left.count)
+        .map(item => item.reaction);
+    const allReactions = uniqueReactionList([
+        ...userReactions,
+        ...readRecentReactions(),
+        ...serverEmojis,
+        'AAA.webm',
+        'mirbi.gif',
+        'smeshno.gif',
+        ...defaultEmojis
+    ]);
     // Добавляем каждый эмодзи или gif
-    allReactions.forEach((emoji, index) => {
-        const emojiItem = document.createElement('div');
+    allReactions.forEach(emoji => {
+        const emojiItem = document.createElement('button');
+        emojiItem.type = 'button';
         emojiItem.className = 'emoji-item animate';
         emojiItem.dataset.reaction = emoji;
-        if (userReactions && userReactions.includes(emoji)) {
+        const isSelected = userReactions.includes(emoji);
+        if (isSelected) {
             emojiItem.classList.add('selected');
         }
+        emojiItem.setAttribute('aria-pressed', String(isSelected));
         const reactionData = serverReactions.find(r => r.reaction === emoji);
         const count = reactionData ? reactionData.count : 0;
+        emojiItem.setAttribute('aria-label', count > 0
+            ? `Реакция ${emoji}, ${count}`
+            : `Поставить реакцию ${emoji}`);
         let emojiContent = '';
-        if (emoji === 'AAA.webm') {
+        if (emoji === 'AAA.webm' && allowAnimatedImages) {
             emojiContent = `<img class="reaction-gif reaction-emoji" src="/static/emoji/AAA.gif" width="16" height="16" style="vertical-align:middle;border-radius:6px;">`;
-        } else if (emoji === 'mirbi.gif') {
+        } else if (emoji === 'mirbi.gif' && allowAnimatedImages) {
             emojiContent = `<img class="reaction-gif reaction-emoji" src="/static/emoji/mirbi.gif" width="16" height="16" style="vertical-align:middle;border-radius:6px;">`;
-        } else if (emoji === 'smeshno.gif') {
+        } else if (emoji === 'smeshno.gif' && allowAnimatedImages) {
             emojiContent = `<img class="reaction-gif reaction-emoji" src="/static/emoji/smeshno.gif" width="16" height="16" style="vertical-align:middle;border-radius:6px;">`;
         } else {
-            emojiContent = `<span class="emoji" style="font-size:20px;line-height:1;">${emoji}</span>`;
+            emojiContent = `<span class="emoji" style="font-size:20px;line-height:1;">${customFallbacks[emoji] || emoji}</span>`;
         }
         emojiItem.innerHTML = `
             ${emojiContent}
             ${count > 0 ? `<span class="count">${count}</span>` : ''}
         `;
         emojiItem.addEventListener('click', () => {
-            if (tg_test.HapticFeedback) {
-                tg_test.HapticFeedback.impactOccurred('soft');
-            }
-            // Запускаем конфетти не здесь (в модалке), а после обновления
-            // основного списка реакций под расписанием
-            window.__pendingReactionConfetti = emoji;
-            // Небольшая локальная подсветка клика
-            emojiItem.classList.add('exploding');
-            setTimeout(() => {
-                emojiItem.classList.remove('exploding');
-            }, 300);
             toggleReaction(emoji);
             closeModal(modal);
         });
         emojiList.appendChild(emojiItem);
     });
     // Добавляем кнопку закрытия
-    const closeButton = document.createElement('div');
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
     closeButton.className = 'reaction-picker-close';
-    closeButton.textContent = '✕';
+    closeButton.textContent = 'Отмена';
     closeButton.addEventListener('click', () => {
         closeModal(modal);
     });
     // Собираем пикер
+    picker.appendChild(handle);
     picker.appendChild(header);
     picker.appendChild(emojiList);
     picker.appendChild(closeButton);
     // Добавляем пикер в модальное окно
     modal.appendChild(picker);
     // Добавляем модальное окно на страницу
+    modal.__returnFocus = event?.currentTarget || document.activeElement;
+    document.body.classList.add('reaction-picker-open');
     document.body.appendChild(modal);
     // Добавляем обработчик клика вне пикера для закрытия
     modal.addEventListener('click', (e) => {
@@ -687,19 +729,25 @@ async function showReactionPicker() {
             closeModal(modal);
         }
     });
+    modal.addEventListener('keydown', event => {
+        if (event.key === 'Escape') closeModal(modal);
+    });
+    requestAnimationFrame(() => picker.focus({ preventScroll: true }));
 }
 
 // Функция для закрытия модального окна с анимацией
 function closeModal(modal) {
-    const picker = modal.querySelector('.reaction-picker');
-    modal.style.animation = 'fadeOut 0.2s ease forwards';
-    picker.style.animation = 'scaleOut 0.2s ease forwards';
-    
+    if (!modal || modal.classList.contains('closing')) return;
+    modal.classList.add('closing');
+    document.body.classList.remove('reaction-picker-open');
+
     // Удаляем модальное окно после завершения анимации
     setTimeout(() => {
+        const returnFocus = modal.__returnFocus;
         if (modal.parentNode) {
             modal.parentNode.removeChild(modal);
         }
+        if (returnFocus && returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
     }, 200);
 }
 
@@ -753,4 +801,8 @@ function isIOSorMacSafari() {
 }
 
 // Инициализация при загрузке страницы
-document.addEventListener('DOMContentLoaded', initScheduleReactions); 
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initScheduleReactions, { once: true });
+} else {
+    initScheduleReactions();
+}

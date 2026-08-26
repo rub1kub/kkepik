@@ -1,8 +1,8 @@
 # commands/find.py
 from aiogram import types
 from schedules import group_schedule, teacher_schedule
-from schedules.schedule_mood import get_mood_emoji
-from schedules.pair_times import add_pair_times, is_saturday
+from schedules.schedule_formatter import build_group_schedule_message
+from schedules.schedule_keyboard import create_schedule_keyboard
 import global_schedules
 import config
 import os
@@ -165,12 +165,11 @@ async def cmd_find(message: types.Message):
         if schedule_type == "groups":
             lines = group_schedule.get_schedule_for_group(df, search_name)
             if lines:
-                lines_timed = add_pair_times(lines, search_date)
-                display = lines_timed if is_saturday(search_date) else lines
-                msg_text = f"{get_mood_emoji(lines)} Расписание группы {search_name} на {search_date}:\n\n" + "\n".join(display)
+                msg_text = build_group_schedule_message(lines, search_name, search_date)
                 await message.answer(
                     msg_text + "\n\n💡 Воспользуйтесь приложением для удобного поиска расписания: /app.",
-                    parse_mode="HTML"
+                    parse_mode="HTML",
+                    reply_markup=create_schedule_keyboard(search_date, "groups"),
                 )
             else:
                 await message.answer(f"❌ Не найдено расписание для группы {search_name} на {search_date}.")
@@ -180,7 +179,8 @@ async def cmd_find(message: types.Message):
                 msg_text = f"📆 Расписание преподавателя {search_name} на {search_date}:\n\n" + "\n".join(lines)
                 await message.answer(
                     msg_text + "\n\n💡 Воспользуйтесь приложением для удобного поиска расписания: /app.",
-                    parse_mode="HTML"
+                    parse_mode="HTML",
+                    reply_markup=create_schedule_keyboard(search_date, "teachers"),
                 )
             else:
                 await message.answer(f"❌ Не найдено расписание для преподавателя {search_name} на {search_date}.")
