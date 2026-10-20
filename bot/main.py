@@ -7,7 +7,7 @@ import re
 import multiprocessing
 import uvicorn
 
-from aiogram import Bot, Dispatcher, F, types
+from aiogram import Dispatcher, F, types
 from aiogram.filters import Command, CommandStart
 from aiogram.types import InlineQuery
 from aiogram.types.input_file import FSInputFile
@@ -23,6 +23,7 @@ from commands.reset import cmd_reset
 from commands.broadcast import cmd_broadcast
 from commands.broadcast_teachers import cmd_broadcast_teachers
 from commands.app import cmd_app
+from commands.settings import cmd_settings, process_settings_callback
 from commands.groups import (
     GroupManagementStates,
     cmd_groups,
@@ -31,6 +32,7 @@ from commands.groups import (
 )
 from handlers.inline_mode import inline_schedule
 from handlers.upload_schedule import handle_document
+from message_registry import TrackedBot, init_registry
 
 from global_schedules import (
     last_groups_df, last_groups_date,
@@ -54,15 +56,29 @@ async def main():
     api_process.start()
     
     # Используем функцию get_bot_token() вместо прямого обращения к BOT_TOKEN
-    bot = Bot(
+    init_registry()
+    bot = TrackedBot(
         token=config.get_bot_token(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     
     # Удаляем webhook перед запуском бота
-    await bot.delete_webhook(drop_pending_updates=True)
+    # A deployment restart must not discard messages sent while the bot was
+    # briefly offline. Polling still requires removing a possible webhook.
+    await bot.delete_webhook(drop_pending_updates=False)
     
     dp = Dispatcher(storage=MemoryStorage())
+
+    # Private self-service rosters. Register their invitation /start handler
+    # before ordinary registration. Same-group enrolment happens only when
+    # the creator saves a verified roster, never at startup.
+    from duties.store import Store as DutyStore
+    from commands.duty import DutyBot
+    from duties.worker import DutyWorker
+    duty_app = DutyBot(DutyStore(os.path.join(config.DATA_DIR, "duties-test.db" if config.TEST_MODE else "duties.db")),
+                       config.get_db_path(), config.DATA_DIR)
+    duty_app.register(dp)
+    duty_worker = DutyWorker(duty_app, bot)
 
     # Регистрируем команды
     dp.message.register(cmd_start, CommandStart())
@@ -72,6 +88,8 @@ async def main():
     dp.message.register(cmd_broadcast, Command(commands=["broadcast"]))
     dp.message.register(cmd_broadcast_teachers, Command(commands=["broadcast_teachers"]))
     dp.message.register(cmd_app, Command(commands=["app"]))
+    dp.message.register(cmd_settings, Command(commands=["settings"]))
+    dp.callback_query.register(process_settings_callback, F.data.startswith("settings:"))
 
     # Регистрируем callback для выбора роли
     dp.callback_query.register(process_role_callback, lambda c: c.data in ["role_student", "role_teacher"])
@@ -98,6 +116,8 @@ async def main():
             [
                 types.BotCommand(command="start", description="🏠 Главное меню и расписание"),
                 types.BotCommand(command="groups", description="👥 Управлять отслеживаемыми группами"),
+                types.BotCommand(command="settings", description="⚙️ Шаблоны и конструктор расписания"),
+                types.BotCommand(command="duty", description="🧹 Дежурства: пары, очередь и уведомления"),
                 types.BotCommand(command="find", description="🔎 Найти расписание по дате"),
                 types.BotCommand(command="app", description="📱 Открыть мини-приложение"),
                 types.BotCommand(command="reset", description="🔄 Сменить роль или основную группу"),
@@ -105,6 +125,9 @@ async def main():
         )
         print(f"[OK] Bot started as @{bot_info.username} {'(TEST MODE)' if config.TEST_MODE else ''}")
         print(f"[OK] API running at http://127.0.0.1:{config.get_api_port()}")
+        duty_app.bot_username = bot_info.username
+        duty_worker.start()
+        print("[OK] Duty scheduler started; /duty available")
 
         # Запускаем MAX клиент (передаём ссылку на Telegram бот)
         try:
@@ -123,6 +146,7 @@ async def main():
 
     async def on_shutdown():
         print("Бот остановлен")
+        await duty_worker.stop()
         try:
             from max_bot.client import stop_max_supervisor
             await stop_max_supervisor()

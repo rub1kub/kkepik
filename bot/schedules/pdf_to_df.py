@@ -22,6 +22,15 @@ import pdfplumber
 import pandas as pd
 from typing import Optional, List, Dict, Tuple
 from collections import defaultdict
+from dataclasses import dataclass
+
+from schedules.group_schedule import is_group_name
+
+
+_GROUP_HEADER_CANDIDATE_RE = re.compile(
+    r"^\d{2,3}-[^\s-]+-[1-4][А-ЯЁA-Z]{2,}(?:-\d)?$",
+    re.IGNORECASE,
+)
 
 
 # ──────────────────────────────────────────────
@@ -48,15 +57,130 @@ def _looks_like_complete_teacher_name(text: str) -> bool:
 # Извлечение структуры
 # ──────────────────────────────────────────────
 
+@dataclass(frozen=True)
+class PdfBlockSegment:
+    """One page fragment of a logical group block, shared with PDF cropping."""
+
+    page: object
+    groups: list
+    y_start: float
+    y_end: float
+    continuation: bool = False
+
+
+def _group_blocks(groups: List[Dict]) -> list:
+    blocks = []
+    for group in sorted(groups, key=lambda value: value["y"]):
+        if not blocks or abs(group["y"] - blocks[-1][0]) > 3:
+            blocks.append((group["y"], []))
+        blocks[-1][1].append(group)
+    return blocks
+
+
+def _pair_column_x(chars: list, groups: list) -> Optional[float]:
+    limit = min(group["x"] for group in groups) - 8
+    candidates = [char["x0"] for char in chars
+                  if char["x0"] < limit and len(char["text"].strip()) == 1
+                  and char["text"].strip().isdigit()]
+    return min(candidates) if candidates else None
+
+
+def _iter_pdf_block_segments(pdf):
+    """Keep an unfinished bottom block across page breaks without guessing names.
+
+    Excel may put a block's first lesson (or only its heading) on one page and
+    its remaining rows at the top of the next. A continuation is accepted only
+    for a block reaching the previous page's bottom, a sequential left-hand
+    pair column, compatible page width and a small, verified horizontal shift.
+    """
+    carry = None
+    for page in pdf.pages:
+        try:
+            unsupported = _find_unrecognized_group_headers(page)
+            if unsupported:
+                raise ValueError(
+                    "PDF содержит нераспознанные заголовки групп: "
+                    f"{', '.join(unsupported)}. Обработка остановлена, чтобы не смешать столбцы."
+                )
+            chars = page.chars
+            blocks = _group_blocks(_find_group_positions(page))
+            prefix_end = blocks[0][0] - 3 if blocks else page.height - 5
+            previous = carry
+            carry = None
+            if previous and prefix_end > 0:
+                prefix = [char for char in chars if 0 <= char["top"] <= prefix_end]
+                # Do not confuse lesson numbers in the adjacent column with pairs.
+                pair_x = previous["pair_x"]
+                near_column = ([char for char in prefix if abs(char["x0"] - pair_x) <= 24]
+                               if pair_x is not None else prefix)
+                max_x = pair_x + 25 if pair_x is not None else previous["groups"][0]["x"] - 8
+                pairs = _find_pair_numbers(near_column, max_x)
+                if pairs:
+                    observed_x = min(char["x0"] for char in near_column
+                                     if char["top"] == pairs[0]["top"]
+                                     and char["text"].strip() == pairs[0]["num"])
+                    shift = observed_x - pair_x if pair_x is not None else 0
+                    numbers = [int(pair["num"]) for pair in pairs]
+                    expected = previous["last_pair"] + 1
+                    valid = (numbers == list(range(expected, expected + len(numbers)))
+                             and all(1 <= number <= 9 for number in numbers)
+                             and abs(page.width - previous["width"]) <= 1)
+                    if blocks:
+                        next_groups = sorted(blocks[0][1], key=lambda group: group["x"])
+                        valid = valid and abs(next_groups[0]["x"]
+                                              - previous["groups"][0]["x"] - shift) <= 2
+                    shifted_groups = [dict(group, x=group["x"] + shift)
+                                      for group in previous["groups"]]
+                    has_content = any(char["x0"] >= shifted_groups[0]["x"] - 10
+                                      and any(letter.isalpha() for letter in char["text"])
+                                      for char in prefix)
+                    if not valid or not has_content:
+                        raise ValueError(
+                            "Найдено неоднозначное продолжение таблицы PDF на странице "
+                            f"{page.page_number}; обработка остановлена, чтобы не смешать группы."
+                        )
+                    yield PdfBlockSegment(page, shifted_groups, 0, prefix_end, True)
+                    if not blocks and pairs[-1]["top"] >= page.height - 45:
+                        carry = {"groups": shifted_groups, "last_pair": numbers[-1],
+                                 "pair_x": observed_x, "width": page.width}
+            for index, (header_y, groups) in enumerate(blocks):
+                groups = sorted(groups, key=lambda group: group["x"])
+                y_end = blocks[index + 1][0] - 3 if index + 1 < len(blocks) else page.height - 5
+                yield PdfBlockSegment(page, groups, header_y + 3, y_end)
+                if index + 1 == len(blocks):
+                    block_chars = [char for char in chars if header_y + 3 <= char["top"] <= y_end]
+                    pairs = _find_pair_numbers(block_chars, groups[0]["x"] - 8)
+                    reaches_bottom = (header_y >= page.height - 45
+                                      or bool(pairs and pairs[-1]["top"] >= page.height - 45))
+                    pair_x = _pair_column_x(chars, groups)
+                    if reaches_bottom:
+                        carry = {"groups": groups, "last_pair": int(pairs[-1]["num"]) if pairs else 0,
+                                 "pair_x": pair_x, "width": page.width}
+        finally:
+            # pdfplumber otherwise retains every page's character cache until EOF.
+            close = getattr(page, "close", None)
+            if close:
+                close()
+
 def _find_group_positions(page) -> List[Dict]:
     """Находит названия групп и их (x, y)."""
     words = page.extract_words(x_tolerance=1, y_tolerance=1)
     groups = []
     for w in words:
-        t = _normalize_dashes(w["text"])
-        if ("-Д9-" in t or "-КД9-" in t) and re.match(r"^\d{2,3}-", t):
+        t = _clean(w["text"]).upper()
+        if is_group_name(t):
             groups.append({"name": t, "x": w["x0"], "y": w["top"]})
     return groups
+
+
+def _find_unrecognized_group_headers(page) -> List[str]:
+    """Return group-like PDF headers that would otherwise merge into neighbours."""
+    result = set()
+    for word in page.extract_words(x_tolerance=1, y_tolerance=1):
+        text = _clean(word["text"]).upper()
+        if _GROUP_HEADER_CANDIDATE_RE.fullmatch(text) and not is_group_name(text):
+            result.add(text)
+    return sorted(result)
 
 
 def _find_pair_numbers(chars: list, max_x: float = 52) -> List[Dict]:
@@ -218,6 +342,15 @@ def _split_merged_aud_disc(runs: List[Dict]) -> List[Dict]:
     result = []
     for run in runs:
         text = run["text"]
+        # В некоторых PDF спортзал печатается вплотную после дисциплины:
+        # "Физическая культурас/з_1". Оставляем обе части в той же группе.
+        m = re.match(r"^(.{4,}?)(с/з(?:[_-]?\d+)?)$", text, re.IGNORECASE)
+        if m:
+            disc_part = _clean(m.group(1))
+            aud_part = _clean(m.group(2))
+            result.append({"text": disc_part, "x_start": run["x_start"]})
+            result.append({"text": aud_part, "x_start": run["x_start"] + 1})
+            continue
         # Паттерн: aud (цифры, возможно через . _ - 0) + кириллическая буква
         # Покрывает: "95Практика", "0.0Практика", "0_0Практика", "0-0Практика"
         m = re.match(r"^(\d[\d._\-/]*\d?)([А-Яа-яЁё].{3,})", text)
@@ -431,39 +564,21 @@ def pdf_to_dataframe(file_path: str) -> Optional[pd.DataFrame]:
 
     with pdfplumber.open(file_path) as pdf:
         logger.info(f"pdf_to_df: {file_path}, pages={len(pdf.pages)}")
-        for page in pdf.pages:
-            groups = _find_group_positions(page)
-            if not groups:
-                logger.warning(f"pdf_to_df: page {page.page_number} — групп не найдено "
-                               f"(chars={len(page.chars)}, words={len(page.extract_words())})")
-                continue
-            logger.info(f"pdf_to_df: page {page.page_number} — {len(groups)} групп")
+        for segment in _iter_pdf_block_segments(pdf):
+            rows = _extract_block(segment.page.chars, segment.groups,
+                                  segment.y_start, segment.y_end)
+            if not segment.continuation:
+                # A heading alone at a page bottom must survive until its rows
+                # arrive on the next page. Repeating it would discard earlier
+                # lessons in get_schedule_for_group and the knowledge extractor.
+                header = [None] * (2 + len(segment.groups) * 4)
+                for index, group in enumerate(segment.groups):
+                    header[2 + index * 4] = group["name"]
+                all_rows.append(header)
+            if rows:
+                all_rows.extend(rows[1:])
 
-            page_chars = page.chars
-
-            # Блоки: группы с одинаковым y (кластеризация с tolerance 3pt)
-            blocks = defaultdict(list)
-            sorted_groups = sorted(groups, key=lambda g: g["y"])
-            cluster_y = None
-            for g in sorted_groups:
-                if cluster_y is None or abs(g["y"] - cluster_y) > 3:
-                    cluster_y = g["y"]
-                blocks[cluster_y].append(g)
-
-            sorted_ys = sorted(blocks.keys())
-
-            for bi, by in enumerate(sorted_ys):
-                block_groups = blocks[by]
-                y_start = by + 3  # Чуть ниже строки с названием группы
-                if bi + 1 < len(sorted_ys):
-                    y_end = sorted_ys[bi + 1] - 3
-                else:
-                    y_end = page.height - 5
-
-                rows = _extract_block(page_chars, block_groups, y_start, y_end)
-                all_rows.extend(rows)
-
-    if not all_rows:
+    if not all_rows or not any(row[0] is not None for row in all_rows):
         logger.warning(f"pdf_to_df: all_rows пуст — ни одна группа не распознана в {file_path}")
         return None
 

@@ -1,0 +1,25 @@
+{% if not chat_web %}
+<button class="pixel-chat-toggle" id="pixelChatToggle" type="button" aria-label="Чат полотна" aria-controls="canvasChatPanel" aria-expanded="false">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-8 8H5l-4 3 1.7-6A8 8 0 1 1 20 11.5Z"/><path d="M7 11h8"/></svg>
+    <span class="pixel-chat-unread" id="canvasChatUnread" hidden></span>
+</button>
+{% endif %}
+<section class="canvas-chat{% if chat_web %} canvas-chat-web{% endif %}" id="canvasChatPanel" aria-labelledby="canvasChatTitle" {% if not chat_web %}hidden{% endif %}>
+    <div class="canvas-chat-heading" id="canvasChatHandle">
+        <strong id="canvasChatTitle">Чат полотна</strong>
+        {% if not chat_web %}<button id="canvasChatClose" type="button" aria-label="Закрыть чат"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>{% endif %}
+    </div>
+    <div class="canvas-chat-messages" id="canvasChatMessages" role="log" aria-label="Сообщения чата" aria-live="off" tabindex="0"></div>
+    <details class="canvas-chat-bans" id="canvasChatBans" hidden>
+        <summary>Баны чата</summary>
+        <div id="canvasChatBansList"></div>
+    </details>
+    {% if not chat_web %}
+    <form class="canvas-chat-form" id="canvasChatForm">
+        <label class="sr-only" for="canvasChatInput">Сообщение</label>
+        <input id="canvasChatInput" type="text" maxlength="200" placeholder="Написать…" autocomplete="off" enterkeyhint="send">
+        <button id="canvasChatSend" type="submit" aria-label="Отправить сообщение" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 11 18-8-8 18-2-10-8-0Z"/><path d="m11 11 10-8"/></svg></button>
+    </form>
+    {% endif %}
+    <p class="canvas-chat-status" id="canvasChatStatus" role="status" aria-live="polite">Подключаемся…</p>
+</section>

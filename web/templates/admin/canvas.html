@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="referrer" content="same-origin">
+    <title>Полотно — админка</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/pixel_admin.css') }}?v={{ STATIC_VERSION }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/pixel_chat.css') }}?v={{ STATIC_VERSION }}">
+    <script src="{{ url_for('static', filename='js/pixel_state.js') }}?v={{ STATIC_VERSION }}" defer></script>
+    <script src="{{ url_for('static', filename='js/pixel_admin.js') }}?v={{ STATIC_VERSION }}" defer></script>
+    <script src="{{ url_for('static', filename='js/pixel_chat.js') }}?v={{ STATIC_VERSION }}" defer></script>
+</head>
+<body>
+    <header><a href="{{ url_for('admin_dashboard') }}">← Админка</a><strong>Общее полотно</strong><button id="adminHistory" type="button">Таймлапс</button></header>
+    <main>
+        <div class="canvas-stage"><canvas id="adminCanvas" aria-label="Полотно: выделение области и перемещение" tabindex="0"></canvas></div>
+        <section class="controls" aria-label="Управление полотном">
+            <div class="row"><button id="adminSelect" type="button" aria-pressed="true">Выделять</button><button id="adminPan" type="button" aria-pressed="false">Двигать</button><button id="adminInspect" type="button" aria-pressed="false">Автор</button><button id="adminZoomOut" type="button" aria-label="Отдалить">−</button><button id="adminZoomIn" type="button" aria-label="Приблизить">+</button><button id="adminFit" type="button">Всё полотно</button><button id="adminHome" type="button">В начало</button></div>
+            <form id="adminJump" class="row"><label>X <input id="adminX" type="number" value="0" min="-64" max="63" required></label><label>Y <input id="adminY" type="number" value="0" min="-128" max="127" required></label><button type="submit">Перейти</button></form>
+            <section id="adminPixelInfo" class="pixel-info" aria-label="Автор выбранной клетки" hidden>
+                <strong id="adminPixelTitle">Коснитесь клетки</strong>
+                <p id="adminPixelAuthor"></p>
+                <button id="adminBanAuthor" type="button" hidden>Заблокировать рисование</button>
+                <button id="adminRollbackAuthor" type="button" hidden>Откатить правки</button>
+                <ol id="adminPixelEdits"></ol>
+            </section>
+            <div id="adminModeration">
+                <p id="adminSelection">Проведите по полотну, чтобы выбрать область.</p>
+                <div id="adminPalette" class="palette" role="group" aria-label="Цвет закрашивания"></div>
+                <div class="row"><button id="adminFill" class="primary" type="button" disabled>Закрасить область</button><button id="adminErase" type="button" disabled>Стереть область</button></div>
+                <p class="muted">Закрашивание применяется сразу. Участники смогут рисовать здесь снова.</p>
+            </div>
+            <div id="adminPlayback" hidden>
+                <div class="row"><button id="adminPlay" class="primary" type="button" disabled>Смотреть</button><button id="adminLive" type="button">К полотну</button></div>
+                <div class="playback-speed">
+                    <label for="adminSpeed">Скорость <output id="adminSpeedValue" for="adminSpeed">60 правок/с</output></label>
+                    <input id="adminSpeed" type="range" min="0" max="400" step="1" value="178" aria-valuetext="60 правок в секунду">
+                    <div class="speed-limits" aria-hidden="true"><span>1 правка/с</span><span>10 000 правок/с</span></div>
+                    <div id="adminSpeedPresets" class="row speed-presets" role="group" aria-label="Быстрый выбор скорости">
+                        <button type="button" data-speed="10" aria-label="10 правок в секунду" aria-pressed="false">10</button>
+                        <button type="button" data-speed="60" aria-label="60 правок в секунду" aria-pressed="true">60</button>
+                        <button type="button" data-speed="240" aria-label="240 правок в секунду" aria-pressed="false">240</button>
+                        <button type="button" data-speed="1000" aria-label="1 000 правок в секунду" aria-pressed="false">1 000</button>
+                        <button type="button" data-speed="10000" aria-label="10 000 правок в секунду" aria-pressed="false">10 000</button>
+                    </div>
+                </div>
+                <label class="timeline-label">История <input id="adminTimeline" type="range" min="0" max="0" value="0" disabled></label>
+                <p id="adminFrame">Загружаем историю…</p>
+                <p class="muted">Таймлапс выбранного участка, либо видимой области. История начинается с состояния на момент включения записи.</p>
+            </div>
+            <details id="adminBansPanel" class="pixel-info">
+                <summary>Баны на полотне</summary>
+                <div id="adminBansList"></div>
+            </details>
+            <details id="adminRollbackPanel" class="pixel-info">
+                <summary>Откат пользователя</summary>
+                <form id="adminRollbackForm" class="row">
+                    <label>Telegram ID <input id="adminRollbackId" type="number" min="1" max="9007199254740991" step="1" required></label>
+                    <button id="adminRollbackCheck" type="submit">Проверить</button>
+                </form>
+                <p id="adminRollbackInfo" role="status"></p>
+                <button id="adminRollbackConfirm" type="button" hidden>Подтвердить откат</button>
+                <p class="muted">Отменяются записанные правки до проверки. Последующие правки других участников сохраняются. История не удаляется.</p>
+            </details>
+            <p id="adminEventStatus" class="muted"></p>
+            <details id="adminChatPanel" class="pixel-info">
+                <summary>Чат полотна</summary>
+                {% set chat_web = true %}{% include '_canvas_chat.html' %}
+            </details>
+            <p id="adminStatus" role="status" aria-live="polite">Подключаемся…</p>
+        </section>
+    </main>
+</body>
+</html>

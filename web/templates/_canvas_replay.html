@@ -1,0 +1,15 @@
+<section class="pixel-replay-panel" id="pixelReplay" aria-label="Управление таймлапсом" hidden>
+    <div class="pixel-replay-row">
+        <button id="pixelReplayPlay" type="button" aria-label="Воспроизвести таймлапс" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path id="pixelReplayPlayIcon" d="m8 5 11 7-11 7Z" /></svg></button>
+        <input id="pixelReplayTimeline" type="range" min="0" max="0" value="0" aria-label="Положение в таймлапсе" disabled>
+        <button id="pixelReplayFit" type="button" aria-label="Показать всё полотно"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M4 15v5h5M20 15v5h-5" /></svg></button>
+    </div>
+    <div class="pixel-replay-details"><span id="pixelReplayNotice">Загружаем таймлапс…</span><span id="pixelReplayProgress"></span></div>
+    <div class="pixel-replay-speed"><label for="pixelReplaySpeed" id="pixelReplaySpeedLabel">3 000 изменений/с</label><input id="pixelReplaySpeed" type="range" min="0" max="400" value="348" aria-labelledby="pixelReplaySpeedLabel"></div>
+    <div class="pixel-replay-presets" role="group" aria-label="Быстрый выбор скорости">
+        <button type="button" data-replay-speed="1000" aria-pressed="false">1 000 /с</button>
+        <button type="button" data-replay-speed="3000" aria-pressed="true">3 000 /с</button>
+        <button type="button" data-replay-speed="10000" aria-pressed="false">10 000 /с</button>
+    </div>
+    <button id="pixelReplayRetry" type="button" hidden>Повторить загрузку</button>
+</section>

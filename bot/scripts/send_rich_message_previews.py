@@ -21,11 +21,12 @@ from aiogram.types import (
 
 from config import get_bot_token
 from schedules.pdf_crop import crop_group_screenshots
+from schedules.schedule_mood import EASY_EMOJIS
 
 
 OWNER_CHAT_ID = 1084693264
 WEBAPP_URL = "https://kkepik.rub1kub.ru/"
-MOOD = '<tg-emoji emoji-id="5319066444883828666">😎</tg-emoji>'
+MOOD = f'<tg-emoji emoji-id="{EASY_EMOJIS[1][0]}">{EASY_EMOJIS[1][1]}</tg-emoji>'
 
 
 @dataclass(frozen=True)

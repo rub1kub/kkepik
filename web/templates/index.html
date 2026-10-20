@@ -5,7 +5,36 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="HandheldFriendly" content="true">
     <meta name="MobileOptimized" content="width">
-    <title>KKEPIK</title>
+    <title>Кэпик — расписание колледжа</title>
+    <meta name="description" content="Кэпик — расписание Краснодарского колледжа электронного приборостроения. Telegram-бот и навык Алисы от rub1kub.">
+    <link rel="canonical" href="https://kkepik.rub1kub.ru/">
+    <meta name="google-site-verification" content="a3gtxkoD1rsE2XaMDRNpxkUhISqzRl0GT5RsJbNt14Q" />
+    <script data-kepik-prepaint>
+/* Hide the public landing before first paint when Telegram launch data is present.
+   These are the same hash/session sources used by the bundled Telegram SDK.
+   This selects a screen only; API authentication is unchanged. */
+(function () {
+    'use strict';
+    try {
+        let hash = window.location.hash.replace(/^#/, '');
+        const question = hash.indexOf('?');
+        if (question >= 0) hash = hash.slice(question + 1);
+        const params = new URLSearchParams(hash);
+        let data;
+        if (params.has('tgWebAppData')) {
+            data = params.getAll('tgWebAppData').pop();
+        } else {
+            const cached = JSON.parse(window.sessionStorage.getItem('__telegram__initParams') || 'null');
+            data = cached && cached.tgWebAppData;
+        }
+        if (typeof data === 'string' && data.trim()) {
+            document.documentElement.classList.add('kepik-telegram-pending');
+        }
+    } catch (error) {
+        // Blocked storage or malformed cache must not hide the ordinary website.
+    }
+}());
+</script>
     <link rel="icon" href="data:,">
     <script>
         (function () {
@@ -15,49 +44,18 @@
             }
         }());
     </script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v={{ STATIC_VERSION }}">
+    <link id="kepik-miniapp-style" media="not all" rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v={{ STATIC_VERSION }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/pixel_chat.css') }}?v={{ STATIC_VERSION }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/pixel_replay.css') }}?v={{ STATIC_VERSION }}">
     <script defer src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
+    <script defer src="{{ url_for('static', filename='js/miniapp_presence.js') }}?v={{ STATIC_VERSION|default('20260930-1') }}"></script>
+    <script defer src="/static/js/kepik-entry.js?v={{ STATIC_VERSION }}"></script>
     <script defer src="{{ url_for('static', filename='js/app_bootstrap.js') }}?v={{ STATIC_VERSION }}"></script>
     <script defer src="{{ url_for('static', filename='js/effects.js') }}?v={{ STATIC_VERSION }}"></script>
     <script defer src="{{ url_for('static', filename='js/swipe_detector.js') }}?v={{ STATIC_VERSION }}"></script>
     <script defer src="{{ url_for('static', filename='js/schedule.js') }}?v={{ STATIC_VERSION }}"></script>
     <script defer src="{{ url_for('static', filename='js/main.js') }}?v={{ STATIC_VERSION }}"></script>
     <style>
-        #loader {
-            width: 100%;
-            display: flex;
-            justify-content: flex-start;
-            align-items: center;
-            gap: 10px;
-            min-height: 34px;
-            margin-bottom: 10px;
-            color: var(--tg-theme-hint-color);
-            transition: opacity 0.18s ease-out;
-        }
-
-        #loader.fade-out {
-            opacity: 0;
-            pointer-events: none;
-        }
-
-        .loader-spinner {
-            width: 18px;
-            height: 18px;
-            flex: 0 0 18px;
-            border: 2px solid rgba(127, 127, 127, 0.22);
-            border-top-color: var(--tg-theme-button-color);
-            border-radius: 50%;
-            animation: loader-spin 0.8s linear infinite;
-        }
-
-        .loader-text {
-            font-size: 13px;
-            font-weight: 500;
-        }
-
-        @keyframes loader-spin {
-            to { transform: rotate(360deg); }
-        }
         .beta-label {
             position: absolute;
             top: 10px;
@@ -77,17 +75,25 @@
     </style>
 </head>
 <body>
+    {% include "kepik_landing.html" %}
+    <div id="kepik-miniapp">
+    <div class="pixel-background" id="pixelBackground" hidden>
+        <canvas id="pixelCanvas" aria-label="Общее полотно колледжа" tabindex="-1"></canvas>
+        <div class="pixel-background-veil"></div>
+    </div>
     <div id="auth-error" style="display:none;color:red;text-align:center;margin-top:30px;font-size:18px;">Ошибка авторизации через Telegram. Попробуйте открыть приложение заново.</div>
     <div class="menu-container" id="main-content" style="display:none;">
         <div id="connection-status" class="connection-status" role="status" hidden></div>
-        <div id="loader" role="status" aria-live="polite">
-            <span class="loader-spinner" aria-hidden="true"></span>
-            <span class="loader-text">Загружаем расписание</span>
-        </div>
+        <button class="anarchy-banner" id="canvasBanner" type="button" aria-label="мама-анархия — пора рисовать на доске!" aria-controls="pixelTools" aria-expanded="false" hidden>
+            <span class="anarchy-banner-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="m15 5 4 4M4 20l4-1 12-12a2.8 2.8 0 0 0-4-4L4 15l-1 5Z" /></svg>
+            </span>
+            <span class="anarchy-banner-copy"><strong>мама-анархия</strong><span id="canvasBannerSubtitle" role="timer" aria-live="off">пора рисовать на доске!</span></span>
+            <svg class="anarchy-banner-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+        </button>
         <!-- Выбор группы/ФИО -->
         <div id="groupSelectorContainer" class="group-selector-container">
             <span id="currentGroupName" class="group-selector-current"></span>
-            <div id="groupQuickSwitch" class="group-quick-switch" role="tablist" aria-label="Отслеживаемые расписания" hidden></div>
             <button id="groupSelectorManage" class="group-selector-manage" type="button" hidden>Добавить</button>
             <span id="groupSelectorArrow" class="group-selector-arrow" hidden>&#8250;</span>
         </div>
@@ -102,12 +108,53 @@
             </div>
         </div>
 
-        <div id="pairs_block">
+        <div id="pairs_block" aria-busy="true">
             <div class="schedule-container" style="display:none;">
                 <div class="schedule-column" style="display:none;">
-                    <div class="schedule-title"></div>
+                    <div class="schedule-title is-loading" aria-hidden="true">
+                        <button id="schedulePrevButton" class="schedule-nav-button schedule-nav-button-prev" type="button" aria-label="Предыдущее расписание" hidden>
+                            <span class="schedule-nav-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24"><path d="m14.5 6.5-5.5 5.5 5.5 5.5" /></svg>
+                            </span>
+                        </button>
+                        <span id="scheduleTitleText" class="schedule-title-text">
+                            <span class="schedule-title-skeleton"></span>
+                        </span>
+                        <button id="scheduleNextButton" class="schedule-nav-button schedule-nav-button-next" type="button" aria-label="Следующее расписание" hidden>
+                            <span class="schedule-nav-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24"><path d="m9.5 6.5 5.5 5.5-5.5 5.5" /></svg>
+                            </span>
+                        </button>
+                    </div>
                     <div class="wrap list" id="bell_list">
-                        <div class="row-container"></div>
+                        <div class="row-container">
+                            <div id="schedule-loader" class="schedule-loader" role="status" aria-label="Расписание загружается">
+                                <div class="schedule-loader-row" aria-hidden="true">
+                                    <span class="schedule-loader-time schedule-loader-shape"></span>
+                                    <span class="schedule-loader-copy">
+                                        <span class="schedule-loader-line schedule-loader-line-primary schedule-loader-shape"></span>
+                                        <span class="schedule-loader-line schedule-loader-line-secondary schedule-loader-shape"></span>
+                                    </span>
+                                    <span class="schedule-loader-room schedule-loader-shape"></span>
+                                </div>
+                                <div class="schedule-loader-row" aria-hidden="true">
+                                    <span class="schedule-loader-time schedule-loader-shape"></span>
+                                    <span class="schedule-loader-copy">
+                                        <span class="schedule-loader-line schedule-loader-line-primary schedule-loader-shape"></span>
+                                        <span class="schedule-loader-line schedule-loader-line-secondary schedule-loader-shape"></span>
+                                    </span>
+                                    <span class="schedule-loader-room schedule-loader-shape"></span>
+                                </div>
+                                <div class="schedule-loader-row" aria-hidden="true">
+                                    <span class="schedule-loader-time schedule-loader-shape"></span>
+                                    <span class="schedule-loader-copy">
+                                        <span class="schedule-loader-line schedule-loader-line-primary schedule-loader-shape"></span>
+                                        <span class="schedule-loader-line schedule-loader-line-secondary schedule-loader-shape"></span>
+                                    </span>
+                                    <span class="schedule-loader-room schedule-loader-shape"></span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="schedule-column" style="display:none;">
@@ -120,9 +167,8 @@
             <script>document.addEventListener('DOMContentLoaded',function(){var scheduleContainer=document.querySelector('.schedule-container');if(scheduleContainer)scheduleContainer.style.display='';var saturdayCol=document.querySelector('.schedule-column:last-child');if(saturdayCol)saturdayCol.style.display='none';var weekdayCol=document.querySelector('.schedule-column:first-child');if(weekdayCol){weekdayCol.style.display='';weekdayCol.style.flex='1';}});</script>
         </div>
         
-        <!-- Контейнер для реакций и кнопки скачать -->
-        <div id="scheduleActions" style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;" hidden>
-            <div id="downloadScheduleBtn" class="download-btn">Скачать</div>
+        <!-- Контейнер для реакций -->
+        <div id="scheduleActions" style="display: flex; align-items: center; margin-bottom: 8px;" hidden>
             <div id="schedule-reactions"></div>
         </div>
         
@@ -188,8 +234,68 @@
                 </svg>
                 Предложить идею
             </button>
+            <a href="/settings" id="messageSettingsLink" class="feedback-link message-settings-link">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 7h16M4 17h16" />
+                    <circle cx="9" cy="7" r="2" /><circle cx="15" cy="17" r="2" />
+                </svg>
+                Настройки расписания
+            </a>
         </div>
     </div>
+
+    <canvas class="pixel-magnifier" id="pixelMagnifier" width="100" height="100" aria-hidden="true" hidden></canvas>
+    <section class="pixel-tools" id="pixelTools" aria-label="Рисование на общем полотне" hidden>
+        <div class="pixel-top-info" id="pixelTopInfo" hidden>
+            <div class="pixel-replay-heading" id="pixelReplayHeading" hidden><strong>Итоги пиксель-батла</strong><span id="pixelReplaySummary">Игра завершена</span></div>
+            <span class="pixel-online" id="pixelOnline" hidden><span class="pixel-online-dot" aria-hidden="true"></span><span id="miniappOnlineCount">Онлайн: —</span></span>
+            <span class="pixel-event-deadline" id="pixelEventDeadline" role="timer" aria-live="off" hidden></span>
+        </div>
+        {% include "_canvas_replay.html" %}
+        <div class="pixel-zoom-controls" role="group" aria-label="Масштаб полотна">
+            <button id="pixelZoomIn" type="button" aria-label="Приблизить полотно"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M12 6v12" /></svg></button>
+            <button id="pixelZoomOut" type="button" aria-label="Отдалить полотно"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg></button>
+        </div>
+        <button class="pixel-admin-toggle" id="pixelAdminToggle" type="button" aria-label="Инструменты админа" aria-controls="pixelAdminTools" aria-expanded="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 6v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z" /><path d="m9 12 2 2 4-4" /></svg></button>
+        <div class="pixel-admin-panel" id="pixelAdminTools" hidden>
+            <div class="pixel-panel-heading">Инструменты админа</div>
+            <div class="pixel-admin-actions">
+                <button id="pixelAdminFast" type="button" aria-pressed="true">Кисть</button>
+                <button id="pixelAdminErase" type="button" aria-pressed="false">Ластик</button>
+                <button id="pixelAdminArea" type="button" aria-pressed="false">Область</button>
+                <button id="pixelAdminInspect" type="button" aria-pressed="false">Автор</button>
+                <label class="pixel-brush-size">Размер кисти <select id="pixelAdminBrush" aria-label="Размер кисти"><option value="1">1 × 1</option><option value="3">3 × 3</option><option value="7">7 × 7</option></select></label>
+                <button id="pixelAdminApply" type="button" hidden>Закрасить</button>
+            </div>
+            <p class="pixel-author-info" id="pixelAuthorInfo" role="status" hidden></p>
+            <button class="pixel-author-ban" id="pixelAdminBan" type="button" hidden>Забанить автора</button>
+            <p class="pixel-author-info" id="pixelRollbackInfo" role="status" hidden></p>
+            <button class="pixel-author-ban" id="pixelAdminRollback" type="button" hidden>Откатить правки автора</button>
+        </div>
+        <div class="pixel-bottom-controls" id="pixelBottomControls">
+            <div class="pixel-color-picker" id="pixelColorPicker" role="group" aria-label="Выберите цвет" hidden></div>
+            <p class="pixel-tools-hint" id="pixelHint">Касание — пиксель · удержание — рисовать</p>
+            <div class="pixel-bottom-row">
+                <button class="pixel-color-toggle" id="pixelColorToggle" type="button" aria-controls="pixelColorPicker" aria-expanded="false">
+                    <span class="pixel-current-color" id="pixelCurrentColor" aria-hidden="true"></span>
+                    <span class="pixel-color-copy"><span id="pixelColorName">Голубой</span><span id="pixelStatus" role="status" aria-live="polite">Подключаемся…</span></span>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 14 4-4 4 4" /></svg>
+                    <span class="pixel-cooldown-track" aria-hidden="true"><span id="pixelCooldown"></span></span>
+                </button>
+                <button class="pixel-done" id="pixelDone" type="button" aria-label="Завершить рисование"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg></button>
+            </div>
+        </div>
+        {% set chat_web = false %}{% include '_canvas_chat.html' %}
+        <div class="pixel-ban-screen" id="pixelBanScreen" role="region" aria-labelledby="pixelBanTitle" hidden>
+            <div class="pixel-ban-card">
+                <img class="pixel-ban-image" src="{{ url_for('static', filename='img/canvas-ban.jpg') }}" width="735" height="723" alt="Ухмыляющийся саблезубый тигр: «Поганец»" loading="lazy" decoding="async">
+                <h2 id="pixelBanTitle">Вот ты и попался,</h2>
+                <p class="pixel-ban-message">рисователь молотов, сюрикенов и прочей крутой фигни.</p>
+                <p class="pixel-ban-explanation">Рисование на полотне для тебя закрыто. Расписание и остальные разделы доступны.</p>
+                <button id="pixelBanBack" type="button">К расписанию</button>
+            </div>
+        </div>
+    </section>
 
     <!-- Модальное окно для отзыва (перенесено вниз, вне menu-container) -->
     <div class="modal" id="reviewModal">
@@ -229,5 +335,10 @@
         });
 
     </script>
+    </div>
+    <script defer src="{{ url_for('static', filename='js/pixel_state.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script defer src="{{ url_for('static', filename='js/pixel_chat.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script defer src="{{ url_for('static', filename='js/pixel_replay.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script defer src="{{ url_for('static', filename='js/pixel_canvas.js') }}?v={{ STATIC_VERSION }}"></script>
 </body>
 </html>

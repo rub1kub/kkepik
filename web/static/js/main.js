@@ -69,6 +69,30 @@ function hideLoader() {
 
 window.kkepikHideLoader = hideLoader;
 
+const scheduleLoaderTemplate = document.getElementById('schedule-loader')?.cloneNode(true) || null;
+
+function showScheduleLoader() {
+    const bellList = document.querySelector('#bell_list .row-container');
+    if (!bellList || !scheduleLoaderTemplate) return;
+
+    bellList.style.opacity = '1';
+    bellList.replaceChildren(scheduleLoaderTemplate.cloneNode(true));
+    document.getElementById('pairs_block')?.setAttribute('aria-busy', 'true');
+
+    const scheduleActions = document.getElementById('scheduleActions');
+    if (scheduleActions) scheduleActions.hidden = true;
+}
+
+function finishScheduleLoader() {
+    document.getElementById('pairs_block')?.removeAttribute('aria-busy');
+    document.querySelector('.schedule-title')?.classList.remove('is-loading');
+}
+
+window.kkepikScheduleLoader = {
+    show: showScheduleLoader,
+    finish: finishScheduleLoader
+};
+
 function showAuthError(msg) {
     const error = document.getElementById('auth-error');
     error.textContent = msg;
@@ -84,6 +108,12 @@ function showAuthError(msg) {
 }
 authorize();
 
+// The initial screen is visible; schedule data and optional assets load separately.
+// Do not leave Telegram waiting for every resource before displaying the WebView.
+if (tg.initData && typeof tg.ready === 'function') {
+    tg.ready();
+}
+
 window.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('.game-card, .compact-game-link').forEach(card => {
         card.addEventListener('click', () => {
@@ -92,7 +122,6 @@ window.addEventListener('DOMContentLoaded', function() {
     });
 
     document.querySelectorAll('a').forEach(link => {
-        if (link.id === 'downloadScheduleBtn') return; // не трогаем кнопку скачать!
         if (link.href.startsWith(window.location.origin)) {
             const url = new URL(link.href);
             url.searchParams.set('tgWebAppData', tg.initData);
@@ -174,6 +203,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     let hasPrevDay = false;
     let hasNextDay = false;
     let lastSwipeDirection = null;
+    let navigationCheckId = 0;
     let displayedDate = new Date();
     let isUpdating = false;
     let isInitialLoad = true;
@@ -209,6 +239,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         } else {
             return;
         }
+        if (isInitialLoad) return;
         if (typeof window.updateScheduleDisplay === 'function') {
             checkAdjacentDays(window.updateScheduleDisplay);
         }
@@ -298,34 +329,71 @@ document.addEventListener('DOMContentLoaded', async function() {
     }
 
     async function checkAdjacentDays(callback) {
+        const checkId = ++navigationCheckId;
         const previousDate = getAdjacentStudyDate(currentDate, -1);
         const nextDate = getAdjacentStudyDate(currentDate, 1);
         const previousBootstrap = getBootstrapAdjacent(-1, previousDate);
         const nextBootstrap = getBootstrapAdjacent(1, nextDate);
+        const previousDateString = previousDate.toLocaleDateString('ru-RU');
+        const nextDateString = nextDate.toLocaleDateString('ru-RU');
+        const previousCached = window.scheduleState.scheduleCache.has(previousDateString)
+            ? hasRealSchedule(window.scheduleState.scheduleCache.get(previousDateString))
+            : undefined;
+        const nextCached = window.scheduleState.scheduleCache.has(nextDateString)
+            ? hasRealSchedule(window.scheduleState.scheduleCache.get(nextDateString))
+            : undefined;
+        const previousKnown = previousBootstrap === undefined ? previousCached : previousBootstrap;
+        const nextKnown = nextBootstrap === undefined ? nextCached : nextBootstrap;
+        const moveDirection = lastSwipeDirection;
+        lastSwipeDirection = null;
 
-        hasPrevDay = false;
-        hasNextDay = false;
-        updateNavigationIndicators();
+        hasPrevDay = previousKnown === undefined ? moveDirection === 1 : previousKnown;
+        hasNextDay = nextKnown === undefined ? moveDirection === -1 : nextKnown;
+        if (!isInitialLoad) {
+            updateNavigationIndicators({
+                previousPending: previousKnown === undefined && !hasPrevDay,
+                nextPending: nextKnown === undefined && !hasNextDay
+            });
+        }
 
         const [previousAvailable, nextAvailable] = await Promise.all([
-            previousBootstrap === undefined
+            previousKnown === undefined
                 ? loadScheduleForDate(previousDate).then(hasRealSchedule)
-                : previousBootstrap,
-            nextBootstrap === undefined
+                : previousKnown,
+            nextKnown === undefined
                 ? loadScheduleForDate(nextDate).then(hasRealSchedule)
-                : nextBootstrap,
+                : nextKnown,
         ]);
+        if (checkId !== navigationCheckId) return;
         hasPrevDay = previousAvailable;
         hasNextDay = nextAvailable;
         updateNavigationIndicators();
         if (typeof callback === 'function') callback();
     }
 
-    function updateNavigationIndicators() {
+    function updateNavigationIndicators({ previousPending = false, nextPending = false } = {}) {
         const title = document.querySelector('.schedule-title');
         if (!title) return;
         title.classList.toggle('has-prev', hasPrevDay);
         title.classList.toggle('has-next', hasNextDay);
+
+        const previousButton = document.getElementById('schedulePrevButton');
+        const nextButton = document.getElementById('scheduleNextButton');
+        setNavigationButtonState(previousButton, hasPrevDay, previousPending);
+        setNavigationButtonState(nextButton, hasNextDay, nextPending);
+    }
+
+    function setNavigationButtonState(button, available, pending) {
+        if (!button) return;
+        button.hidden = !available && !pending;
+        button.disabled = !available;
+        button.tabIndex = available ? 0 : -1;
+        button.classList.toggle('is-pending', pending);
+        if (pending) {
+            button.setAttribute('aria-busy', 'true');
+        } else {
+            button.removeAttribute('aria-busy');
+        }
     }
 
     window.refreshScheduleNavigation = checkAdjacentDays;
@@ -435,16 +503,11 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
     }
 
-    // === Поиск ближайшей даты с расписанием вперед ===
+    // Расписание публикуют на ближайшие дни, поэтому длинный пустой поиск не нужен.
     async function findNextScheduleDate(fromDate) {
-        let nextDate = new Date(fromDate);
-        // Ищем только первый рабочий день после fromDate
-        do {
-            nextDate.setDate(nextDate.getDate() + 1);
-        } while (nextDate.getDay() === 0 || isHoliday(nextDate));
-        // Проверяем расписание только на найденную дату
+        const nextDate = getAdjacentStudyDate(fromDate, 1);
         const nextSchedule = await loadScheduleForDate(nextDate);
-        if (nextSchedule && nextSchedule.schedule && nextSchedule.schedule.some(lesson => lesson && !lesson.includes('Нет'))) {
+        if (hasRealSchedule(nextSchedule)) {
             return { date: new Date(nextDate), schedule: nextSchedule };
         }
         return null;
@@ -452,28 +515,9 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     async function initialLoad() {
         console.log('[initialLoad] START, currentDate:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
+        try {
         lastSwipeDirection = null;
-        if (currentDate.getDay() === 0 || isHoliday(currentDate)) {
-            const nextWorkingDay = new Date(currentDate);
-            while (nextWorkingDay.getDay() === 0 || isHoliday(nextWorkingDay)) {
-                nextWorkingDay.setDate(nextWorkingDay.getDate() + 1);
-            }
-            // СРАЗУ обновляем даты!
-            currentDate = new Date(nextWorkingDay);
-            displayedDate = new Date(nextWorkingDay);
-            window.scheduleState.displayedDate = new Date(nextWorkingDay);
-
-            window.scheduleState.currentScheduleData = await loadScheduleForDate(nextWorkingDay);
-
-            console.log('[initialLoad] Перешли на рабочий день:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
-            await checkAdjacentDays(updateScheduleDisplay);
-            hideLoader();
-            isInitialLoad = false;
-            console.log('[initialLoad] END (после смены даты), currentDate:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
-            return;
-        } else {
-            window.scheduleState.currentScheduleData = await loadScheduleForDate(currentDate);
-        }
+        window.scheduleState.currentScheduleData = await loadScheduleForDate(currentDate);
         console.log('[schedule] initialLoad: scheduleState.currentScheduleData:', window.scheduleState.currentScheduleData);
         function isAllLessonsFinished(scheduleData, date) {
             if (!scheduleData || !scheduleData.schedule) return false;
@@ -503,23 +547,35 @@ document.addEventListener('DOMContentLoaded', async function() {
             const lastEndTime = lastEndHour * 60 + lastEndMinute;
             return currentTime >= lastEndTime;
         }
-        // Если все пары на сегодня закончились или расписания на сегодня нет — ищем ближайшее будущее расписание
-        if (isAllLessonsFinished(window.scheduleState.currentScheduleData, currentDate)) {
+        const currentSchedule = window.scheduleState.currentScheduleData;
+        const shouldShowNextSchedule = !currentSchedule?.error500 && (
+            !hasRealSchedule(currentSchedule)
+            || isAllLessonsFinished(currentSchedule, currentDate)
+        );
+        if (shouldShowNextSchedule) {
             const found = await findNextScheduleDate(currentDate);
             if (found) {
-                currentDate = found.date;
+                currentDate = new Date(found.date);
+                displayedDate = new Date(found.date);
+                window.scheduleState.displayedDate = new Date(found.date);
                 window.scheduleState.currentScheduleData = found.schedule;
-                if (!isInitialLoad && window.launchSideConfetti) {
-                    window.launchSideConfetti();
-                }
             }
         }
         document.querySelector('.schedule-column:last-child').style.display = 'none';
         document.querySelector('.schedule-column:first-child').style.flex = '1';
         await checkAdjacentDays(updateScheduleDisplay);
-        hideLoader();
-        isInitialLoad = false;
-        console.log('[initialLoad] END, currentDate:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
+        } catch (error) {
+            console.error('[initialLoad] Не удалось загрузить расписание:', error);
+            window.scheduleState.currentScheduleData = { error500: true };
+            if (typeof window.updateScheduleDisplay === 'function') {
+                window.updateScheduleDisplay();
+            }
+        } finally {
+            finishScheduleLoader();
+            hideLoader();
+            isInitialLoad = false;
+            console.log('[initialLoad] END, currentDate:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
+        }
     }
 
     // Перемещаю функцию updateScheduleDisplay в глобальную область видимости
@@ -530,7 +586,13 @@ document.addEventListener('DOMContentLoaded', async function() {
         const isSaturday = currentDate.getDay() === 6 || isSpecialShortDay;
         const schedule = isSaturday ? SATURDAY_SCHEDULE : WEEKDAY_SCHEDULE;
 
-        document.querySelector('.schedule-title').textContent = `Расписание на ${formatDisplayDate(currentDate)}`;
+        const scheduleTitle = document.querySelector('.schedule-title');
+        const scheduleTitleText = document.getElementById('scheduleTitleText');
+        scheduleTitleText.textContent = `Расписание на ${formatDisplayDate(currentDate)}`;
+        scheduleTitleText.classList.remove('is-revealing');
+        void scheduleTitleText.offsetWidth;
+        scheduleTitleText.classList.add('is-revealing');
+        scheduleTitle.removeAttribute('aria-hidden');
         console.log('[updateScheduleDisplay] schedule-title set to:', formatDisplayDate(currentDate));
 
         if (window.scheduleState.currentScheduleData && window.scheduleState.currentScheduleData.error500) {
@@ -540,11 +602,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             window.scheduleState.displayedDate = new Date(currentDate);
             const scheduleActions = document.getElementById('scheduleActions');
             if (scheduleActions) scheduleActions.hidden = true;
-            const downloadBtn = document.getElementById('downloadScheduleBtn');
-            if (downloadBtn) {
-                downloadBtn.removeAttribute('data-url');
-                downloadBtn.style.display = 'none';
-            }
+            finishScheduleLoader();
             return;
         } else {
             // Показываем schedule-title обратно, если оно было скрыто
@@ -611,7 +669,8 @@ document.addEventListener('DOMContentLoaded', async function() {
                 console.log(`[schedule] forEach lesson[${idx}]:`, lesson);
                 if (!lesson) return;
 
-                const match = String(lesson).match(/^[▪▫•]?\uFE0F?\s*(\d+)\s*пара(?:\s*\([^)]*\))?\s*[–—-]\s*(.+)$/iu);
+                const normalizedLesson = stripScheduleMarkup(lesson);
+                const match = normalizedLesson.match(/^[▪▫•]?\uFE0F?\s*(\d+)\s*пара(?:\s*\([^)]*\))?\s*[–—-]\s*(.+)$/iu);
                 if (!match) {
                     console.log(`[schedule] lesson[${idx}] не совпал с шаблоном`);
                     return;
@@ -675,7 +734,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                     group_name: groupName ? groupName.trim() : '',
                     teacher_name: teacherName ? teacherName.trim() : '',
                     classroom: normalizeScheduleRoom(classroom),
-                    is_combined: lesson.includes('(совмещ.)'),
+                    is_combined: normalizedLesson.includes('(совмещ.)'),
                     is_empty: false
                 };
 
@@ -739,38 +798,6 @@ document.addEventListener('DOMContentLoaded', async function() {
         
         // Обновляем глобальное состояние с текущей датой
         window.scheduleState.displayedDate = new Date(currentDate);
-        
-        // === Формируем ссылку для кнопки "Скачать" ===
-        const downloadBtn = document.getElementById('downloadScheduleBtn');
-        console.log('[download] currentEntity:', window.scheduleState.currentEntity);
-        let downloadUrl = '';
-        if (downloadBtn) {
-            let scheduleType = '';
-            if (window.scheduleState.currentEntity) {
-                const entityType = window.scheduleState.currentEntity.entity_type;
-                if (entityType === 'group') {
-                    scheduleType = 'groups';
-                } else if (entityType === 'teacher') {
-                    scheduleType = 'teachers';
-                }
-            }
-            // Форматируем дату как ДД.ММ.ГГГГ
-            const pad = n => n.toString().padStart(2, '0');
-            const dateObj = window.scheduleState.displayedDate || new Date();
-            const dateStr = pad(dateObj.getDate()) + '.' + pad(dateObj.getMonth() + 1) + '.' + dateObj.getFullYear();
-            if (scheduleType && window.scheduleState.hasRealLessons) {
-                downloadUrl = `https://kkepik.rub1kub.ru/api/schedule/download/${scheduleType}/${dateStr}`;
-                downloadBtn.setAttribute('data-url', downloadUrl);
-                downloadBtn.style.display = '';
-                console.log('[download] ссылка сформирована:', downloadUrl);
-            } else {
-                downloadBtn.removeAttribute('data-url');
-                downloadBtn.style.display = 'none';
-                downloadUrl = '';
-                console.log('[download] ссылка скрыта: нет типа расписания');
-            }
-        }
-        // === Конец формирования ссылки ===
 
         const event = new CustomEvent('scheduleDateChanged', {
             detail: {
@@ -778,6 +805,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             }
         });
         document.dispatchEvent(event);
+        finishScheduleLoader();
         console.log('[updateScheduleDisplay] END, currentDate:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
     };
 
@@ -792,6 +820,32 @@ document.addEventListener('DOMContentLoaded', async function() {
     function resetScheduleSwipe() {
         isSwiping = false;
         swipeAxis = null;
+    }
+
+    async function navigateToAdjacentDate(direction, source) {
+        const available = direction < 0 ? hasPrevDay : hasNextDay;
+        if (!available || isUpdating) return false;
+
+        isUpdating = true;
+        const targetDate = getAdjacentStudyDate(currentDate, direction);
+        try {
+            const targetSchedule = await loadScheduleForDate(targetDate);
+            if (!targetSchedule || !Array.isArray(targetSchedule.schedule)) return false;
+
+            currentDate = targetDate;
+            displayedDate = new Date(targetDate);
+            window.scheduleState.currentScheduleData = targetSchedule;
+            lastSwipeDirection = direction;
+            console.log(`[schedule.navigation] ${source}:`, currentDate);
+            tg.HapticFeedback?.impactOccurred('light');
+            updateScheduleDisplay();
+            checkAdjacentDays().catch(error => {
+                console.error('Не удалось проверить соседние расписания:', error);
+            });
+            return true;
+        } finally {
+            isUpdating = false;
+        }
     }
 
     scheduleArea.addEventListener('touchstart', e => {
@@ -859,124 +913,28 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
 
         resetScheduleSwipe();
-        if (Math.abs(swipeDistance) > 50) {
-            if (swipeDistance > 0) {
-                let prevDate = new Date(currentDate);
-                do {
-                    prevDate.setDate(prevDate.getDate() - 1);
-                } while (prevDate.getDay() === 0 || isHoliday(prevDate));
-                if (prevDate.getDay() !== 0 && !isHoliday(prevDate)) {
-                    const prevSchedule = await loadScheduleForDate(prevDate);
-                    if (prevSchedule && Array.isArray(prevSchedule.schedule)) {
-                        currentDate = prevDate;
-                        window.scheduleState.currentScheduleData = prevSchedule;
-                        console.log('[touchend] swipe LEFT, currentDate:', currentDate);
-                        tg.HapticFeedback.impactOccurred('light');
-                        updateScheduleDisplay();
-                        checkAdjacentDays();
-                    }
-                }
-            } else if (swipeDistance < 0) {
-                let nextDate = new Date(currentDate);
-                do {
-                    nextDate.setDate(nextDate.getDate() + 1);
-                } while (nextDate.getDay() === 0 || isHoliday(nextDate));
-                if (nextDate.getDay() !== 0 && !isHoliday(nextDate)) {
-                    const nextSchedule = await loadScheduleForDate(nextDate);
-                    if (nextSchedule && Array.isArray(nextSchedule.schedule)) {
-                        currentDate = nextDate;
-                        window.scheduleState.currentScheduleData = nextSchedule;
-                        console.log('[touchend] swipe RIGHT, currentDate:', currentDate);
-                        tg.HapticFeedback.impactOccurred('light');
-                        updateScheduleDisplay();
-                        checkAdjacentDays();
-                    }
-                }
-            }
-        }
+        await navigateToAdjacentDate(swipeDistance > 0 ? -1 : 1, 'swipe');
         console.log('[touchend] END, currentDate:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
     }, { passive: false });
 
     scheduleArea.addEventListener('touchcancel', resetScheduleSwipe, { passive: true });
 
-    const title = document.querySelector('.schedule-title');
+    document.getElementById('schedulePrevButton')?.addEventListener('click', function () {
+        navigateToAdjacentDate(-1, 'button');
+    });
 
-    title.addEventListener('click', async (e) => {
-        console.log('[title.click] START, currentDate:', currentDate);
-        const rect = title.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        if (x < 44) {
-            let prevDate = new Date(currentDate);
-            do {
-                prevDate.setDate(prevDate.getDate() - 1);
-            } while (prevDate.getDay() === 0 || isHoliday(prevDate));
-            if (prevDate.getDay() !== 0 && !isHoliday(prevDate)) {
-                const prevSchedule = await loadScheduleForDate(prevDate);
-                if (prevSchedule && Array.isArray(prevSchedule.schedule)) {
-                    currentDate = prevDate;
-                    window.scheduleState.currentScheduleData = prevSchedule;
-                    console.log('[title.click] prev, currentDate:', currentDate);
-                    if (window.tg) tg.HapticFeedback.impactOccurred('light');
-                    updateScheduleDisplay();
-                    checkAdjacentDays();
-                }
-            }
-        } else if (x > rect.width - 44) {
-            let nextDate = new Date(currentDate);
-            do {
-                nextDate.setDate(nextDate.getDate() + 1);
-            } while (nextDate.getDay() === 0 || isHoliday(nextDate));
-            if (nextDate.getDay() !== 0 && !isHoliday(nextDate)) {
-                const nextSchedule = await loadScheduleForDate(nextDate);
-                if (nextSchedule && Array.isArray(nextSchedule.schedule)) {
-                    currentDate = nextDate;
-                    window.scheduleState.currentScheduleData = nextSchedule;
-                    console.log('[title.click] next, currentDate:', currentDate);
-                    if (window.tg) tg.HapticFeedback.impactOccurred('light');
-                    updateScheduleDisplay();
-                    checkAdjacentDays();
-                }
-            }
-        }
-        console.log('[title.click] END, currentDate:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
+    document.getElementById('scheduleNextButton')?.addEventListener('click', function () {
+        navigateToAdjacentDate(1, 'button');
     });
 
     document.addEventListener('keydown', async (e) => {
-        console.log('[keydown] START, currentDate:', currentDate);
         if (e.key === 'ArrowLeft') {
-            let prevDate = new Date(currentDate);
-            do {
-                prevDate.setDate(prevDate.getDate() - 1);
-            } while (prevDate.getDay() === 0 || isHoliday(prevDate));
-            if (prevDate.getDay() !== 0 && !isHoliday(prevDate)) {
-                const prevSchedule = await loadScheduleForDate(prevDate);
-                if (prevSchedule && Array.isArray(prevSchedule.schedule)) {
-                    currentDate = prevDate;
-                    window.scheduleState.currentScheduleData = prevSchedule;
-                    console.log('[keydown] ArrowLeft, currentDate:', currentDate);
-                    if (window.tg) tg.HapticFeedback.impactOccurred('light');
-                    updateScheduleDisplay();
-                    checkAdjacentDays();
-                }
-            }
+            e.preventDefault();
+            await navigateToAdjacentDate(-1, 'keyboard');
         } else if (e.key === 'ArrowRight') {
-            let nextDate = new Date(currentDate);
-            do {
-                nextDate.setDate(nextDate.getDate() + 1);
-            } while (nextDate.getDay() === 0 || isHoliday(nextDate));
-            if (nextDate.getDay() !== 0 && !isHoliday(nextDate)) {
-                const nextSchedule = await loadScheduleForDate(nextDate);
-                if (nextSchedule && Array.isArray(nextSchedule.schedule)) {
-                    currentDate = nextDate;
-                    window.scheduleState.currentScheduleData = nextSchedule;
-                    console.log('[keydown] ArrowRight, currentDate:', currentDate);
-                    if (window.tg) tg.HapticFeedback.impactOccurred('light');
-                    updateScheduleDisplay();
-                    checkAdjacentDays();
-                }
-            }
+            e.preventDefault();
+            await navigateToAdjacentDate(1, 'keyboard');
         }
-        console.log('[keydown] END, currentDate:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
     });
 
     if (tg.initData) initialLoad();
@@ -1024,6 +982,18 @@ function looksLikeScheduleRoom(value) {
 
 function normalizeScheduleRoom(value) {
     return String(value || '').replace(/^ауд(?:итория)?\.?\s*/iu, '').trim();
+}
+
+function stripScheduleMarkup(value) {
+    return String(value || '')
+        .replace(/<\/?(?:b|strong|i|em|u|s|code|tg-emoji)\b[^>]*>/giu, '')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&amp;/gi, '&')
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#(?:0*39|x0*27);/gi, "'")
+        .trim();
 }
 
 function escapeScheduleText(value) {
@@ -2058,6 +2028,7 @@ window.updateScheduleForEntity = async function(entity) {
     } else {
         return;
     }
+    showScheduleLoader();
     try {
         const resp = await fetch(url, {
             method: 'POST',
@@ -2078,69 +2049,11 @@ window.updateScheduleForEntity = async function(entity) {
         }
     } catch (e) {
         console.error('Ошибка при получении расписания:', e);
-    }
-}
-
-// === Перенос кода из index.html ===
-
-// Анимация появления кнопки 'Скачать'
-function animateDownloadBtn() {
-    console.log('animateDownloadBtn вызвана, window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
-    const btn = document.getElementById('downloadScheduleBtn');
-    if (btn) {
-        btn.classList.remove('fade-slide-up');
-        void btn.offsetWidth;
-        btn.classList.add('fade-slide-up');
-        updateDownloadLink();
-    }
-}
-
-// Динамическое обновление ссылки на скачивание расписания
-function updateDownloadLink() {
-    console.log('[updateDownloadLink] START, window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
-    let scheduleType = '';
-    if (window.scheduleState && window.scheduleState.currentEntity) {
-        const entityType = window.scheduleState.currentEntity.entity_type;
-        if (entityType === 'group') scheduleType = 'groups';
-        else if (entityType === 'teacher') scheduleType = 'teachers';
-    }
-    let dateObj = window.scheduleState && window.scheduleState.displayedDate ? new Date(window.scheduleState.displayedDate) : new Date();
-    const pad = n => n.toString().padStart(2, '0');
-    const dateStr = pad(dateObj.getDate()) + '.' + pad(dateObj.getMonth() + 1) + '.' + dateObj.getFullYear();
-    let url = '';
-    if (scheduleType && window.scheduleState?.hasRealLessons === true) {
-        url = `https://kkepik.rub1kub.ru/api/schedule/download/${scheduleType}/${dateStr}`;
-    }
-    const btn = document.getElementById('downloadScheduleBtn');
-    if (btn) {
-        if (url) {
-            btn.setAttribute('data-url', url);
-            btn.setAttribute('href', url);
-            btn.style.display = '';
-            console.log('[updateDownloadLink] ссылка для скачивания:', url);
-        } else {
-            btn.removeAttribute('data-url');
-            btn.removeAttribute('href');
-            btn.style.display = 'none';
+        window.scheduleState.currentScheduleData = { error500: true };
+        if (typeof window.updateScheduleDisplay === 'function') {
+            window.updateScheduleDisplay();
         }
+    } finally {
+        finishScheduleLoader();
     }
-    console.log('[updateDownloadLink] END, window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
 }
-
-// Слушаем кастомные события для анимации и обновления кнопки
-
-document.addEventListener('reactionsAnimated', animateDownloadBtn);
-document.addEventListener('scheduleDateChanged', function() {
-    updateDownloadLink();
-    animateDownloadBtn();
-});
-
-const btn = document.getElementById('downloadScheduleBtn');
-btn.addEventListener('click', function(e) {
-            const url = btn.getAttribute('data-url');
-            if (!url) {
-                e.preventDefault();
-                return;
-            }
-            tg.openLink(url);
-});

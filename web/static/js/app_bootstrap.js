@@ -153,7 +153,6 @@
     if (cachedBootstrap) {
         const cached = { ...cachedBootstrap, from_cache: true };
         appState.ready = Promise.resolve(cached);
-        setConnectionStatus('Показано сохранённое · обновляем', 'updating');
         networkReady.catch(function () {});
     } else {
         appState.ready = networkReady;

@@ -1,0 +1,18 @@
+{% extends 'public_schedule_base.html' %}
+{% block title %}Расписание ККЭП — {{ college.name }} — {{ college.city }}{% endblock %}
+{% block content %}
+  <section class="page-heading">
+    <h1>Пары в ККЭП</h1>
+    <p class="lead">{{ college.name }}<br>{{ college.city }}</p>
+  </section>
+  <nav class="directory-grid" aria-label="Найти расписание">
+    <a class="directory-card" href="/colleges/kkep/groups"><span>Группы</span><strong>{{ catalog.groups|length }}</strong><span class="arrow" aria-hidden="true">↗</span></a>
+    <a class="directory-card" href="/colleges/kkep/teachers"><span>Преподаватели</span><strong>{{ catalog.teachers|length }}</strong><span class="arrow" aria-hidden="true">↗</span></a>
+    <a class="directory-card" href="/colleges/kkep/audiences"><span>Аудитории</span><strong>{{ catalog.audiences|length }}</strong><span class="arrow" aria-hidden="true">↗</span></a>
+  </nav>
+  <section class="note-panel" aria-labelledby="archive-info">
+    <h2 id="archive-info">Архив</h2>
+    <p>В архиве {{ catalog.dates|length }} сохранённых дат{% if catalog.dates %}: с <time datetime="{{ catalog.dates|min }}">{{ catalog.dates|min }}</time> по <time datetime="{{ catalog.dates|max }}">{{ catalog.dates|max }}</time>{% endif %}. Отсутствие данных не означает отсутствие пар.</p>
+    {% if catalog.updated_at %}<p class="muted small">Архив обработан сервисом: <time datetime="{{ catalog.updated_at }}">{{ catalog.updated_at }}</time></p>{% endif %}
+  </section>
+{% endblock %}

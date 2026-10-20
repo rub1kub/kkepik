@@ -1,0 +1,20 @@
+{% extends 'public_schedule_base.html' %}
+{% block title %}{% if entity_type == 'group' %}Группы{% elif entity_type == 'teacher' %}Преподаватели{% else %}Аудитории{% endif %} ККЭП — расписание — {{ college.city }}{% endblock %}
+{% block description %}{% if entity_type == 'group' %}Группы{% elif entity_type == 'teacher' %}Преподаватели{% else %}Аудитории{% endif %} {{ college.name }}, {{ college.city }}. Ссылки на расписание по датам и архив источников.{% endblock %}
+{% block content %}
+  <nav class="breadcrumb" aria-label="Навигация"><a href="/colleges/kkep">ККЭП</a><span aria-hidden="true">/</span><span>{{ entity_labels[entity_type] }}</span></nav>
+  <section class="page-heading">
+    <p class="eyebrow">{{ college.name }}</p>
+    <h1>{% if entity_type == 'group' %}Группы{% elif entity_type == 'teacher' %}Преподаватели{% else %}Аудитории{% endif %}</h1>
+  </section>
+  <div class="filter-field" data-entity-filter hidden>
+    <label for="entity-filter">Поиск</label>
+    <input id="entity-filter" type="search" placeholder="Начните вводить название" autocomplete="off">
+    <p class="muted small" data-filter-status role="status" aria-live="polite"></p>
+  </div>
+  {% if entities %}
+    <ul class="entity-list" data-entity-list>
+      {% for entity in entities %}<li><a href="{{ entity_url(entity_type, entity) }}">{{ entity }}<span aria-hidden="true">→</span></a></li>{% endfor %}
+    </ul>
+  {% else %}<p class="status-note">Справочник пока пуст. Расписания ещё не загружены.</p>{% endif %}
+{% endblock %}

@@ -5,10 +5,13 @@
 """
 
 import re
+import datetime as dt
 import sqlite3
 import os
 import shutil
 import logging
+from collections import Counter
+from html import escape
 import pandas as pd
 from aiogram import types
 from aiogram.types.input_file import BufferedInputFile
@@ -30,8 +33,13 @@ from schedules.schedule_formatter import (
 )
 from schedules.schedule_keyboard import create_schedule_keyboard
 from schedules.schedule_dates import is_current_schedule
+from schedules.schedule_notices import append_broadcast_schedule_notice, get_schedule_settings_notice
 from schedules.pdf_crop import crop_group_screenshots
 from tracked_groups import get_all_tracked_groups
+from message_registry import message_tracking_context
+from schedule_preferences import get_preferences, get_all_preferences, SchedulePreferences, wants_broadcast
+from schedules.message_constructor import render_schedule_message, personal_subject_aliases
+from schedules.personal_delivery import send_personal_schedule
 
 async def _send_with_image(bot: Bot, uid: int, msg_text: str, img_bytes, keyboard):
     """Отправляет расписание: фото + caption если есть картинка, иначе текст."""
@@ -58,32 +66,175 @@ async def _send_tracked_group_schedule(
     is_update: bool,
     tracked_count: int,
     always_show_group: bool,
-) -> None:
+    recipient_role: str | None = None,
+    preferences=None,
+) -> bool:
+    with message_tracking_context(
+        message_kind="schedule",
+        schedule_date=schedule_date,
+        schedule_type="groups",
+        entity=group_name.upper(),
+    ):
+        return await _send_tracked_group_schedule_impl(
+            bot,
+            uid,
+            df,
+            group_name,
+            schedule_date,
+            pdf_crop_cache,
+            is_update=is_update,
+            tracked_count=tracked_count,
+            always_show_group=always_show_group,
+            recipient_role=recipient_role,
+            preferences=preferences,
+        )
+
+
+async def _send_tracked_group_schedule_impl(
+    bot: Bot,
+    uid: int,
+    df: pd.DataFrame,
+    group_name: str,
+    schedule_date: str,
+    pdf_crop_cache: dict[str, bytes],
+    *,
+    is_update: bool,
+    tracked_count: int,
+    always_show_group: bool,
+    recipient_role: str | None = None,
+    preferences=None,
+) -> bool:
     lines = group_schedule.get_schedule_for_group(df, group_name.upper())
     keyboard = create_schedule_keyboard(schedule_date, "groups")
     if lines is None:
-        message = (
-            f"🔔 Пришло расписание, но группа <b>{group_name}</b> "
-            "не найдена в файле. Проверьте её в /groups."
+        logging.warning(
+            "[broadcast] Группа %s отсутствует в файле; отправка uid=%s пропущена",
+            group_name,
+            uid,
         )
-        if is_update:
-            message = "‼️ РАСПИСАНИЕ ИЗМЕНИЛОСЬ\n\n" + message
-        await bot.send_message(uid, message, reply_markup=keyboard)
-        return
+        return False
 
     if not lines:
         lines = [f"▪️{pair} пара – Нет" for pair in range(1, 5)]
 
     image = pdf_crop_cache.get(group_name.upper())
+    preferences = preferences or get_preferences(uid)
+    # Only personalize this cohort's student captions, never source data or teacher copies.
+    subject_aliases = personal_subject_aliases(recipient_role, group_name)
     message = build_group_schedule_message(
         lines,
         group_name,
         schedule_date,
         show_group=always_show_group or tracked_count > 1 or not image,
+        subject_aliases=subject_aliases,
+        preferences=preferences,
     )
     if is_update:
         message = "‼️ РАСПИСАНИЕ ИЗМЕНИЛОСЬ\n\n" + message
-    await _send_with_image(bot, uid, message, image, keyboard)
+    message = append_broadcast_schedule_notice(message, recipient_role, schedule_date)
+    await send_personal_schedule(bot, uid, message, image, keyboard, preferences,
+                                 notice=get_schedule_settings_notice(schedule_date))
+    return True
+
+
+def find_missing_tracked_groups(
+    tracked_by_user: dict[int, list[str]],
+    available_groups: set[str],
+) -> Counter[str]:
+    available = {group.upper() for group in available_groups}
+    return Counter(
+        group.upper()
+        for groups in tracked_by_user.values()
+        for group in groups
+        if group.upper() not in available
+    )
+
+
+def find_missing_tracked_groups_by_user(
+    tracked_by_user: dict[int, list[str]],
+    available_groups: set[str],
+) -> dict[int, list[str]]:
+    available = {group.upper() for group in available_groups}
+    return {
+        user_id: list(
+            dict.fromkeys(
+                group.upper()
+                for group in groups
+                if group.upper() not in available
+            )
+        )
+        for user_id, groups in tracked_by_user.items()
+        if any(group.upper() not in available for group in groups)
+    }
+
+
+async def _notify_missing_tracked_groups(
+    bot: Bot,
+    missing: Counter[str],
+    schedule_date: str,
+) -> None:
+    if not missing:
+        return
+
+    from handlers.schedule_alerts import OWNER_ID
+
+    rows = [
+        f"• <code>{escape(group)}</code> — {count}"
+        for group, count in missing.most_common(40)
+    ]
+    if len(missing) > len(rows):
+        rows.append(f"• и ещё {len(missing) - len(rows)}")
+    text = (
+        "⚠️ <b>Группы из базы не найдены в расписании</b>\n"
+        f"Дата: <b>{escape(schedule_date)}</b>\n"
+        "Отправка этим подпискам пропущена:\n\n"
+        + "\n".join(rows)
+    )
+    try:
+        with message_tracking_context(
+            message_kind="schedule_warning",
+            schedule_date=schedule_date,
+            schedule_type="groups",
+        ):
+            await bot.send_message(OWNER_ID, text, parse_mode="HTML")
+    except Exception as exc:
+        logging.warning("[broadcast] Не удалось уведомить владельца: %s", exc)
+
+
+async def _notify_users_about_missing_groups(
+    bot: Bot,
+    missing_by_user: dict[int, list[str]],
+    schedule_date: str,
+    preferences_by_user=None,
+) -> int:
+    notified = 0
+    for user_id, groups in missing_by_user.items():
+        rows = "\n".join(f"• <code>{escape(group)}</code>" for group in groups)
+        text = (
+            "⚠️ <b>Группа не найдена в расписании</b>\n\n"
+            f"В файле на <b>{escape(schedule_date)}</b> нет отслеживаемой группы:\n"
+            f"{rows}\n\n"
+            "Проверьте номер в /groups. Если он указан верно, значит группы нет "
+            "в исходном файле колледжа."
+        )
+        text = append_broadcast_schedule_notice(text, None, schedule_date)
+        try:
+            with message_tracking_context(
+                message_kind="schedule_missing_group",
+                schedule_date=schedule_date,
+                schedule_type="groups",
+                entity=", ".join(groups),
+            ):
+                preferences = (preferences_by_user or {}).get(user_id, SchedulePreferences())
+                await bot.send_message(user_id, text, parse_mode="HTML", disable_notification=preferences.silent)
+            notified += 1
+        except Exception as exc:
+            logging.warning(
+                "[broadcast] Не удалось сообщить uid=%s об отсутствующей группе: %s",
+                user_id,
+                exc,
+            )
+    return notified
 
 
 def parse_schedule_file_metadata(file_path: str, file_name: str) -> tuple[str | None, str | None, str | None]:
@@ -147,6 +298,25 @@ def load_schedule_df(file_path: str, schedule_date: str) -> tuple[pd.DataFrame |
         return None, f"Ошибка чтения файла: {e}"
 
 
+def validate_schedule_df(df: pd.DataFrame, schedule_type: str) -> str | None:
+    """Reject empty or structurally unrecognized files before any side effects."""
+    if df is None or df.empty or df.shape[1] < 2:
+        return "Файл прочитан, но таблица расписания пуста."
+
+    try:
+        from schedules.schedule_catalog import extract_catalog_entries
+
+        entries = extract_catalog_entries(df)
+    except Exception as exc:
+        return f"Не удалось проверить структуру расписания: {exc}"
+
+    if schedule_type == "groups" and not entries["groups"]:
+        return "В файле групп не найдено ни одного корректного номера группы."
+    if schedule_type == "teachers" and not entries["teachers"]:
+        return "В файле преподавателей не найдено ни одного корректного ФИО."
+    return None
+
+
 async def process_and_broadcast(
     file_path: str,
     file_name: str,
@@ -195,6 +365,30 @@ async def process_and_broadcast(
     df, err = load_schedule_df(file_path, schedule_date)
     if err:
         return False, err
+    validation_error = validate_schedule_df(df, schedule_type)
+    if validation_error:
+        return False, validation_error
+
+    # Knowledge revisions retain source bytes BEFORE the legacy filename is
+    # overwritten. This hook is isolated from delivery and never reads users.
+    if schedule_type == "groups":
+        try:
+            from schedules.knowledge_store import KnowledgeStore
+
+            knowledge = KnowledgeStore(config.DATA_DIR)
+            previous_path = os.path.join(config.DATA_DIR, file_name)
+            if os.path.isfile(previous_path) and os.path.abspath(previous_path) != os.path.abspath(file_path):
+                previous_df, previous_error = load_schedule_df(previous_path, schedule_date)
+                knowledge.ingest(previous_path, schedule_date, previous_df,
+                                 error=previous_error, archived_import=True,
+                                 received_at=dt.datetime.fromtimestamp(
+                                     os.path.getmtime(previous_path), dt.timezone.utc
+                                 ).isoformat(timespec="seconds"))
+            knowledge_result = knowledge.ingest(file_path, schedule_date, df)
+            if knowledge_result["status"] != "parsed":
+                logging.warning("[knowledge] Source structure could not be indexed for %s", schedule_date)
+        except Exception:
+            logging.exception("[knowledge] Unable to snapshot schedule %s", schedule_date)
 
     # 4. Сохраняем файл в DATA_DIR
     try:
@@ -262,6 +456,7 @@ async def process_and_broadcast(
     rows = cur.fetchall()
     conn.close()
     tracked_by_user = get_all_tracked_groups(config.DB_PATH)
+    personal_preferences = get_all_preferences(config.DB_PATH)
 
     for uid, role, namegrp, is_class_teacher, class_group in rows:
         if uid in tracked_by_user:
@@ -270,6 +465,34 @@ async def process_and_broadcast(
             tracked_by_user[uid] = [namegrp.upper()]
         elif role == config.ROLE_TEACHER and is_class_teacher and class_group:
             tracked_by_user[uid] = [class_group.upper()]
+
+    available_groups: set[str] = set()
+    if schedule_type == "groups":
+        from schedules.schedule_catalog import extract_catalog_entries
+
+        available_groups = set(extract_catalog_entries(df)["groups"])
+        missing_tracked_groups = find_missing_tracked_groups(
+            tracked_by_user,
+            available_groups,
+        )
+        await _notify_missing_tracked_groups(bot, missing_tracked_groups, schedule_date)
+        missing_by_user = find_missing_tracked_groups_by_user(
+            tracked_by_user,
+            available_groups,
+        )
+        missing_by_user = {uid: groups for uid, groups in missing_by_user.items()
+                           if wants_broadcast(personal_preferences.get(uid, SchedulePreferences()), is_update=is_update)}
+        missing_notice_count = await _notify_users_about_missing_groups(
+            bot,
+            missing_by_user,
+            schedule_date,
+            preferences_by_user=personal_preferences,
+        )
+        if missing_notice_count:
+            await _log(
+                "Об отсутствующей группе уведомлены "
+                f"{missing_notice_count} пользователей"
+            )
 
     # 6. Определяем изменённых пользователей
     if is_update:
@@ -307,14 +530,19 @@ async def process_and_broadcast(
     for (uid, role, namegrp, is_class_teacher, class_group) in rows:
         if uid not in changed_user_ids:
             continue
+        preferences = personal_preferences.get(uid, SchedulePreferences())
+        if not wants_broadcast(preferences, is_update=is_update):
+            continue
 
         if schedule_type == "groups":
             groups = tracked_by_user.get(uid, [])
             for group_name in groups:
+                if group_name.upper() not in available_groups:
+                    continue
                 if is_update and (uid, group_name) not in changed_group_keys:
                     continue
                 try:
-                    await _send_tracked_group_schedule(
+                    sent = await _send_tracked_group_schedule(
                         bot,
                         uid,
                         df,
@@ -324,9 +552,12 @@ async def process_and_broadcast(
                         is_update=is_update,
                         tracked_count=len(groups),
                         always_show_group=role == config.ROLE_TEACHER,
+                        recipient_role=role,
+                        preferences=preferences,
                     )
-                    success_count += 1
-                    notified_user_ids.add(uid)
+                    if sent:
+                        success_count += 1
+                        notified_user_ids.add(uid)
                 except Exception as e:
                     logging.warning(
                         f"[broadcast] Не удалось отправить uid={uid}, group={group_name}: {e}"
@@ -336,13 +567,19 @@ async def process_and_broadcast(
             if role == config.ROLE_TEACHER and uid in changed_teacher_ids:
                 lines_raw = teacher_schedule.get_schedule_for_teacher(df, namegrp)
                 if lines_raw:
-                    txt = "\n".join(lines_raw)
-                    msg_text = f"📆 <b>{schedule_date}</b>\n\nПреподаватель <b>{namegrp}</b>:\n\n{txt}"
+                    msg_text = render_schedule_message(lines_raw, namegrp, schedule_date, preferences=preferences, teacher=True)
                     if is_update:
                         msg_text = "‼️ РАСПИСАНИЕ ИЗМЕНИЛОСЬ\n\n" + msg_text
+                    msg_text = append_broadcast_schedule_notice(msg_text, role, schedule_date)
                     try:
-                        await bot.send_message(uid, text=msg_text, parse_mode="HTML",
-                                               reply_markup=create_schedule_keyboard(schedule_date, "groups"))
+                        with message_tracking_context(
+                            message_kind="schedule",
+                            schedule_date=schedule_date,
+                            schedule_type="groups",
+                            entity=namegrp,
+                        ):
+                            await send_personal_schedule(bot, uid, msg_text, None,
+                                create_schedule_keyboard(schedule_date, "groups"), preferences)
                         success_count += 1
                         notified_user_ids.add(uid)
                     except Exception as e:
@@ -355,20 +592,33 @@ async def process_and_broadcast(
                     msg_error = f"🔔 Пришло расписание!\n\nНо бот не нашёл ФИО '{namegrp}' в таблице."
                     if is_update:
                         msg_error = "‼️ РАСПИСАНИЕ ИЗМЕНИЛОСЬ\n\n" + msg_error
+                    msg_error = append_broadcast_schedule_notice(msg_error, role, schedule_date)
                     try:
-                        await bot.send_message(uid, msg_error)
+                        with message_tracking_context(
+                            message_kind="schedule",
+                            schedule_date=schedule_date,
+                            schedule_type="teachers",
+                            entity=namegrp,
+                        ):
+                            await bot.send_message(uid, msg_error, disable_notification=preferences.silent)
                         success_count += 1
                         notified_user_ids.add(uid)
                     except Exception as e:
                         logging.warning(f"[broadcast] Не удалось отправить uid={uid}: {e}")
                 else:
-                    txt = "\n".join(lines_raw)
-                    msg_text = f"📆 <b>{schedule_date}</b>\n\nПреподаватель <b>{namegrp}</b>:\n\n{txt}"
+                    msg_text = render_schedule_message(lines_raw, namegrp, schedule_date, preferences=preferences, teacher=True)
                     if is_update:
                         msg_text = "‼️ РАСПИСАНИЕ ИЗМЕНИЛОСЬ\n\n" + msg_text
+                    msg_text = append_broadcast_schedule_notice(msg_text, role, schedule_date)
                     try:
                         schedule_keyboard = create_schedule_keyboard(schedule_date, "teachers")
-                        await bot.send_message(uid, text=msg_text, parse_mode="HTML", reply_markup=schedule_keyboard)
+                        with message_tracking_context(
+                            message_kind="schedule",
+                            schedule_date=schedule_date,
+                            schedule_type="teachers",
+                            entity=namegrp,
+                        ):
+                            await send_personal_schedule(bot, uid, msg_text, None, schedule_keyboard, preferences)
                         success_count += 1
                         notified_user_ids.add(uid)
                     except Exception as e:

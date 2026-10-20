@@ -20,4 +20,4 @@ if os.path.exists(env_file):
 # Добавляем путь к проекту, если нужно
 sys.path.insert(0, os.path.dirname(__file__))
 
-from app import app as application
+from app import app as application 

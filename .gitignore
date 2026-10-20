@@ -55,7 +55,9 @@ bot/data/*.xlsx
 bot/data/*.pdf
 bot/data/*.xls
 bot/data/
-web/data/
+web/data/*
+!web/data/chat_confusables.json
+!web/data/UNICODE-LICENSE.txt
 backups/
 audits/
 web/static/design-previews-*/
@@ -113,3 +115,11 @@ gunicorn.pid
 
 # ACME challenges belong to the host, not the application source.
 .well-known/
+
+# Local agent state, scheduler locks, generated event exports and SEO keys.
+.agents/
+.codex/
+.aws/
+*.worker.lock
+web/static/exports/
+indexnow-key.txt

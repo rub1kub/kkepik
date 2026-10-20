@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const resultElement = document.getElementById('casinoResult');
     const ratingList = document.getElementById('casinoRatingList');
     const slotMachine = document.getElementById('casinoSlotMachine');
+    const betButton = document.querySelector('.casino-bet-btn');
     const reels = [
         document.getElementById('reel1'),
         document.getElementById('reel2'),
@@ -22,15 +23,14 @@ document.addEventListener('DOMContentLoaded', function() {
     ];
     const symbols = ['🍒', '🍊', '🍋', '🍇', '🍉', '🍎', '🍓', '🍍', '🍌'];
     let maxBet = 10;
+    let isBetPending = false;
 
-    function updateMaxBet(balance) {
-        if (balance > 10) {
-            maxBet = balance;
-        } else {
-            maxBet = 10;
-        }
+    function updateMaxBet(value) {
+        maxBet = Math.max(0, Math.min(Number(value) || 0, 1000));
         betInput.max = maxBet;
-        betInput.placeholder = `Ставка (до ${maxBet})`;
+        betInput.placeholder = maxBet ? `Ставка (до ${maxBet})` : 'Нет очков для ставки';
+        betInput.disabled = maxBet === 0;
+        betButton.disabled = maxBet === 0 || isBetPending;
     }
 
     function loadBalance() {
@@ -43,7 +43,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(data => {
             if (data.success) {
                 balanceElement.textContent = data.score;
-                updateMaxBet(data.score);
+                updateMaxBet(data.max_bet);
             } else {
                 balanceElement.textContent = '0';
                 updateMaxBet(0);
@@ -62,7 +62,11 @@ document.addEventListener('DOMContentLoaded', function() {
                     let name = row.first_name || row.username || 'Игрок';
                     if (row.username) name += ` (@${row.username})`;
                     const li = document.createElement('li');
-                    li.innerHTML = `<span>${name}</span><span>${row.score}</span>`;
+                    const nameElement = document.createElement('span');
+                    const scoreElement = document.createElement('span');
+                    nameElement.textContent = name;
+                    scoreElement.textContent = String(row.score);
+                    li.append(nameElement, scoreElement);
                     ratingList.appendChild(li);
                 });
             }
@@ -94,6 +98,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     betForm.addEventListener('submit', function(e) {
         e.preventDefault();
+        if (isBetPending) return;
         const betAmount = parseInt(betInput.value);
         if (isNaN(betAmount) || betAmount <= 0) {
             resultElement.textContent = 'Введите корректную сумму ставки';
@@ -106,6 +111,8 @@ document.addEventListener('DOMContentLoaded', function() {
             betInput.value = maxBet;
             return;
         }
+        isBetPending = true;
+        betButton.disabled = true;
         spinReels();
         updateReelSymbols();
         fetch('/api/casino/bet', {
@@ -144,16 +151,19 @@ document.addEventListener('DOMContentLoaded', function() {
                         updateMaxBet(data.max_bet);
                     }
                 }
+                isBetPending = false;
+                betButton.disabled = maxBet === 0;
             }, 2000);
         })
         .catch(() => {
             resultElement.textContent = 'Произошла ошибка при отправке ставки';
             resultElement.className = 'casino-result lose';
+            isBetPending = false;
+            betButton.disabled = maxBet === 0;
         });
     });
     loadBalance();
     loadRating();
-    const betButton = document.querySelector('.casino-bet-btn');
     betButton.addEventListener('click', function() {
         if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
     });

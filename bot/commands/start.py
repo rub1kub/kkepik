@@ -23,7 +23,10 @@ from schedules.schedule_formatter import (
 )
 from schedules.schedule_dates import is_current_schedule
 from schedules.schedule_keyboard import create_schedule_keyboard
-from tracked_groups import get_tracked_groups, replace_tracked_groups
+from tracked_groups import get_tracked_groups, get_user_role, is_valid_group_name, replace_tracked_groups
+from schedule_preferences import get_preferences
+from schedules.personal_delivery import send_personal_schedule
+from schedules.message_constructor import render_schedule_message, personal_subject_aliases
 
 
 def _find_latest_schedule(schedule_type: str):
@@ -122,28 +125,18 @@ async def _answer_group_schedule(
         lines = [f"▪️{pair} пара – Нет" for pair in range(1, 5)]
 
     img_bytes = global_schedules.last_groups_crop_cache.get(group_name)
+    preferences = get_preferences(message.from_user.id)
     show_group = always_show_group or tracked_count > 1 or not img_bytes
     msg_text = build_group_schedule_message(
         lines,
         group_name,
         schedule_date,
         show_group=show_group,
+        preferences=preferences,
+        subject_aliases=personal_subject_aliases(get_user_role(config.get_db_path(), message.from_user.id), group_name),
     )
     schedule_keyboard = create_schedule_keyboard(schedule_date, "groups")
-    if img_bytes:
-        photo = BufferedInputFile(img_bytes, filename="schedule.png")
-        caption = fit_photo_caption(msg_text)
-        if telegram_text_length(caption) <= 1024:
-            await message.answer_photo(
-                photo=photo,
-                caption=caption,
-                reply_markup=schedule_keyboard,
-            )
-        else:
-            await message.answer_photo(photo=photo)
-            await message.answer(msg_text, reply_markup=schedule_keyboard)
-    else:
-        await message.answer(msg_text, reply_markup=schedule_keyboard)
+    await send_personal_schedule(message.bot, message.chat.id, msg_text, img_bytes, schedule_keyboard, preferences)
     return True
 
 
@@ -238,13 +231,10 @@ async def cmd_start(message: types.Message, state: FSMContext):
                 schedule_date = None
 
             if lines_raw:
-                txt = "\n".join(lines_raw)
-                msg_text = (
-                    f"📆 Ваше расписание (преподаватель <b>{typed_name}</b>):\n\n"
-                    f"<b>{schedule_date}</b>\n\n{txt}"
-                )
+                preferences = get_preferences(user_id)
+                msg_text = render_schedule_message(lines_raw, typed_name, schedule_date, preferences=preferences, teacher=True)
                 schedule_keyboard = create_schedule_keyboard(schedule_date, "groups")
-                await message.answer(msg_text, parse_mode="HTML", reply_markup=schedule_keyboard)
+                await send_personal_schedule(message.bot, message.chat.id, msg_text, None, schedule_keyboard, preferences)
             else:
                 await message.answer(
                     f"Расписание не найдено для преподавателя <b>{typed_name}</b>.",
@@ -290,7 +280,7 @@ async def process_role_callback(callback: types.CallbackQuery, state: FSMContext
     data = callback.data
     if data == "role_student":
         await state.update_data(role=config.ROLE_STUDENT)
-        await callback.message.answer("✏️Введите номер Вашей группы (например: 103-Д9-1ИНС).")
+        await callback.message.answer("✏️Введите номер Вашей группы (например: 103-Д3-3ИНС).")
         await state.set_state(RegistrationStates.waiting_name)
     elif data == "role_teacher":
         await state.update_data(role=config.ROLE_TEACHER)
@@ -308,11 +298,9 @@ async def process_name(message: types.Message, state: FSMContext):
     role = data.get("role", "")
 
     if role == config.ROLE_STUDENT:
-        # Проверка формата номера группы (например: 103-Д9-1ИНС)
-        group_pattern = r'^\d{2,3}-[А-ЯЁа-яёA-Za-z]{1,2}\d{1,2}-\d{1,2}[А-ЯЁа-яёA-Za-z]{3}$'
-        if not re.match(group_pattern, name_or_group):
+        if not is_valid_group_name(name_or_group):
             await message.answer(
-                "❌ Неверный формат номера группы. Пожалуйста, введите номер группы в формате, похожем на: <code>103-Д9-1ИНС</code>", 
+                "❌ Неверный формат номера группы. Пожалуйста, введите номер группы в формате, похожем на: <code>103-Д3-3ИНС</code>", 
                 parse_mode=ParseMode.HTML
             )
             return  # Остаемся в том же состоянии, ожидая корректного ввода
@@ -394,7 +382,7 @@ async def process_class_teacher_callback(callback: types.CallbackQuery, state: F
     user_id = callback.from_user.id
     
     if data == "is_class_teacher_yes":
-        await callback.message.answer("✏️ Введите номер группы, которую Вы ведете (например: 103-Д9-1ИНС).")
+        await callback.message.answer("✏️ Введите номер группы, которую Вы ведете (например: 103-Д3-3ИНС).")
         await state.set_state(RegistrationStates.waiting_group)
     else:
         # Если не классный руководитель, завершаем регистрацию
@@ -419,11 +407,9 @@ async def process_class_group(message: types.Message, state: FSMContext):
         return
     
     group = message.text.strip().upper()
-    # Проверка формата номера группы
-    group_pattern = r'^\d{2,3}-[А-ЯЁа-яёA-Za-z]{1,2}\d{1,2}-\d{1,2}[А-ЯЁа-яёA-Za-z]{3}$'
-    if not re.match(group_pattern, group):
+    if not is_valid_group_name(group):
         await message.answer(
-            "❌ Неверный формат номера группы. Пожалуйста, введите номер группы в формате, похожем на: <code>103-Д9-1ИНС</code>", 
+            "❌ Неверный формат номера группы. Пожалуйста, введите номер группы в формате, похожем на: <code>103-Д3-3ИНС</code>", 
             parse_mode=ParseMode.HTML
         )
         return

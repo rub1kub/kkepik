@@ -337,8 +337,6 @@ async def inline_schedule(inline_query: types.InlineQuery):
         result_id_prefix = f"explicit_{target_date.strftime('%Y%m%d')}" if target_date else "available"
 
         found_something = False
-        group_pattern_check = r'^\d{2,3}-[А-ЯЁа-яёA-Za-z]{1,2}\d{1,2}-\d{1,2}[А-ЯЁа-яёA-Za-z]{3}$'
-
         for current_date in dates_to_check:
             lines = None
             found_type = None
@@ -356,7 +354,7 @@ async def inline_schedule(inline_query: types.InlineQuery):
                     date_to_use = date_g
 
             # 2. Если НЕ найдено для группы ИЛИ если запрос НЕ похож на группу, ищем для преподавателя
-            looks_like_group = bool(re.match(group_pattern_check, typed_name))
+            looks_like_group = group_schedule.is_group_name(typed_name)
 
             if not lines and not looks_like_group:
                 df_t, date_t = load_schedule_file(current_date, "teachers")

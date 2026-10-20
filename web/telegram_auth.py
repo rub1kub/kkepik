@@ -93,6 +93,8 @@ def authenticated_telegram_user(flask_request: Any) -> dict[str, Any] | None:
         return None
     try:
         user = json.loads(params.get("user", "{}"))
+        if not isinstance(user, dict) or isinstance(user.get("id"), bool):
+            return None
         user_id = int(user.get("id", 0))
     except (TypeError, ValueError, json.JSONDecodeError):
         return None

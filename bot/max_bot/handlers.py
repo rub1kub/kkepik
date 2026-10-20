@@ -6,16 +6,22 @@ import os
 import re
 import tempfile
 import traceback
+import html
+import time
 from urllib.parse import unquote, urlparse
 
 import aiohttp
 from pyromax import MaxApi
 from pyromax.models import FileAttachment, Message
 
+from message_registry import is_message_recorded, record_message
+
 
 ADMIN_ID = 1084693264
 MAX_FILE_BYTES = 25 * 1024 * 1024
+MAX_RETRY_DELAY_MS = 5 * 60 * 1000
 _seen_message_ids: dict[str, None] = {}
+_retry_after_ms: dict[str, int] = {}
 
 
 def register_handlers(dispatcher, *, accept_after_ms: int) -> None:
@@ -44,22 +50,74 @@ async def _handle_message(
     if message_key in _seen_message_ids:
         print(f"[MAX] Повтор события {message.message_id} пропущен")
         return
+    retry_after = _retry_after_ms.get(message_key, 0)
+    if retry_after > int(time.monotonic() * 1000):
+        return
+    try:
+        if is_message_recorded(
+            "max",
+            "incoming",
+            message.chat_id,
+            message.message_id,
+        ):
+            print(f"[MAX] Уже обработанное событие {message.message_id} пропущено")
+            return
+    except Exception as exc:
+        print(f"[MAX] Не удалось проверить постоянный дедупликатор: {exc}")
     _remember_message(message_key)
+    _hydrate_file_attachments(message)
 
     try:
         print(
             f"[MAX] Новое сообщение в разрешённом чате {message.chat_id}; "
             f"вложений: {len(message.attaches or [])}"
         )
+        found_schedule = False
+        processing_succeeded = True
         for attachment in message.attaches or []:
             if isinstance(attachment, FileAttachment):
-                await _process_file_attachment(attachment, max_api)
+                result = await _process_file_attachment(
+                    attachment,
+                    max_api,
+                    source_chat_id=message.chat_id,
+                    source_message_id=message.message_id,
+                )
+                if result is not None:
+                    found_schedule = True
+                    processing_succeeded = processing_succeeded and result
 
         if message.text:
-            await _check_text_for_schedule_links(message.text)
+            result = await _check_text_for_schedule_links(
+                message.text,
+                source_chat_id=message.chat_id,
+                source_message_id=message.message_id,
+            )
+            if result is not None:
+                found_schedule = True
+                processing_succeeded = processing_succeeded and result
+
+        if found_schedule and not processing_succeeded:
+            _schedule_retry(message_key)
+            return
+
+        if not found_schedule:
+            record_message(
+                platform="max",
+                direction="incoming",
+                chat_id=message.chat_id,
+                message_id=message.message_id,
+                message_kind="max_event",
+            )
+        _retry_after_ms.pop(message_key, None)
     except Exception as exc:
+        _schedule_retry(message_key)
         print(f"[MAX] Ошибка обработки сообщения: {exc}")
         traceback.print_exc()
+        await _notify_processing_error(
+            error=exc,
+            source_chat_id=message.chat_id,
+            source_message_id=message.message_id,
+        )
 
 
 def _remember_message(message_key: str) -> None:
@@ -68,45 +126,126 @@ def _remember_message(message_key: str) -> None:
         _seen_message_ids.pop(next(iter(_seen_message_ids)))
 
 
-async def _process_file_attachment(attachment: FileAttachment, max_api: MaxApi) -> None:
-    declared_size = int(getattr(attachment, "size", 0) or 0)
-    if declared_size > MAX_FILE_BYTES:
-        print(f"[MAX] Вложение слишком большое: {declared_size} байт")
-        return
+def _schedule_retry(message_key: str) -> None:
+    _seen_message_ids.pop(message_key, None)
+    _retry_after_ms[message_key] = int(time.monotonic() * 1000) + MAX_RETRY_DELAY_MS
+    if len(_retry_after_ms) > 5000:
+        _retry_after_ms.pop(next(iter(_retry_after_ms)))
 
+
+def _hydrate_file_attachments(message: Message) -> None:
+    """Restore fields omitted by pyromax for attachments loaded from history."""
+    for attachment in message.attaches or []:
+        if not isinstance(attachment, FileAttachment):
+            continue
+        attachment.uploaded = True
+        attachment.chat_id = message.chat_id
+        attachment.message_id = message.message_id
+
+
+async def _process_file_attachment(
+    attachment: FileAttachment,
+    max_api: MaxApi,
+    *,
+    source_chat_id: int | str,
+    source_message_id: int | str,
+) -> bool | None:
     file_name = _safe_file_name(
         getattr(attachment, "name", None)
         or getattr(attachment, "file_name", None)
         or ""
     )
+    declared_size = int(getattr(attachment, "size", 0) or 0)
+    if declared_size > MAX_FILE_BYTES:
+        print(f"[MAX] Вложение слишком большое: {declared_size} байт")
+        await _notify_processing_error(
+            error=f"Файл слишком большой: {declared_size} байт",
+            file_name=file_name or None,
+            source_chat_id=source_chat_id,
+            source_message_id=source_message_id,
+        )
+        _record_schedule_source(
+            source_chat_id,
+            source_message_id,
+            file_name,
+            message_kind="schedule_rejected",
+        )
+        return True
+
     if file_name and not _is_schedule_file(file_name):
-        return
+        return None
 
     data, headers = await max_api.download_file(attachment)
     if not data:
         print("[MAX] Не удалось скачать файловое вложение")
-        return
+        await _notify_processing_error(
+            error="MAX не вернул содержимое файлового вложения",
+            file_name=file_name or None,
+            source_chat_id=source_chat_id,
+            source_message_id=source_message_id,
+        )
+        return False
     if len(data) > MAX_FILE_BYTES:
         print(f"[MAX] Загруженный файл слишком большой: {len(data)} байт")
-        return
+        await _notify_processing_error(
+            error=f"Загруженный файл слишком большой: {len(data)} байт",
+            file_name=file_name or None,
+            source_chat_id=source_chat_id,
+            source_message_id=source_message_id,
+        )
+        _record_schedule_source(
+            source_chat_id,
+            source_message_id,
+            file_name,
+            message_kind="schedule_rejected",
+        )
+        return True
 
     if not file_name:
         file_name = _filename_from_headers(headers or {})
     file_name = _safe_file_name(file_name)
     if not _is_schedule_file(file_name):
-        return
-    await _process_schedule_bytes(bytes(data), file_name)
+        return None
+    return await _process_schedule_bytes(
+        bytes(data),
+        file_name,
+        source_chat_id=source_chat_id,
+        source_message_id=source_message_id,
+    )
 
 
-async def _check_text_for_schedule_links(text: str) -> None:
+async def _check_text_for_schedule_links(
+    text: str,
+    *,
+    source_chat_id: int | str,
+    source_message_id: int | str,
+) -> bool | None:
     urls = re.findall(r"https?://\S+\.(?:pdf|xlsx)(?:\?\S*)?", text, re.IGNORECASE)
+    found_schedule = False
+    processing_succeeded = True
     for url in urls:
         file_name = _safe_file_name(unquote(urlparse(url).path.rsplit("/", 1)[-1]))
         if not _is_schedule_file(file_name):
             continue
+        found_schedule = True
         data = await _download_url(url)
         if data:
-            await _process_schedule_bytes(data, file_name)
+            current_succeeded = await _process_schedule_bytes(
+                data,
+                file_name,
+                source_chat_id=source_chat_id,
+                source_message_id=source_message_id,
+            )
+            processing_succeeded = current_succeeded and processing_succeeded
+        else:
+            processing_succeeded = False
+            await _notify_processing_error(
+                error="Не удалось скачать файл расписания по ссылке",
+                file_name=file_name,
+                source_chat_id=source_chat_id,
+                source_message_id=source_message_id,
+            )
+    return processing_succeeded if found_schedule else None
 
 
 async def _download_url(url: str) -> bytes | None:
@@ -130,22 +269,40 @@ async def _download_url(url: str) -> bytes | None:
             return bytes(data)
 
 
-async def _process_schedule_bytes(data: bytes, file_name: str) -> None:
+async def _process_schedule_bytes(
+    data: bytes,
+    file_name: str,
+    *,
+    source_chat_id: int | str,
+    source_message_id: int | str,
+) -> bool:
     from max_bot.client import get_telegram_bot
 
     if not _has_valid_signature(data, file_name):
         print(f"[MAX] Файл '{file_name}' имеет неверный формат")
-        return
+        await _notify_processing_error(
+            error="Содержимое файла не соответствует его расширению",
+            file_name=file_name,
+            source_chat_id=source_chat_id,
+            source_message_id=source_message_id,
+        )
+        _record_schedule_source(
+            source_chat_id,
+            source_message_id,
+            file_name,
+            message_kind="schedule_rejected",
+        )
+        return True
 
     bot = get_telegram_bot()
     if bot is None:
         print("[MAX] Telegram бот недоступен; файл не обработан")
-        return
+        return False
 
     try:
         await bot.send_message(
             ADMIN_ID,
-            f"📩 Получен файл расписания из MAX:\n<b>{file_name}</b>",
+            f"📩 Получен файл расписания из MAX:\n<b>{html.escape(file_name)}</b>",
             parse_mode="HTML",
         )
     except Exception as exc:
@@ -168,12 +325,92 @@ async def _process_schedule_bytes(data: bytes, file_name: str) -> None:
     except Exception as exc:
         print(f"[MAX] Ошибка обработки файла: {exc}")
         traceback.print_exc()
-        await _notify_admin(bot, f"Ошибка при обработке {file_name}: {exc}")
+        await _notify_processing_error(
+            error=exc,
+            file_name=file_name,
+            source_chat_id=source_chat_id,
+            source_message_id=source_message_id,
+            bot=bot,
+        )
+        return False
+
+    if not success:
+        print(f"[MAX] Файл отклонён: {result}")
+        await _notify_processing_error(
+            error=result,
+            file_name=file_name,
+            source_chat_id=source_chat_id,
+            source_message_id=source_message_id,
+            bot=bot,
+        )
+        _record_schedule_source(
+            source_chat_id,
+            source_message_id,
+            file_name,
+            message_kind="schedule_rejected",
+        )
+        return True
+
+    _record_schedule_source(source_chat_id, source_message_id, file_name)
+    print(f"[MAX] Рассылка завершена: {result}")
+    await _notify_admin(bot, f"Рассылка завершена: {result}")
+    return True
+
+
+def _record_schedule_source(
+    source_chat_id: int | str,
+    source_message_id: int | str,
+    file_name: str,
+    *,
+    message_kind: str = "schedule_source",
+) -> None:
+    try:
+        date_match = re.search(r"(\d{1,2}\.\d{1,2}\.\d{4})", file_name)
+        upper_name = file_name.upper()
+        record_message(
+            platform="max",
+            direction="incoming",
+            chat_id=source_chat_id,
+            message_id=source_message_id,
+            message_kind=message_kind,
+            schedule_date=date_match.group(1) if date_match else None,
+            schedule_type=(
+                "groups"
+                if "ГРУПП" in upper_name
+                else "teachers" if "ПРЕПОДАВАТЕЛИ" in upper_name else None
+            ),
+            file_name=file_name,
+        )
+    except Exception as exc:
+        print(f"[MAX] Не удалось записать message_id источника: {exc}")
+
+
+async def _notify_processing_error(
+    *,
+    error,
+    source_chat_id: int | str,
+    source_message_id: int | str,
+    file_name: str | None = None,
+    bot=None,
+) -> None:
+    if bot is None:
+        from max_bot.client import get_telegram_bot
+
+        bot = get_telegram_bot()
+    if bot is None:
+        print("[MAX] Telegram бот недоступен; уведомление об ошибке не отправлено")
         return
 
-    prefix = "Рассылка завершена" if success else "Файл отклонён"
-    print(f"[MAX] {prefix}: {result}")
-    await _notify_admin(bot, f"{prefix}: {result}")
+    from handlers.schedule_alerts import notify_schedule_error
+
+    await notify_schedule_error(
+        bot,
+        error=error,
+        source="MAX",
+        file_name=file_name,
+        source_chat_id=source_chat_id,
+        source_message_id=source_message_id,
+    )
 
 
 async def _notify_admin(bot, text: str) -> None:

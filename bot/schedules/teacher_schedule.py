@@ -73,6 +73,9 @@ def normalize_audience(val: str) -> str:
     Если val выглядит как число (даже с .0), пробуем привести к int и вернуть строку.
     """
     val = val.strip()
+    compact = re.sub(r"\s+", "", val)
+    if re.fullmatch(r"0+(?:[._/\-]0+)*", compact):
+        return ""
     try:
         f = float(val)
         i = int(f)
@@ -89,6 +92,8 @@ def is_audience_token(token: str) -> bool:
     token = token.strip().lower()
     if not token:
         return False
+    if re.fullmatch(r"0+(?:[._/\-]0+)*", re.sub(r"\s+", "", token)):
+        return True
     token_norm = normalize_audience(token)
     if re.match(r'^\d+$', token_norm):
         return True

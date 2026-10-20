@@ -7,6 +7,7 @@
     <meta name="MobileOptimized" content="width">
     <title>Судоку - KKEPIK</title>
     <script src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
+    <script defer src="{{ url_for('static', filename='js/miniapp_presence.js') }}?v={{ STATIC_VERSION|default('20260930-1') }}"></script>
     <script src="{{ url_for('static', filename='js/vendor/canvas-confetti.1.6.0.min.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/testmain.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/sudoku.css') }}">

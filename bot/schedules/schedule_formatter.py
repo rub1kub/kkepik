@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from html import escape
+from html import escape, unescape
 import re
 
 from schedules.group_schedule import is_audience_token
@@ -68,6 +68,7 @@ def _format_lesson(
     first_course: bool,
     date_str: str,
     show_time: bool,
+    subject_aliases: dict[str, str] | None = None,
 ) -> str:
     parsed = _split_lesson(line)
     if parsed is None:
@@ -80,7 +81,8 @@ def _format_lesson(
         if pair_time:
             pair_header += f" · <i>{pair_time}</i>"
 
-    safe_subject = _safe(subject)
+    display_subject = (subject_aliases or {}).get(_plain(subject), subject)
+    safe_subject = _safe(display_subject)
     if safe_subject.casefold() == "нет":
         return f"{pair_header} – Нет"
 
@@ -105,7 +107,10 @@ def _format_lesson(
     return f"{first_line}\n   {detail_text}"
 
 
-def format_group_schedule(lines: list[str], group_name: str, date_str: str) -> str:
+def format_group_schedule(
+    lines: list[str], group_name: str, date_str: str, *,
+    subject_aliases: dict[str, str] | None = None,
+) -> str:
     first_course = get_group_course(group_name) == 1
     show_time = should_show_pair_times(group_name, date_str)
     blocks = []
@@ -118,6 +123,7 @@ def format_group_schedule(lines: list[str], group_name: str, date_str: str) -> s
                         first_course=first_course,
                         date_str=date_str,
                         show_time=show_time,
+                        subject_aliases=subject_aliases,
                     )
                 )
     return "\n\n".join(blocks)
@@ -129,18 +135,17 @@ def build_group_schedule_message(
     date_str: str,
     *,
     show_group: bool = True,
+    subject_aliases: dict[str, str] | None = None,
+    preferences=None,
 ) -> str:
-    schedule = format_group_schedule(lines, group_name, date_str)
-    mood = get_mood_emoji(lines)
-    header = f"{mood} Расписание на <b>{escape(date_str)}</b>"
-    if show_group:
-        header += f"\n\nГруппа <b>{escape(group_name)}</b>:"
-    return f"{header}\n\n{schedule}"
+    from schedules.message_constructor import render_schedule_message
+    return render_schedule_message(lines, group_name, date_str, preferences=preferences,
+                                   show_group=show_group, subject_aliases=subject_aliases)
 
 
 def telegram_text_length(text: str) -> int:
-    """Approximate Telegram's post-parse text length for HTML messages."""
-    return len(_HTML_TAG_RE.sub("", text))
+    """Count visible UTF-16 units, including astral emoji and HTML entities."""
+    return len(unescape(_HTML_TAG_RE.sub("", text)).encode("utf-16-le")) // 2
 
 
 def fit_photo_caption(text: str, limit: int = 1024) -> str:

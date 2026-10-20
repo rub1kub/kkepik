@@ -1,17 +1,27 @@
-const CACHE_VERSION = 'kkepik-shell-20260826-11';
+const CACHE_VERSION = 'kkepik-shell-20261008-knowledge-1';
 const SHELL_URL = '/';
 const APP_SHELL = [
     SHELL_URL,
-    '/static/css/main.css?v=20260826-11',
+    '/static/css/main.css?v=20261008-knowledge-1',
+    '/static/css/message_settings.css?v=20261008-knowledge-1',
     '/static/js/vendor/telegram-web-app.63.js',
-    '/static/js/app_bootstrap.js?v=20260826-11',
-    '/static/js/effects.js?v=20260826-11',
-    '/static/js/swipe_detector.js?v=20260826-11',
-    '/static/js/schedule.js?v=20260826-11',
-    '/static/js/main.js?v=20260826-11',
-    '/static/js/image_cards.js?v=20260826-11',
-    '/static/js/schedule_reactions.js?v=20260826-11',
-    '/static/js/group_selector.js?v=20260826-11',
+    '/static/js/app_bootstrap.js?v=20261008-knowledge-1',
+    '/static/js/effects.js?v=20261008-knowledge-1',
+    '/static/js/swipe_detector.js?v=20261008-knowledge-1',
+    '/static/js/schedule.js?v=20261008-knowledge-1',
+    '/static/js/main.js?v=20261008-knowledge-1',
+    '/static/js/kepik-entry.js?v=20261008-knowledge-1',
+    '/static/js/message_settings.js?v=20261008-knowledge-1',
+    '/static/js/image_cards.js?v=20261008-knowledge-1',
+    '/static/js/schedule_reactions.js?v=20261008-knowledge-1',
+    '/static/js/group_selector.js?v=20261008-knowledge-1',
+    '/static/js/miniapp_presence.js?v=20261008-knowledge-1',
+    '/static/js/pixel_state.js?v=20261008-knowledge-1',
+    '/static/js/pixel_canvas.js?v=20261008-knowledge-1',
+    '/static/js/pixel_replay.js?v=20261008-knowledge-1',
+    '/static/css/pixel_replay.css?v=20261008-knowledge-1',
+    '/static/js/pixel_chat.js?v=20261008-knowledge-1',
+    '/static/css/pixel_chat.css?v=20261008-knowledge-1',
 ];
 
 self.addEventListener('install', function (event) {
@@ -36,6 +46,14 @@ self.addEventListener('activate', function (event) {
 
 function isPrivateRequest(url) {
     return url.pathname.startsWith('/api/')
+        // Public schedules carry changing, date-specific information. Never
+        // fall back to an old app-shell copy or strip their query parameters.
+        || url.pathname.startsWith('/colleges/')
+        || url.pathname === '/agents'
+        || url.pathname === '/mcp'
+        || url.pathname === '/robots.txt'
+        || url.pathname === '/sitemap.xml'
+        || url.pathname === '/llms.txt'
         || url.pathname === '/validate'
         || url.pathname.startsWith('/admin/')
         || url.pathname.startsWith('/vpn/');

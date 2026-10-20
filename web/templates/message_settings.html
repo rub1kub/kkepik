@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Конструктор расписания — Кэпик</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v={{ STATIC_VERSION }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/message_settings.css') }}?v={{ STATIC_VERSION }}">
+  <script defer src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/message_settings.js') }}?v={{ STATIC_VERSION }}"></script>
+</head>
+<body class="constructor-body">
+<main class="constructor-page">
+  <header class="constructor-header">
+    <h1>Настройки расписания</h1>
+    <p>Выберите шаблон или соберите сообщение под себя.</p>
+  </header>
+  <p id="constructorStatus" class="constructor-status" role="status" aria-live="polite">Загружаем настройки…</p>
+  <div class="constructor-layout">
+    <form id="constructorForm" class="constructor-editor">
+      <fieldset id="constructorControls" disabled>
+        <section class="constructor-section" aria-labelledby="presetTitle">
+          <h2 id="presetTitle">Начните с шаблона</h2>
+          <div id="constructorPresets" class="constructor-presets"></div>
+        </section>
+        <section class="constructor-section">
+          <h2>Что показывать</h2>
+          <div class="constructor-toggles">
+            <label><span>Время начала и окончания пар</span><input type="checkbox" data-pref="show_times"></label>
+            <label><span>Преподаватели / группы у преподавателя</span><input type="checkbox" data-pref="show_teachers"></label>
+            <label><span>Аудитории</span><input type="checkbox" data-pref="show_rooms"></label>
+            <label><span>Свободные пары</span><input type="checkbox" data-pref="show_free_pairs"></label>
+            <label><span>Эмодзи настроения</span><input type="checkbox" data-pref="show_emoji"></label>
+            <label><span>Начало и окончание учебного дня</span><input type="checkbox" data-pref="show_bounds"></label>
+          </div>
+          <label class="constructor-label">Название группы / преподавателя
+            <select data-pref="show_group"><option value="auto">Когда нужно отличить расписания</option><option value="always">Всегда показывать</option><option value="never">Скрывать</option></select>
+          </label>
+        </section>
+        <section class="constructor-section">
+          <h2>Соберите сообщение</h2>
+          <p class="constructor-help">Переставляйте блоки стрелками или перетаскиванием.</p>
+          <div id="constructorBlocks" class="constructor-sort-list"></div>
+          <label class="constructor-label">Заголовок
+            <textarea data-pref="header_template" maxlength="200" rows="2" spellcheck="false"></textarea>
+          </label>
+          <p class="constructor-help">Поля: {emoji}, {date}, {group}, {start}, {end}. Остальной текст — ваш.</p>
+          <label class="constructor-label">Ваш текст
+            <textarea data-pref="footer_text" maxlength="240" rows="2" placeholder="Например: Хорошего дня!"></textarea>
+          </label>
+        </section>
+        <section class="constructor-section">
+          <h2>Как выглядит одна пара</h2>
+          <p class="constructor-help">Настройте образец — он повторится для всех пар. Поля можно переместить в другую строку.</p>
+          <div id="constructorRows"></div>
+          <div class="constructor-inline">
+            <select id="constructorAddField" aria-label="Поле для добавления"></select>
+            <button type="button" id="constructorAddButton" class="constructor-secondary">Добавить поле</button>
+          </div>
+          <div class="constructor-options-grid">
+            <label class="constructor-label">Выделение<select data-pref="emphasis"><option value="auto">Привычное</option><option value="subject">Предметы</option><option value="time">Время</option><option value="none">Обычный текст</option></select></label>
+            <label class="constructor-label">Интервалы<select data-pref="spacing"><option value="spacious">Воздух между парами</option><option value="compact">Компактно</option><option value="line">Разделительная линия</option></select></label>
+            <label class="constructor-label">Номер пары<select data-pref="pair_prefix"><option value="bullet">С маркером</option><option value="number">Коротко: 1.</option><option value="none">Без маркера</option></select></label>
+            <label class="constructor-label">Аудитория<select data-pref="room_label"><option value="full">аудитория 48</option><option value="short">ауд. 48</option><option value="none">48</option></select></label>
+          </div>
+          <details class="constructor-advanced">
+            <summary>Свой текстовый шаблон пары</summary>
+            <label class="constructor-label">Шаблон<textarea id="constructorLessonTemplate" maxlength="800" rows="4" spellcheck="false" placeholder="Оставьте пустым, чтобы использовать поля выше"></textarea></label>
+            <p class="constructor-help">Доступны {pair}, {time}, {subject}, {teacher}, {room}, {date}, {group}, {start}, {end}, {emoji}. {subject} обязателен. Переносы строк сохраняются. HTML писать не нужно.</p>
+            <button type="button" id="constructorUseBlocks" class="constructor-secondary">Вернуться к сборке из полей</button>
+          </details>
+        </section>
+        <section class="constructor-section">
+          <h2>Доставка и уведомления</h2>
+          <label class="constructor-label">Формат<select data-pref="delivery_mode"><option value="photo_text">Скрин PDF и текст</option><option value="text">Только текст</option><option value="photo">Только скрин PDF</option></select></label>
+          <p class="constructor-help">Скрин PDF остаётся исходным: скрытие полей и шаблон меняют только текст. Если скрина нет, бот отправит текст.</p>
+          <div class="constructor-toggles">
+            <label><span>Получать рассылку расписаний</span><input type="checkbox" data-pref="notifications_enabled"></label>
+            <label><span>Получать изменения расписания</span><input type="checkbox" data-pref="notify_updates"></label>
+            <label><span>Отправлять без звука</span><input type="checkbox" data-pref="silent"></label>
+          </div>
+          <p class="constructor-help">По команде /start расписание доступно даже при отключённой рассылке.</p>
+        </section>
+      </fieldset>
+    </form>
+    <aside id="constructorPreview" class="constructor-preview" aria-labelledby="previewTitle">
+      <div class="constructor-preview-heading"><h2 id="previewTitle">Предпросмотр</h2><span id="constructorDraft">Ваш шаблон</span></div>
+      <label class="constructor-label" id="constructorEntityLabel" hidden>Какое расписание показать<select id="constructorEntity"></select></label>
+      <p id="constructorPreviewInfo" class="constructor-help"></p>
+      <div id="constructorMessage" class="constructor-message" aria-busy="true">
+        <div class="constructor-sender">ККЭПик</div>
+        <img id="constructorImage" alt="Исходный фрагмент расписания вашей группы" hidden>
+        <div id="constructorText" class="constructor-message-text">Здесь появится ваше расписание.</div>
+        <div class="constructor-message-meta">Предпросмотр сообщения</div>
+      </div>
+      <p id="constructorLength" class="constructor-help"></p>
+      <p id="constructorPreviewStatus" role="status" aria-live="polite" class="constructor-help"></p>
+    </aside>
+  </div>
+</main>
+<footer class="constructor-savebar">
+  <span id="constructorSaveState" role="status">Изменения ещё не сохранены</span>
+  <button type="button" id="constructorReset" class="constructor-secondary" disabled>Стандартный вид</button>
+  <a href="#constructorPreview" class="constructor-secondary constructor-preview-link">Предпросмотр</a>
+  <button type="submit" form="constructorForm" id="constructorSave" class="constructor-primary" disabled>Сохранить</button>
+</footer>
+</body>
+</html>

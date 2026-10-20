@@ -1,19 +1,8 @@
 let tg = window.Telegram.WebApp;
 let gameId = null;
 let moveNumber = 0;
-let lastMoveTime = Date.now();
-let userId = null;
 
-function createMoveHash(gameId, userId, moveNumber, snakeState, foodPosition, score) {
-    const message = `${gameId}:${userId}:${moveNumber}:${snakeState}:${foodPosition}:${score}`;
-    let hash = 0;
-    for (let i = 0; i < message.length; i++) {
-        hash = (hash * 31 + message.charCodeAt(i)) >>> 0;
-    }
-    return hash.toString(16);
-}
-
-function fetchUserId() {
+function createSnakeSession() {
     return fetch('/api/snake/new_game', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -25,10 +14,9 @@ function fetchUserId() {
     .then(data => {
         if (data.ok) {
             gameId = data.game_id;
-            userId = data.user_id;
-            return true;
+            return data;
         }
-        return false;
+        return null;
     });
 }
 
@@ -63,6 +51,8 @@ document.addEventListener('DOMContentLoaded', function() {
     let gameSpeed = 150;
     let isGameRunning = false;
     let isPaused = false;
+    let isFoodRequestPending = false;
+    let pendingMovePath = [];
     let lastTime;
     let touchStartX = 0;
     let touchStartY = 0;
@@ -72,10 +62,10 @@ document.addEventListener('DOMContentLoaded', function() {
         const modal = document.getElementById('gameOverModal');
         modal.style.display = 'none';
 
-        fetchUserId().then(success => {
-            if (success) {
+        createSnakeSession().then(session => {
+            if (session) {
                 moveNumber = 0;
-                initGame();
+                initGame(session.food_position, session.snake_state);
                 isGameRunning = true;
                 gameLoop(0);
                 document.getElementById('startButton').disabled = true;
@@ -90,60 +80,48 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    function sendSnakeScore(score) {
-        if (!gameId || !userId) return;
+    function sendSnakeScore() {
+        if (!gameId) return Promise.reject(new Error('No game session'));
 
-        const currentTime = Date.now();
-        if (currentTime - lastMoveTime < 50) {
-            return;
-        }
-        lastMoveTime = currentTime;
-
-        moveNumber++;
-        const snakeState = JSON.stringify(snake);
-        const foodPosition = JSON.stringify(food);
-
-        const moveHash = createMoveHash(
-            gameId,
-            userId,
-            moveNumber,
-            snakeState,
-            foodPosition,
-            score
-        );
-
-        console.log('Sending move:', {
-            gameId,
-            userId,
-            moveNumber,
-            snakeState,
-            foodPosition,
-            score,
-            moveHash
-        });
-
-        fetch('/api/submit/snake', {
+        const nextMoveNumber = moveNumber + 1;
+        const movePath = pendingMovePath.slice();
+        return fetch('/api/submit/snake', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 tgWebAppData: tg.initData,
                 game_id: gameId,
-                move_number: moveNumber,
-                snake_state: snakeState,
-                food_position: foodPosition,
-                score: score,
-                move_hash: moveHash
+                move_number: nextMoveNumber,
+                move_path: movePath
             })
         })
-        .then(response => response.json())
-        .then(data => {
-            if (data.error) {
-                console.error('Score submission error:', data.error);
+        .then(async response => {
+            const data = await response.json();
+            if (!response.ok || data.error) {
+                throw new Error(data.error || 'Score submission failed');
             }
-            return loadSnakeRating();
+            return data;
         })
-        .catch(error => {
-            console.error('Failed to submit score:', error);
+        .then(data => {
+            moveNumber = data.move_number;
+            score = data.score;
+            document.getElementById('score').textContent = score;
+            snake = data.snake_state;
+            pendingMovePath = [];
+            if (data.game_over) {
+                gameOver();
+            }
+            food = data.food_position;
+            return loadSnakeRating();
+        }).then(() => {
+            isFoodRequestPending = false;
+        }).catch(error => {
+            isFoodRequestPending = false;
+            isGameRunning = false;
+            document.getElementById('startButton').disabled = false;
+            document.getElementById('pauseButton').disabled = true;
+            tg.showAlert('Игра остановлена: результат не подтверждён сервером.');
+            throw error;
         });
     }
 
@@ -161,13 +139,13 @@ document.addEventListener('DOMContentLoaded', function() {
                     const name = row.first_name || '';
                     const displayName = name.length > 13 ? name.substring(0, 13) + '...' : name;
                     const tr = document.createElement('tr');
-                    let nameCell = displayName;
-                    
-                    if (i === 0 || i === 1) {
-                        nameCell = `${displayName}<br><span style="font-size: 10px; color: var(--tg-theme-hint-color);">хацкер</span>`;
-                    }
-                    
-                    tr.innerHTML = `<td>${i+1}</td><td>${nameCell}</td><td>${row.score}</td>`;
+                    const positionCell = document.createElement('td');
+                    const nameCell = document.createElement('td');
+                    const scoreCell = document.createElement('td');
+                    positionCell.textContent = String(i + 1);
+                    nameCell.textContent = displayName;
+                    scoreCell.textContent = String(row.score);
+                    tr.append(positionCell, nameCell, scoreCell);
                     tbody.appendChild(tr);
                 });
             })
@@ -244,33 +222,23 @@ document.addEventListener('DOMContentLoaded', function() {
 
     document.getElementById('pauseButton').addEventListener('click', togglePause);
 
-    function initGame() {
+    function initGame(initialFood, initialSnake) {
 
-        snake = [
-            {x: 10, y: 10}, 
-            {x: 9, y: 10},  
-            {x: 8, y: 10}   
-        ];
-        food = {x: 15, y: 15};
+        snake = initialSnake;
+        food = initialFood;
         direction = 'right';
         nextDirection = 'right';
         score = 0;
         gameSpeed = 150;
         moveNumber = 0;
+        isFoodRequestPending = false;
+        pendingMovePath = [];
+        lastTime = null;
         document.getElementById('score').textContent = score;
-        placeFood();
-    }
-
-    function placeFood() {
-        const maxX = 20;
-        const maxY = 20;
-        do {
-            food.x = Math.floor(Math.random() * maxX);
-            food.y = Math.floor(Math.random() * maxY);
-        } while (snake.some(segment => segment.x === food.x && segment.y === food.y));
     }
 
     function update(currentTime) {
+        if (isFoodRequestPending) return;
         if (!lastTime) lastTime = currentTime;
         const deltaTime = currentTime - lastTime;
 
@@ -296,15 +264,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
 
+            pendingMovePath.push(direction);
             snake.unshift(head);
 
             if (head.x === food.x && head.y === food.y) {
                 score++;
                 document.getElementById('score').textContent = score;
-                placeFood();
                 gameSpeed = Math.max(50, 150 - (score * 2));
                 tg.HapticFeedback.impactOccurred('soft');
-                sendSnakeScore(score);
+                isFoodRequestPending = true;
+                sendSnakeScore().catch(error => {
+                    console.error('Failed to submit score:', error);
+                });
             } else {
                 snake.pop();
             }
@@ -346,8 +317,6 @@ document.addEventListener('DOMContentLoaded', function() {
     function gameOver() {
         isGameRunning = false;
         tg.HapticFeedback.impactOccurred('heavy');
-
-        sendSnakeScore(score);
 
         const modal = document.getElementById('gameOverModal');
         document.getElementById('finalScore').textContent = score;

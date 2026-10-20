@@ -1,0 +1,35 @@
+{% extends 'public_schedule_base.html' %}
+{% block title %}API и MCP расписания ККЭП для ИИ — ККЭПик{% endblock %}
+{% block description %}Как найти группу или преподавателя ККЭП, получить расписание за день или диапазон дат и сослаться на исходный документ. Примеры API v2 и подключение MCP.{% endblock %}
+{% block content %}
+  <section class="page-heading"><h1>Для ИИ и разработчиков</h1></section>
+  <section class="docs-section"><h2>Обычный поиск</h2><p>Расписание доступно в HTML страниц, без JavaScript и входа в Telegram.</p><p>Это не гарантирует, что любой чат автоматически найдёт сайт или включит веб-поиск. Для надёжного запроса можно передать ссылку на <a href="/colleges/kkep">ККЭП и справочники</a>.</p></section>
+  <section class="docs-section"><h2>Найти расписание</h2>
+    <p>В <a href="/api/v2/catalog">каталоге</a> перечислены группы, преподаватели, аудитории и даты архива. <a href="{{ examples.resolve }}">Поиск группы 103</a> возвращает несколько совпадений: выберите полное название, указанное пользователем, или попросите уточнить его.</p>
+    <p>Для группы 103-Д9-3ИНС: <a href="{{ example_day_url }}">страница на 9 октября 2026 года</a>, <a href="{{ examples.day }}">тот же день в JSON</a>, <a href="{{ examples.range }}">расписание с 5 по 9 октября</a>. Для преподавателя: <a href="{{ examples.teacher }}">Шульга Н.Н. на 9 октября</a>.</p>
+    <p>В каждом дне проверяйте <code>status</code>. Ссылка на исходный документ — в <code>source.url</code>, номер редакции — в <code>source.revision</code>. Для даты без источника расписание не восстанавливайте по соседнему дню.</p>
+    <p class="muted small">При ошибке веб-загрузчика попробуйте перейти из <a href="/colleges/kkep/groups">справочника групп</a> к нужной группе и дате или открыть пример JSON выше. Успешный ответ сервера не гарантирует, что конкретный ИИ-инструмент прочитает страницу.</p>
+  </section>
+  <section class="docs-section"><h2>Структурированный API v2</h2><p><a href="/api/v2/openapi.json">Спецификация OpenAPI 3.1 ↗</a></p><div class="code-example"><a href="{{ examples.tomorrow }}"><code>{{ examples.tomorrow }}</code></a></div>
+    <dl class="endpoint-list">
+      <dt><a href="/api/v2/catalog">GET /api/v2/catalog</a></dt><dd>Колледж, группы, преподаватели, аудитории и известные даты архива.</dd>
+      <dt>GET /api/v2/resolve</dt><dd><a href="{{ examples.resolve }}"><code>{{ examples.resolve }}</code></a></dd><dd><code>entity_type</code> и <code>query</code>. Находит точные названия. Несколько совпадений — уточните выбор, не угадывайте.</dd>
+      <dt>GET /api/v2/schedule</dt><dd><a href="{{ examples.day }}"><code>{{ examples.day }}</code></a></dd><dd><code>entity_type=group|teacher|audience</code>, <code>entity</code>, <code>date</code> либо <code>start</code> и <code>end</code>. Максимум 31 день. Даты: ГГГГ-ММ-ДД; для одного дня также today, tomorrow, yesterday. Без даты — сегодня.</dd>
+      <dt>GET /api/v2/coverage</dt><dd><a href="{{ examples.coverage }}"><code>{{ examples.coverage }}</code></a></dd><dd>Известные даты и пропуски. Название и диапазон необязательны, передавайте параметры попарно. Диапазон — максимум 366 дней.</dd>
+      <dt>GET /api/v2/changes</dt><dd><a href="{{ examples.changes }}"><code>{{ examples.changes }}</code></a></dd><dd><code>entity_type</code>, <code>entity</code>, <code>date</code>. Сохранённые редакции, добавленные и удалённые занятия. Проверяйте <code>history_complete</code>.</dd>
+      <dt>GET /api/v2/sources/{sha256}</dt><dd>Исходный PDF или Excel по идентификатору источника из ответа.</dd>
+    </dl>
+    <p class="muted small">10 запросов в секунду на IP и маршрут; исходники — 20 в минуту. При 429 соблюдайте Retry-After. Успешные ответы кэшируются ненадолго, ошибки не кэшируются.</p>
+    <p class="muted small">В адресах HTML-страниц названия с символами /, \ или начальным ~ имеют обратимо закодированный сегмент с префиксом ~. В API передавайте исходное название, например <code>entity=С/З_4</code>, а не этот сегмент.</p>
+    <p class="muted small"><a href="{{ public_origin }}/robots.txt">Правила обхода</a> · <a href="{{ public_origin }}/sitemap.xml">Карта страниц</a> · <a href="{{ public_origin }}/llms.txt">Ссылки для ИИ</a></p>
+  </section>
+  <section class="docs-section"><h2>Remote MCP</h2><div class="code-example"><code>https://kkepik.rub1kub.ru/mcp</code></div><p>Streamable HTTP, только чтение расписания и источников. Подключение зависит от вашего клиента.</p><p>В браузерах с поддержкой WebMCP доступны инструменты чтения.</p></section>
+  <section class="docs-section"><h2>Статусы данных</h2><ul>
+    <li><code>available</code>: занятия есть в опубликованном расписании.</li>
+    <li><code>no_lessons</code>: для выбранного названия занятия не указаны в действительном источнике.</li>
+    <li><code>missing</code>: данных на дату нет. Это не означает, что пар не было.</li>
+    <li><code>entity_not_found</code>: название не найдено именно в источнике на этот день.</li>
+    <li><code>invalid_source</code>: источник получен, но не обработан корректно.</li>
+  </ul><p>«Завтра» считается по времени Краснодара: Europe/Moscow, UTC+3. Расписание в прошлом не доказывает, что занятие состоялось. Неполная история редакций не доказывает отсутствие изменений.</p><p>Цитируйте страницу дня или <code>source.url</code>, сохраняйте номер редакции и время получения. Если время публикации неизвестно, <code>published_at</code> будет null.</p></section>
+  <section class="docs-section"><h2>Личные данные</h2><p>API и MCP не возвращают ДЗ, переписки, списки студентов, личные данные, оценки или посещаемость.</p></section>
+{% endblock %}

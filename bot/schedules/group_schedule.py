@@ -4,25 +4,35 @@ import pandas as pd
 import numpy as np
 import re
 
+
+_GROUP_NAME_RE = re.compile(
+    r"^\d{2,3}-[А-ЯЁ]{1,3}\d{1,2}-[1-4][А-ЯЁ]{2,}(?:-\d)?$"
+)
+
+
 def is_group_name(name: str) -> bool:
     """
     Проверяет, является ли строка номером группы.
     Поддерживаемые форматы:
     - 103-Д9-1ИНС (обычные группы)
+    - 103-Д3-3ИНС (группы с другим сроком обучения)
     - 89-КД9-2ИСП (короткие группы)
+    - 119-З11-3ССА (другие учебные программы)
     - 103-Д9-3ССА (группы 3 курса)
     - 56-Д9-4ССА (группы 4 курса)
     - 103-Д9-1ИНС-1 (группы с подгруппами)
     - 103-Д9-1ИНС-2
     """
-    # Паттерн для номера группы:
-    # ^\d{2,3} - начало с 2-3 цифр
-    # -[А-Я]?К?Д9- - дефис, опционально буква, опционально К, Д9, дефис
-    # [1-4][А-Я]{2,} - цифра от 1 до 4 и 2 или более букв
-    # (-\d)?$ - опционально дефис и цифра в конце
-    pattern = r'^\d{2,3}-[А-Я]?К?Д9-[1-4][А-Я]{2,}(-\d)?$'
-    name = name.upper()  # Приводим к верхнему регистру перед проверкой
-    return bool(re.match(pattern, name))
+    if not isinstance(name, str):
+        return False
+    normalized = (
+        name.strip()
+        .upper()
+        .replace("\u2011", "-")
+        .replace("\u2013", "-")
+        .replace("\u2014", "-")
+    )
+    return bool(_GROUP_NAME_RE.fullmatch(normalized))
 
 def unify_known_phrases(text: str) -> str:
     """
@@ -50,6 +60,10 @@ def normalize_audience(val: str) -> str:
     Если val выглядит как число (даже с .0), пробуем привести к int и вернуть строку.
     """
     val = val.strip()
+    compact = re.sub(r"\s+", "", val)
+    # Нули в исходном PDF означают отсутствие назначенной аудитории.
+    if re.fullmatch(r"0+(?:[._/\-]0+)*", compact):
+        return ""
     try:
         f = float(val)
         i = int(f)
@@ -68,6 +82,8 @@ def is_audience_token(token: str) -> bool:
     token = token.strip().lower()
     if not token:
         return False
+    if re.fullmatch(r"0+(?:[._/\-]0+)*", re.sub(r"\s+", "", token)):
+        return True
 
     token_norm = normalize_audience(token)
     if re.match(r'^\d+$', token_norm):
@@ -131,8 +147,9 @@ def parse_schedule_for_group(df, row_g: int, col_g: int, group_name: str) -> lis
         val_in_col = df.iat[i, col_g]
 
         if isinstance(val_in_col, str):
-            # Если встретили другую группу
-            if ("-Д9-" in val_in_col or "-КД9-" in val_in_col) and val_in_col != group_name:
+            # Если встретили заголовок следующей группы/блока.
+            candidate = val_in_col.strip().upper()
+            if is_group_name(candidate) and candidate != group_name.upper():
                 break
 
         pair_val = df.iat[i, 0]

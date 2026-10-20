@@ -206,7 +206,7 @@ def _get_schedule_for_audience_xlsx(df: pd.DataFrame, audience_number: str) -> l
                         group_candidate = df.iat[search_row, disc_col]
                         if pd.notna(group_candidate):
                             group_str = str(group_candidate).strip()
-                            if '-' in group_str and 'Д9' in group_str:
+                            if is_group_name(group_str):
                                 group_val = group_str
                                 break
 

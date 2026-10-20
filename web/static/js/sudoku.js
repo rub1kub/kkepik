@@ -103,7 +103,6 @@ class SudokuGame {
                 this.gameId = data.game_id;
                 this.userId = data.user_id;
                 this.board = data.puzzle;
-                this.solution = data.solution;
                 this.originalBoard = data.puzzle.map(row => [...row]);
                 this.updateDisplay();
             } else {
@@ -424,35 +423,40 @@ class SudokuGame {
         btn.textContent = this.notesMode ? 'Цифры' : 'Заметки';
     }
     
-    getHint() {
+    async getHint() {
         if (this.hintsUsed >= this.maxHints) {
             tg.showAlert('Подсказки закончились!');
             return;
         }
-        
-        // Находим пустую клетку
-        const emptyCells = [];
-        for (let row = 0; row < 9; row++) {
-            for (let col = 0; col < 9; col++) {
-                if (this.board[row][col] === 0) {
-                    emptyCells.push([row, col]);
-                }
-            }
+
+        if (!this.gameId) {
+            tg.showAlert('Подсказка недоступна для локальной игры.');
+            return;
         }
-        
-        if (emptyCells.length === 0) return;
-        
-        const randomCell = emptyCells[Math.floor(Math.random() * emptyCells.length)];
-        const [row, col] = randomCell;
-        
-        this.board[row][col] = this.solution[row][col];
-        this.notes[row][col].clear();
-        this.hintsUsed++;
-        
-        this.updateDisplay();
-        this.checkWin();
-        
-        tg.HapticFeedback.impactOccurred('heavy');
+        try {
+            const response = await fetch('/api/sudoku/hint', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tgWebAppData: tg.initData,
+                    game_id: this.gameId,
+                    board: this.board
+                })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'Hint unavailable');
+            }
+            this.board[data.row][data.column] = data.value;
+            this.notes[data.row][data.column].clear();
+            this.hintsUsed = data.hints_used;
+            this.updateDisplay();
+            this.checkWin();
+            tg.HapticFeedback.impactOccurred('heavy');
+        } catch (error) {
+            console.error('Failed to request hint:', error);
+            tg.showAlert('Не удалось получить подсказку.');
+        }
     }
     
     updateDisplay() {
@@ -597,9 +601,7 @@ class SudokuGame {
                 body: JSON.stringify({
                     tgWebAppData: tg.initData,
                     game_id: this.gameId,
-                    completion_time: this.completionTime,
-                    difficulty: this.difficulty,
-                    hints_used: this.hintsUsed
+                    board: this.board
                 })
             });
             
@@ -656,18 +658,25 @@ class SudokuGame {
         
         if (players.length === 0) {
             const row = document.createElement('tr');
-            row.innerHTML = '<td colspan="3" style="text-align: center; color: #666;">Нет записей</td>';
+            const cell = document.createElement('td');
+            cell.colSpan = 3;
+            cell.style.textAlign = 'center';
+            cell.style.color = '#666';
+            cell.textContent = 'Нет записей';
+            row.appendChild(cell);
             tbody.appendChild(row);
             return;
         }
         
         players.forEach((player, index) => {
             const row = document.createElement('tr');
-            row.innerHTML = `
-                <td>${index + 1}</td>
-                <td>${player.first_name || 'Игрок'}</td>
-                <td>${this.formatTime(player.best_time)}</td>
-            `;
+            const positionCell = document.createElement('td');
+            const nameCell = document.createElement('td');
+            const timeCell = document.createElement('td');
+            positionCell.textContent = String(index + 1);
+            nameCell.textContent = player.first_name || 'Игрок';
+            timeCell.textContent = this.formatTime(player.best_time);
+            row.append(positionCell, nameCell, timeCell);
             tbody.appendChild(row);
         });
     }

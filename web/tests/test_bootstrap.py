@@ -114,6 +114,22 @@ class BootstrapApiTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(request_get.call_args.args[0], 'http://127.0.0.1:8000/user/42')
 
+    def test_api_me_normalizes_wrapped_user_not_found(self):
+        upstream_response = Mock()
+        upstream_response.status_code = 500
+        upstream_response.json.return_value = {'detail': '404: Пользователь не найден'}
+
+        with (
+            patch.object(schedule_api_module, 'authenticated_telegram_user', return_value={'id': 42}),
+            patch.object(schedule_api_module.requests, 'get', return_value=upstream_response),
+        ):
+            response = self.client.get('/api/me')
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.get_json()['detail'], 'Пользователь не найден')
+        self.assertEqual(response.get_json()['code'], 'not_found')
+        self.assertEqual(response.get_json()['request_id'], response.headers['X-Request-ID'])
+
     def test_service_worker_is_not_http_cached(self):
         response = self.client.get('/service-worker.js')
         script = response.get_data(as_text=True)
@@ -121,7 +137,7 @@ class BootstrapApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers['Service-Worker-Allowed'], '/')
         self.assertIn('no-cache', response.headers['Cache-Control'])
-        self.assertIn("kkepik-shell-20260826-11", script)
+        self.assertIn(f"kkepik-shell-{app_module.STATIC_VERSION}", script)
         self.assertIn('navigationCacheKey(url)', script)
         self.assertNotIn('cache.match(SHELL_URL)', script)
         response.close()
@@ -131,18 +147,25 @@ class BootstrapApiTest(unittest.TestCase):
         html = response.get_data(as_text=True)
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn('?v=20260826-11', html)
+        self.assertIn(f'?v={app_module.STATIC_VERSION}', html)
         self.assertIn('<script defer', html)
         self.assertNotIn('loader.gif', html)
+        self.assertNotIn('id="loader"', html)
+        self.assertIn('id="schedule-loader"', html)
+        self.assertIn('aria-label="Расписание загружается"', html)
+        self.assertIn('id="pairs_block" aria-busy="true"', html)
+        self.assertIn('id="schedulePrevButton"', html)
+        self.assertIn('id="scheduleNextButton"', html)
         self.assertNotIn('🐍', html)
         self.assertNotIn('🧩', html)
         self.assertNotIn('🎯', html)
         self.assertNotIn('⭐', html)
         self.assertEqual(html.count('class="compact-game-icon"'), 3)
-        self.assertIn('id="groupQuickSwitch"', html)
+        self.assertNotIn('id="groupQuickSwitch"', html)
         self.assertIn('id="groupSelectorManage"', html)
         self.assertNotIn('id="progressHint"', html)
         self.assertIn('id="scheduleActions"', html)
+        self.assertNotIn('id="downloadScheduleBtn"', html)
         response.close()
 
         response = self.client.get('/static/js/main.js')
@@ -158,6 +181,27 @@ class BootstrapApiTest(unittest.TestCase):
         self.assertIn("touchcancel", script)
         self.assertIn("e.changedTouches[0].clientX", script)
         self.assertNotIn("e.changedTouches[0].screenX", script)
+        self.assertIn("function stripScheduleMarkup", script)
+        self.assertIn("const normalizedLesson = stripScheduleMarkup(lesson)", script)
+        self.assertIn("!hasRealSchedule(currentSchedule)", script)
+        self.assertIn("displayedDate = new Date(found.date)", script)
+        self.assertIn("window.scheduleState.displayedDate = new Date(found.date)", script)
+        self.assertIn('function showScheduleLoader()', script)
+        self.assertIn('function finishScheduleLoader()', script)
+        self.assertIn('showScheduleLoader();', script)
+        self.assertIn("scheduleTitle.removeAttribute('aria-hidden')", script)
+        self.assertIn('let navigationCheckId = 0', script)
+        self.assertIn('async function navigateToAdjacentDate', script)
+        self.assertIn('if (isInitialLoad) return', script)
+        self.assertIn("scheduleTitleText.classList.add('is-revealing')", script)
+        self.assertNotIn("title.addEventListener('click'", script)
+        self.assertIn("window.scheduleState.currentScheduleData = { error500: true }", script)
+        self.assertNotIn('downloadScheduleBtn', script)
+        response.close()
+
+        response = self.client.get('/static/js/app_bootstrap.js')
+        script = response.get_data(as_text=True)
+        self.assertNotIn('Показано сохранённое · обновляем', script)
         response.close()
 
         response = self.client.get('/static/js/schedule.js')
@@ -169,12 +213,25 @@ class BootstrapApiTest(unittest.TestCase):
         response = self.client.get('/static/css/main.css')
         css = response.get_data(as_text=True)
         self.assertRegex(css, r'#pairs_block\s*\{[^}]*touch-action:\s*pan-y;')
+        self.assertRegex(css, r'\.reaction-item\s*\{[^}]*min-width:\s*46px;[^}]*height:\s*40px;')
+        self.assertRegex(css, r'#scheduleActions\s*\{[^}]*justify-content:\s*flex-end;')
+        self.assertNotIn('grid-template-columns: repeat(3, minmax(0, 1fr)) 44px', css)
+        self.assertRegex(css, r'\.confetti\s*\{[^}]*position:\s*fixed;')
+        self.assertIn('.schedule-loader-row', css)
+        self.assertIn('@keyframes scheduleLoaderPulse', css)
+        self.assertIn('.schedule-nav-button', css)
+        self.assertIn('.schedule-nav-icon svg', css)
+        self.assertNotIn("content: '←'", css)
+        self.assertNotIn("content: '→'", css)
         response.close()
 
         response = self.client.get('/static/js/group_selector.js')
         script = response.get_data(as_text=True)
         self.assertIn('function renderEntitySwitcher', script)
-        self.assertIn("button.className = 'group-quick-button'", script)
+        self.assertIn("fetch('/api/schedule/catalog'", script)
+        self.assertNotIn("fetch(url)", script)
+        self.assertNotIn("group-quick-button", script)
+        self.assertNotIn("'Изменить'", script)
         response.close()
 
     def test_empty_reactions_render_zero_count(self):
@@ -195,6 +252,7 @@ class BootstrapApiTest(unittest.TestCase):
         self.assertIn('function showReactionPicker(event)', script)
         self.assertIn('function readRecentReactions', script)
         self.assertIn('function rememberReaction', script)
+        self.assertNotIn('setScheduleTitleToToday', script)
         response.close()
 
     def test_schedule_search_uses_current_assets_and_compact_labels(self):
@@ -202,8 +260,8 @@ class BootstrapApiTest(unittest.TestCase):
         html = response.get_data(as_text=True)
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn('schedule_search.css?v=20260826-11', html)
-        self.assertIn('schedule_search.js?v=20260826-11', html)
+        self.assertIn(f'schedule_search.css?v={app_module.STATIC_VERSION}', html)
+        self.assertIn(f'schedule_search.js?v={app_module.STATIC_VERSION}', html)
         self.assertIn('<span>Другая</span>', html)
         self.assertIn('<span>Найти</span>', html)
         self.assertIn('class="search-action-dock"', html)
@@ -248,9 +306,9 @@ class BootstrapApiTest(unittest.TestCase):
         html = response.get_data(as_text=True)
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn('testmain.css?v=20260826-11', html)
-        self.assertIn('sudoku.css?v=20260826-11', html)
-        self.assertIn('sudoku.js?v=20260826-11', html)
+        self.assertIn(f'testmain.css?v={app_module.STATIC_VERSION}', html)
+        self.assertIn(f'sudoku.css?v={app_module.STATIC_VERSION}', html)
+        self.assertIn(f'sudoku.js?v={app_module.STATIC_VERSION}', html)
         self.assertIn('class="sudoku-title"', html)
         self.assertEqual(html.count('class="difficulty-icon"'), 3)
         for emoji in ('🧩', '🥉', '🥈', '🥇', '🏆', '❤️', '💔'):
@@ -261,6 +319,29 @@ class BootstrapApiTest(unittest.TestCase):
         script = response.get_data(as_text=True)
         for emoji in ('🥉', '🥈', '🥇', '🏆', '❤️', '💔', '🎉'):
             self.assertNotIn(emoji, script)
+        response.close()
+
+    def test_game_clients_use_server_authoritative_protocols(self):
+        response = self.client.get('/static/js/snake.js')
+        snake_script = response.get_data(as_text=True)
+        self.assertIn('move_path: movePath', snake_script)
+        self.assertIn('snake = data.snake_state', snake_script)
+        self.assertNotIn('хацкер', snake_script.lower())
+        self.assertNotIn('snake_state: snakeState', snake_script)
+        response.close()
+
+        response = self.client.get('/static/js/2048.js')
+        game_2048_script = response.get_data(as_text=True)
+        self.assertIn('direction: direction', game_2048_script)
+        self.assertIn('board = data.board', game_2048_script)
+        self.assertNotIn('move_hash:', game_2048_script)
+        response.close()
+
+        response = self.client.get('/static/js/casino.js')
+        casino_script = response.get_data(as_text=True)
+        self.assertIn('let isBetPending = false', casino_script)
+        self.assertIn('nameElement.textContent = name', casino_script)
+        self.assertNotIn('li.innerHTML', casino_script)
         response.close()
 
 

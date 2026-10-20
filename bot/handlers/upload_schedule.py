@@ -5,11 +5,13 @@
 """
 
 import os
+import re
 import tempfile
 from aiogram import types
 from aiogram.client.bot import Bot
 import config
 from handlers.schedule_broadcaster import process_and_broadcast
+from message_registry import record_message
 
 
 async def handle_document(message: types.Message, bot: Bot):
@@ -30,6 +32,28 @@ async def handle_document(message: types.Message, bot: Bot):
     if not (file_name.lower().endswith(".xlsx") or file_name.lower().endswith(".pdf")):
         await message.reply("⚠️ Требуется файл .xlsx или .pdf.")
         return
+
+    try:
+        date_match = re.search(r"(\d{1,2}[._]\d{1,2}[._]\d{4})", file_name)
+        record_message(
+            platform="telegram",
+            direction="incoming",
+            chat_id=message.chat.id,
+            message_id=message.message_id,
+            message_kind="schedule_source",
+            schedule_date=(
+                date_match.group(1).replace("_", ".") if date_match else None
+            ),
+            schedule_type=(
+                "groups"
+                if "ГРУПП" in file_name.upper()
+                else "teachers" if "ПРЕПОДАВАТЕЛИ" in file_name.upper() else None
+            ),
+            file_name=file_name,
+            content=message.caption,
+        )
+    except Exception as exc:
+        print(f"[message_registry] Не удалось сохранить входящий файл: {exc}")
 
     caption = (message.caption or "").strip()
     silent = caption.lower() == "/silent"

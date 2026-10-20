@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from difflib import get_close_matches
 from html import escape
 
 from aiogram import types
@@ -9,6 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 import config
+from schedules.schedule_catalog import get_catalog_values
 from tracked_groups import (
     MAX_TRACKED_GROUPS,
     add_tracked_group,
@@ -86,7 +88,7 @@ async def process_groups_callback(
             return
         await state.set_state(GroupManagementStates.waiting_group)
         await callback.message.answer(
-            "Введите номер второй группы, например: <code>103-Д9-2ИНС</code>."
+            "Введите номер второй группы, например: <code>103-Д3-3ИНС</code>."
         )
         await callback.answer()
         return
@@ -122,9 +124,33 @@ async def process_added_group(message: types.Message, state: FSMContext) -> None
     group = message.text.strip().upper()
     if not is_valid_group_name(group):
         await message.answer(
-            "Не похоже на номер группы. Пример: <code>103-Д9-2ИНС</code>."
+            "Не похоже на номер группы. Пример: <code>103-Д3-3ИНС</code>."
         )
         return
+
+    available_groups = get_catalog_values("groups")
+    if available_groups:
+        canonical_groups = {item.upper(): item for item in available_groups}
+        canonical_group = canonical_groups.get(group)
+        if canonical_group is None:
+            suggestions = get_close_matches(
+                group,
+                list(canonical_groups),
+                n=3,
+                cutoff=0.55,
+            )
+            hint = ""
+            if suggestions:
+                values = "\n".join(
+                    f"• <code>{escape(canonical_groups[item])}</code>"
+                    for item in suggestions
+                )
+                hint = f"\n\nВозможно, вы имели в виду:\n{values}"
+            await message.answer(
+                "Такой группы нет в актуальном списке расписания." + hint
+            )
+            return
+        group = canonical_group
 
     result = add_tracked_group(config.DB_PATH, message.from_user.id, group)
     if result == "exists":

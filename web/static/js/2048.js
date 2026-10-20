@@ -104,8 +104,6 @@ document.querySelector('.confirm-modal-content').addEventListener('touchend', fu
 }, { passive: false });
 
 let gameId = null;
-let userId = null;
-let moveNumber = 0;
 let lastMoveTime = Date.now();
 let board = null;
 let score = 0;
@@ -127,25 +125,12 @@ let touchStartTime = 0;
 let isGameAreaTouched = false;
 let isMovePending = false;
 
-function createMoveHash(gameId, userId, moveNumber, boardState, score) {
-    const message = `${gameId}:${userId}:${moveNumber}:${boardState}:${score}`;
-    let hash = 0;
-    for (let i = 0; i < message.length; i++) {
-        hash = (hash * 31 + message.charCodeAt(i)) >>> 0;
-    }
-    return hash.toString(16);
-}
-
-function initGame() {
-    board = Array(4).fill().map(() => Array(4).fill(0));
-    score = 0;
+function initGame(serverBoard, serverScore = 0) {
+    board = serverBoard.map(row => [...row]);
+    score = serverScore;
     isGameOver = false;
-    moveNumber = 0;
     lastSuccessfulMoveNumber = 0;
-
-    addNewTile();
-    addNewTile();
-
+    updateScore();
     updateDisplay();
 }
 
@@ -403,50 +388,15 @@ function moveDown() {
 
 function handleMove(direction) {
     if (isGameOver || isMovePending) return false;
-
-    let moved = false;
-    const oldScore = score;
-
-    switch(direction) {
-        case 'left':
-            moved = moveLeft();
-            break;
-        case 'right':
-            moved = moveRight();
-            break;
-        case 'up':
-            moved = moveUp();
-            break;
-        case 'down':
-            moved = moveDown();
-            break;
-    }
-
-    if (moved) {
-        tiltBoard(direction);
-
-        tg.HapticFeedback.impactOccurred('light');
-
-        if (score - oldScore >= 128) {
-            setTimeout(() => {
-                tg.HapticFeedback.impactOccurred('medium');
-            }, 50);
-        }
-
-        addNewTile();
-        send2048Score(score);
-        checkGameOver();
-    }
-
-    updateDisplay();
-    return moved;
+    tiltBoard(direction);
+    tg.HapticFeedback.impactOccurred('light');
+    send2048Move(direction);
+    return true;
 }
 
 function checkGameOver() {
     if (!canMove()) {
         isGameOver = true;
-
-        send2048Score(score);
 
         tg.HapticFeedback.impactOccurred('heavy');
         setTimeout(() => {
@@ -487,8 +437,8 @@ function canMove() {
     return false;
 }
 
-function send2048Score(score) {
-    if (!gameId || !userId) {
+function send2048Move(direction) {
+    if (!gameId) {
         console.error('No game session');
         return;
     }
@@ -496,29 +446,7 @@ function send2048Score(score) {
         return;
     }
     isMovePending = true;
-    const currentTime = Date.now();
-    if (currentTime - lastMoveTime < 50) {
-        isMovePending = false;
-        return;
-    }
-    lastMoveTime = currentTime;
     const nextMoveNumber = lastSuccessfulMoveNumber + 1;
-    const boardState = JSON.stringify(board);
-    const moveHash = createMoveHash(
-        gameId,
-        userId,
-        nextMoveNumber,
-        boardState,
-        score
-    );
-    console.log('Sending move:', {
-        gameId,
-        userId,
-        moveNumber: nextMoveNumber,
-        boardState,
-        score,
-        moveHash
-    });
     fetch('/api/submit/2048', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -526,31 +454,33 @@ function send2048Score(score) {
             tgWebAppData: tg.initData,
             game_id: gameId,
             move_number: nextMoveNumber,
-            board_state: boardState,
-            score: score,
-            move_hash: moveHash
+            direction: direction
         })
     })
-    .then(response => response.json())
-    .then(data => {
-        isMovePending = false;
-        if (data.error) {
-            console.error('Score submission error:', data.error);
-            if (data.error.toLowerCase().includes('move number')) {
-                load2048Rating();
-                alert('Ошибка: рассинхронизация ходов! Попробуйте сделать следующий ход или перезапустить игру.');
-            } else {
-                alert('Ошибка отправки результата: ' + data.error);
-            }
-        } else {
-            lastSuccessfulMoveNumber = nextMoveNumber;
+    .then(async response => {
+        const data = await response.json();
+        if (!response.ok || data.error) {
+            throw new Error(data.error || 'Move rejected');
         }
-        return load2048Rating();
+        return data;
+    })
+    .then(data => {
+        if (data.moved) {
+            board = data.board;
+            score = data.score;
+            lastSuccessfulMoveNumber = data.move_number;
+            updateScore();
+            updateDisplay();
+            if (data.game_over) checkGameOver();
+            return load2048Rating();
+        }
     })
     .catch(error => {
+        console.error('Failed to submit move:', error);
+        tg.showAlert('Ход не подтверждён сервером. Попробуйте ещё раз.');
+    })
+    .finally(() => {
         isMovePending = false;
-        console.error('Failed to submit score:', error);
-        alert('Ошибка соединения с сервером!');
     });
 }
 
@@ -568,7 +498,13 @@ function load2048Rating() {
                 const name = row.first_name || '';
                 const displayName = name.length > 13 ? name.substring(0, 13) + '...' : name;
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${i+1}</td><td>${displayName}</td><td>${row.score}</td>`;
+                const positionCell = document.createElement('td');
+                const nameCell = document.createElement('td');
+                const scoreCell = document.createElement('td');
+                positionCell.textContent = String(i + 1);
+                nameCell.textContent = displayName;
+                scoreCell.textContent = String(row.score);
+                tr.append(positionCell, nameCell, scoreCell);
                 tbody.appendChild(tr);
             });
         })
@@ -766,9 +702,7 @@ function startNewGame() {
     .then(data => {
         if (data.ok) {
             gameId = data.game_id;
-            userId = data.user_id;
-            lastSuccessfulMoveNumber = 0;
-            initGame();
+            initGame(data.board, data.score);
         } else {
             console.error('Failed to create new game:', data.error);
             tg.showAlert('Ошибка при создании игры');
@@ -827,5 +761,3 @@ function hideConfirmModal() {
         confirmModal.style.display = 'none';
     }, 300);
 }
-
-initGame();

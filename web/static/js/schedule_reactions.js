@@ -107,31 +107,8 @@ function getInitialScheduleDate() {
     return formatLocalIsoDate(new Date());
 }
 
-function setScheduleTitleToToday() {
-    const months = [
-        'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
-        'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'
-    ];
-    // Используем getInitialScheduleDate вместо new Date()
-    const dateStr = getInitialScheduleDate();
-    const now = parseLocalIsoDate(dateStr);
-    const day = now.getDate();
-    const month = months[now.getMonth()];
-    const title = `Расписание на ${day} ${month}`;
-    const titles = document.querySelectorAll('.schedule-title');
-    titles.forEach((el, idx) => {
-        if (idx === 0) {
-            el.textContent = title;
-            el.style.display = '';
-        } else {
-            el.style.display = 'none';
-        }
-    });
-}
-
 // Функция для инициализации реакций
 function initScheduleReactions() {
-    setScheduleTitleToToday(); // Показываем актуальную дату до загрузки
     const initialDate = getInitialScheduleDate();
     if (window.kkepikApp) {
         window.kkepikApp.ready.then(data => {
@@ -290,10 +267,6 @@ function updateReactionsUI(reactions, userReactions) {
         // Добавляем класс animate только при первичной загрузке
         if (isFirstLoad) {
             reactionsList.classList.add('animate');
-            // Диспатчим событие для синхронизации анимации кнопки 'Скачать'
-            setTimeout(() => {
-                document.dispatchEvent(new Event('reactionsAnimated'));
-            }, 0);
         }
         
         // Создаем массив для всех элементов реакций

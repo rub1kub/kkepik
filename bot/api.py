@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from html import unescape
 import sqlite3
 import config
 import pandas as pd
@@ -8,12 +9,27 @@ from schedules import group_schedule, teacher_schedule, parser_all, audience_sch
 import global_schedules
 from typing import Optional, List, Dict
 import os
+import re
 from pydantic import BaseModel
 import json
 from schedules.schedule_dates import current_college_date, is_current_schedule
 from schedules.schedule_catalog import extract_catalog_entries, get_catalog_values
 
 app = FastAPI(title="KKEPIK Bot API")
+from message_settings_api import router as message_settings_router
+app.include_router(message_settings_router)
+from knowledge_api import router as knowledge_router
+app.include_router(knowledge_router)
+
+_TELEGRAM_TAG_RE = re.compile(
+    r"</?(?:b|strong|i|em|u|s|code|tg-emoji)\b[^>]*>",
+    re.IGNORECASE,
+)
+
+
+def plain_schedule_lines(lines: list[str]) -> list[str]:
+    """Remove Telegram-only markup before returning schedules to web clients."""
+    return [unescape(_TELEGRAM_TAG_RE.sub("", str(line))) for line in lines]
 
 # Настройка CORS
 app.add_middleware(
@@ -203,6 +219,8 @@ async def get_user(user_id: int):
             "is_class_teacher": bool(user[3]),
             "class_group":      user[4],
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -252,7 +270,11 @@ async def get_group_schedule(request: GroupScheduleRequest):
     if not lines:
         lines = [f"▪️{i} пара – Нет" for i in range(1, 5)]
 
-    return {"group": request.group, "date": schedule_date, "schedule": lines}
+    return {
+        "group": request.group,
+        "date": schedule_date,
+        "schedule": plain_schedule_lines(lines),
+    }
 
 
 @app.post("/schedule/teacher")
@@ -317,7 +339,11 @@ async def get_teacher_schedule(request: TeacherScheduleRequest):
             detail=f"Преподаватель {request.teacher} не найден в расписании",
         )
 
-    return {"teacher": request.teacher, "date": schedule_date, "schedule": lines}
+    return {
+        "teacher": request.teacher,
+        "date": schedule_date,
+        "schedule": plain_schedule_lines(lines),
+    }
 
 
 @app.post("/schedule/audience")
@@ -357,7 +383,11 @@ async def get_audience_schedule(request: AudienceScheduleRequest):
             detail=f"Аудитория {request.audience} не найдена в расписании",
         )
 
-    return {"audience": request.audience, "date": schedule_date, "schedule": lines}
+    return {
+        "audience": request.audience,
+        "date": schedule_date,
+        "schedule": plain_schedule_lines(lines),
+    }
 
 
 @app.post("/getUserSchedule/{user_id}")

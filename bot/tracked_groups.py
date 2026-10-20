@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import sqlite3
-import re
+
+from schedules.group_schedule import is_group_name
 
 
 MAX_TRACKED_GROUPS = 2
-_GROUP_RE = re.compile(
-    r"^\d{2,3}-[А-ЯЁA-Z]{1,2}\d{1,2}-\d{1,2}[А-ЯЁA-Z]{3}(?:-\d)?$"
-)
 
 
 def normalize_group_name(group_name: str) -> str:
@@ -17,7 +15,7 @@ def normalize_group_name(group_name: str) -> str:
 
 
 def is_valid_group_name(group_name: str) -> bool:
-    return bool(_GROUP_RE.fullmatch(normalize_group_name(group_name)))
+    return is_group_name(normalize_group_name(group_name))
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
@@ -36,15 +34,6 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
 def migrate_legacy_groups(conn: sqlite3.Connection) -> None:
     ensure_schema(conn)
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO tracked_groups (user_id, group_name, slot)
-        SELECT user_id, UPPER(name_or_group), 1
-        FROM users
-        WHERE role = 'Я студент'
-          AND (UPPER(name_or_group) LIKE '%-Д9-%' OR UPPER(name_or_group) LIKE '%-КД9-%')
-        """
-    )
     student_rows = conn.execute(
         "SELECT user_id, name_or_group FROM users WHERE role = 'Я студент'"
     ).fetchall()

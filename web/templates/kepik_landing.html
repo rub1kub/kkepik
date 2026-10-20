@@ -1,0 +1,56 @@
+<style>
+
+#kepik-landing { color-scheme: dark; --background: #111; --text: #f5f5f5; --muted: #999; --red: #ef5555; --blue: #588df4; --green: #50b77b; }
+#kepik-landing * { box-sizing: border-box; }
+#kepik-landing { margin: 0; background: var(--background); color: var(--text); font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+#kepik-landing main { min-height: 100vh; min-height: 100svh; display: flex; flex-direction: column; align-items: center; padding: 28px 24px; }
+#kepik-landing .content { flex: 1; width: min(100%, 680px); display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 56px 0; }
+#kepik-landing h1 { margin: 0; font-size: clamp(72px, 12vw, 104px); line-height: 1.1; letter-spacing: -.065em; font-weight: 600; }
+#kepik-landing .colors { display: flex; gap: 5px; margin: 21px 0; }
+#kepik-landing .colors i { width: 20px; height: 2px; background: var(--red); }
+#kepik-landing .colors i:nth-child(2) { background: var(--blue); }
+#kepik-landing .colors i:nth-child(3) { background: var(--green); }
+#kepik-landing .tagline { margin: 0; color: var(--muted); font-size: 16px; line-height: 1.6; }
+#kepik-landing .command { margin: 32px 0 18px; max-width: 580px; font-size: clamp(20px, 3vw, 25px); line-height: 1.5; letter-spacing: -.02em; }
+#kepik-landing a { color: inherit; text-decoration: none; }
+#kepik-landing a:hover { text-decoration: underline; text-underline-offset: 4px; }
+#kepik-landing a:focus-visible { outline: 2px solid var(--blue); outline-offset: 6px; }
+#kepik-landing .guide { color: var(--blue); font-size: 14px; padding: 8px 0; }
+#kepik-landing footer { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px 23px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+#kepik-landing footer a { padding: 5px 0; }
+    @media (max-width: 420px) {
+#kepik-landing main { padding: 22px 20px; }
+#kepik-landing .content { padding: 44px 0; }
+#kepik-landing .tagline { font-size: 15px; }
+#kepik-landing .command { max-width: 300px; }
+#kepik-landing footer { gap: 8px 18px; }
+    }
+  
+html:not(.kepik-miniapp) body { margin: 0; padding: 0; display: block; background: #111; }
+#kepik-miniapp { display: none; }
+html.kepik-miniapp #kepik-miniapp { display: contents; }
+html.kepik-miniapp #kepik-landing { display: none; }
+html.kepik-telegram-pending #kepik-landing { display: none; }
+</style>
+<section id="kepik-landing" aria-label="Кэпик — расписание колледжа">
+
+  <main>
+    <div class="content">
+      <h1>Кэпик</h1>
+      <div class="colors" aria-hidden="true"><i></i><i></i><i></i></div>
+      <p class="tagline">Расписание колледжа в Алисе.</p>
+      <p class="command">«Алиса, спроси у Кэпика, что завтра»</p>
+      <a class="guide" href="/guide">Как пользоваться →</a>
+    </div>
+    <footer aria-label="Ссылки проекта">
+      <a href="/colleges/kkep">Расписание</a>
+      <a href="/agents">Для ИИ</a>
+      <a href="https://t.me/kkepik_bot">Telegram</a>
+      <a href="https://kkepik.rub1kub.ru/api/docs/#/">API</a>
+      <a href="https://github.com/rub1kub/alisa-schedule" aria-label="Исходники навыка Алисы">Исходники</a>
+      <a href="https://t.me/kkepuk">Поддержка</a>
+      <a href="https://rub1kub.ru/">rub1kub</a>
+    </footer>
+  </main>
+
+</section>

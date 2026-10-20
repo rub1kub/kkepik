@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111111">
+  <title>{% block title %}Расписание ККЭП — Краснодар — ККЭПик{% endblock %}</title>
+  <meta name="description" content="{% block description %}Расписание Краснодарского колледжа электронного приборостроения: группы, преподаватели, аудитории, архив и исходные документы.{% endblock %}">
+  <link rel="canonical" href="{{ canonical }}">
+  <link rel="service-desc" href="{{ public_origin }}/api/v2/openapi.json" type="application/json" title="OpenAPI расписания ККЭП">
+  <link rel="alternate" href="{{ public_origin }}/llms.txt" type="text/plain" title="Документация для ИИ">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/public_schedule.css') }}?v={{ STATIC_VERSION }}">
+  <script defer src="{{ url_for('static', filename='js/public_schedule.js') }}?v={{ STATIC_VERSION }}"></script>
+</head>
+<body>
+  <a class="skip-link" href="#content">Перейти к содержимому</a>
+  <div class="public-shell">
+    <header class="brand-row">
+      <a class="brand" href="/colleges/kkep" aria-label="ККЭПик — расписание колледжа">ККЭПик<span class="brand-colors" aria-hidden="true"><i></i><i></i><i></i></span></a>
+      <span class="brand-caption">Краснодар · МСК</span>
+    </header>
+    <main id="content">
+      {% block content %}{% endblock %}
+    </main>
+    <footer class="public-footer">
+      <a href="/colleges/kkep">Колледж</a>
+      <a href="/colleges/kkep/groups">Группы</a>
+      <a href="/agents">Для ИИ и разработчиков</a>
+      <a href="https://t.me/kkepik_bot">Бот</a>
+      <a href="/">Мини-апп</a>
+      <a href="https://t.me/kkepuk">Поддержка</a>
+    </footer>
+    <p class="muted small service-disclaimer">ККЭПик — независимый сервис rub1kub, не официальный сайт колледжа.</p>
+  </div>
+</body>
+</html>

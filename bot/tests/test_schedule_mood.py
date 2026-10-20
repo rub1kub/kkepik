@@ -9,6 +9,9 @@ from schedules.schedule_mood import (
     MEDIUM_EMOJIS,
     NORMAL_EMOJIS,
     REST_EMOJIS,
+    DISCIPLINE_WEIGHTS,
+    _get_discipline_weight,
+    _parse_line,
     _emoji_for_score,
     get_mood_emoji,
 )
@@ -50,8 +53,10 @@ class ScheduleMoodTest(unittest.TestCase):
             ([], 0),
             (["▪️1 пара – Физическая культура – Иванов И.И. – 101"], 1),
             (["▪️1 пара – Литература – Иванов И.И. – 101"], 2),
-            (["▪️1 пара – Программирование – Иванов И.И. – 101"], 3),
-            (["▪️1 пара – Физика – Иванов И.И. – 101"], 4),
+            (["▪️1 пара – Неизвестная дисциплина – Иванов И.И. – 101"], 3),
+            (["▪️1 пара – Русский язык – Иванов И.И. – 101"], 4),
+            (["▪️1 пара – Физика – Иванов И.И. – 101"], 5),
+            (["▪️1 пара – Системное программирование – Иванов И.И. – 101"], 6),
         ]
         for lines, score in cases:
             with self.subTest(score=score):
@@ -59,6 +64,24 @@ class ScheduleMoodTest(unittest.TestCase):
                     emoji_id(get_mood_emoji(lines)),
                     DIFFICULTY_EMOJIS[score][0],
                 )
+
+    def test_current_disciplines_have_individual_exact_weights(self):
+        self.assertEqual(len(DISCIPLINE_WEIGHTS), 68)
+        self.assertTrue(all(1 <= value <= 6 for value in DISCIPLINE_WEIGHTS.values()))
+        self.assertEqual(_get_discipline_weight("Основы философии"), 1)
+        self.assertEqual(_get_discipline_weight("Оптимизация веб-приложений"), 4)
+        self.assertEqual(_get_discipline_weight("Криптографические средства защиты информации"), 6)
+
+    def test_bold_teacher_markup_does_not_break_teacher_scoring(self):
+        line = "▪️1 пара – Основы философии – <b>Шульга Н.Н.</b> – 27"
+        discipline, teachers = _parse_line(line)
+
+        self.assertEqual(discipline, "Основы философии")
+        self.assertEqual(teachers, ["Шульга Н.Н."])
+        self.assertEqual(
+            emoji_id(get_mood_emoji([line])),
+            DIFFICULTY_EMOJIS[4][0],
+        )
 
 
 if __name__ == "__main__":

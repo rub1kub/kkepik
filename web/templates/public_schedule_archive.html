@@ -1,0 +1,11 @@
+{% extends 'public_schedule_base.html' %}
+{% block title %}Архив расписания — {{ entity_labels[entity_type] }} {{ entity }} — ККЭП, {{ college.city }}{% endblock %}
+{% block description %}{{ entity_labels[entity_type] }} {{ entity }}: сохранённые даты расписания {{ college.name }}, {{ college.city }}. Занятия, пропуски данных и редакции исходных документов.{% endblock %}
+{% block content %}
+  <nav class="breadcrumb" aria-label="Навигация"><a href="/colleges/kkep">ККЭП</a><span aria-hidden="true">/</span><a href="{{ entity_url(entity_type, entity) }}">{{ entity }}</a></nav>
+  <section class="page-heading"><p class="eyebrow">{{ entity_labels[entity_type] }} {{ entity }}</p><h1>Архив расписания</h1></section>
+  <p class="muted">Вне перечисленных дат данных может не быть. Прежние редакции источников сохранены не всегда — нельзя заключать, что расписание не менялось.</p>
+  {% if archive_days %}<ul class="archive-list">
+    {% for day in archive_days %}<li><a href="{{ entity_url(entity_type, entity, '/' + day.date) }}"><time datetime="{{ day.date }}">{{ day.date }}</time><span class="status-label">{% if day.status == 'available' %}Есть занятия{% elif day.status == 'no_lessons' %}Занятия не указаны{% elif day.status == 'entity_not_found' %}Нет в источнике{% elif day.status == 'invalid_source' %}Источник не обработан{% else %}Нет данных{% endif %}</span><span aria-hidden="true">→</span></a></li>{% endfor %}
+  </ul>{% else %}<p class="status-note">Для этого названия архивных данных пока нет.</p>{% endif %}
+{% endblock %}

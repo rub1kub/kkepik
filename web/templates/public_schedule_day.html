@@ -1,0 +1,57 @@
+{% extends 'public_schedule_base.html' %}
+{% block title %}{{ entity_labels[entity_type] }} {{ entity }} — расписание {% if view == 'week' %}на неделю {{ schedule.range.start }}–{{ schedule.range.end }}{% else %}на {{ chosen_date }}{% endif %} — ККЭП, {{ college.city }}{% endblock %}
+{% block description %}{{ college.name }}, {{ college.city }}. {{ entity_labels[entity_type] }} {{ entity }}: пары, время, предметы, преподаватели и аудитории {% if view == 'week' %}на неделю {{ schedule.range.start }}–{{ schedule.range.end }}{% else %}на {{ chosen_date }}{% endif %}. Источники и архив.{% endblock %}
+{% block content %}
+  <nav class="breadcrumb" aria-label="Навигация"><a href="/colleges/kkep">ККЭП</a><span aria-hidden="true">/</span><a href="/colleges/kkep/{% if entity_type == 'group' %}groups{% elif entity_type == 'teacher' %}teachers{% else %}audiences{% endif %}">{{ entity_labels[entity_type] }}</a></nav>
+  <section class="page-heading schedule-heading">
+    <p class="eyebrow">{{ college.name }}</p>
+    <h1>{{ entity }}</h1>
+    <p class="lead">{% if view == 'week' %}Неделя <time datetime="{{ schedule.range.start }}">{{ schedule.range.start }}</time> — <time datetime="{{ schedule.range.end }}">{{ schedule.range.end }}</time>{% else %}Расписание на <time datetime="{{ chosen_date }}">{{ chosen_date }}</time>{% endif %}</p>
+  </section>
+  <nav class="date-navigation" aria-label="Дата расписания">
+    <a class="compact-link" href="{{ entity_url(entity_type, entity, ('/week/' if view == 'week' else '/') + previous_date) }}" aria-label="{% if view == 'week' %}Предыдущая неделя{% else %}Предыдущий день{% endif %}">←</a>
+    <a class="compact-link" href="{{ entity_url(entity_type, entity, '/' + today) }}">Сегодня</a>
+    <a class="compact-link" href="{{ entity_url(entity_type, entity, '/week/' + week_start) }}"{% if view == 'week' %} aria-current="page"{% endif %}>Неделя</a>
+    <a class="compact-link" href="{{ entity_url(entity_type, entity, '/archive') }}">Архив</a>
+    <a class="compact-link" href="{{ entity_url(entity_type, entity, ('/week/' if view == 'week' else '/') + next_date) }}" aria-label="{% if view == 'week' %}Следующая неделя{% else %}Следующий день{% endif %}">→</a>
+  </nav>
+  <form class="date-form" method="get" action="{{ entity_url(entity_type, entity) }}" data-date-form data-entity-url="{{ entity_url(entity_type, entity) }}" hidden>
+    <label for="schedule-date">Другая дата</label><input id="schedule-date" type="date" value="{{ chosen_date }}" required><button class="compact-link" type="submit">Открыть</button>
+  </form>
+  <div class="schedule-days">
+    {% for day in schedule.days %}
+      <section class="schedule-day" aria-labelledby="day-{{ day.date }}">
+        <h2 id="day-{{ day.date }}"><time datetime="{{ day.date }}">{{ day.date }}</time>{% if view == 'week' %}<a class="muted small" href="{{ entity_url(entity_type, entity, '/' + day.date) }}">Отдельный день ↗</a>{% endif %}</h2>
+        {% if day.warning %}<p class="status-note" role="status">{{ day.warning }}</p>{% endif %}
+        {% if day.status == 'available' %}
+          <ol class="lesson-list">
+            {% for lesson in day.lessons %}
+              <li class="lesson-card">
+                <div class="lesson-number"><strong>{{ lesson.pair_number }}</strong><span>пара{% if lesson.subgroup %} · {{ lesson.subgroup }} п/г{% endif %}</span></div>
+                <div class="lesson-details"><h3>{{ lesson.subject }}</h3>
+                  {% if lesson.start_time and lesson.end_time %}<p class="lesson-time"><time>{{ lesson.start_time }}</time>–<time>{{ lesson.end_time }}</time> <span class="muted">МСК</span></p>{% endif %}
+                  {% if lesson.teacher %}<p>{{ lesson.teacher }}</p>{% endif %}
+                  {% if lesson.audience %}<p class="muted">Аудитория {{ lesson.audience }}</p>{% endif %}
+                  {% if entity_type != 'group' and lesson.group %}<p><a href="{{ entity_url('group', lesson.group, '/' + day.date) }}">{{ lesson.group }}</a></p>{% endif %}
+                </div>
+              </li>
+            {% endfor %}
+          </ol>
+        {% else %}<p class="status-note" data-status="{{ day.status }}">{{ day.note or status_messages.get(day.status, 'Данные недоступны.') }}</p>{% endif %}
+        {% if day.source %}
+          <details class="source-details"><summary>Источник · редакция {{ day.source.revision }}</summary>
+            <p><a href="{{ day.source.url }}">Открыть исходный документ ↗</a></p>
+            {% if day.source.received_at %}<p>{% if day.source.received_at_semantics == 'local_file_mtime' or day.source.archived_import %}Время локального файла (архивный импорт){% else %}Получено сервисом{% endif %}: <time datetime="{{ day.source.received_at }}">{{ day.source.received_at }}</time></p>{% endif %}
+            {% if day.source.parsed_at %}<p>Обработано сервисом: <time datetime="{{ day.source.parsed_at }}">{{ day.source.parsed_at }}</time></p>{% endif %}
+            {% if day.source.academic_year %}<p>Учебный год: {{ day.source.academic_year }}</p>{% endif %}
+            {% if day.source.revision_order == 'archive_import_order' %}<p>Редакции расположены по порядку импорта архива, не по подтверждённому времени публикации.</p>{% endif %}
+            {% if day.source.published_at %}<p>Опубликован: <time datetime="{{ day.source.published_at }}">{{ day.source.published_at }}</time></p>{% else %}<p>Точное время публикации источника неизвестно.</p>{% endif %}
+            <p class="source-id">SHA-256: {{ day.source.id }}</p>
+          </details>
+        {% endif %}
+      </section>
+    {% endfor %}
+  </div>
+  <p class="muted small">Показываем опубликованное расписание. Оно не подтверждает, что занятие действительно состоялось. Часовой пояс — Europe/Moscow (UTC+3).</p>
+  {% if archive_dates %}<section class="recent-dates"><h2>Из архива</h2><nav aria-label="Даты из архива">{% for day in archive_dates %}<a class="compact-link" href="{{ entity_url(entity_type, entity, '/' + day) }}">{{ day }}</a>{% endfor %}</nav></section>{% endif %}
+{% endblock %}

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ивент - В С Е</title>
     <script src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
+    <script defer src="{{ url_for('static', filename='js/miniapp_presence.js') }}?v={{ STATIC_VERSION|default('20260930-1') }}"></script>
     <link rel="stylesheet" href="/static/css/main.css">
     <style>
         .event-container {

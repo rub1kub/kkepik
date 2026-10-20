@@ -10,7 +10,6 @@ let userEntity = null; // Кэш для личной группы/ФИО пол�
 // --- DOM элементы ---
 const groupSelectorContainer = document.getElementById('groupSelectorContainer');
 const currentGroupName = document.getElementById('currentGroupName');
-const groupQuickSwitch = document.getElementById('groupQuickSwitch');
 const groupSelectorManage = document.getElementById('groupSelectorManage');
 const groupSelectorArrow = document.getElementById('groupSelectorArrow');
 const groupSelectorDropdown = document.getElementById('groupSelectorDropdown');
@@ -26,9 +25,25 @@ let addError = null;
 let searchTimeout = null;
 let searchList = [];
 let selectedSearchItem = null;
+let scheduleCatalogPromise = null;
 
 function telegramAuthHeaders() {
     return tgWebAppData ? { 'X-Telegram-Init-Data': tgWebAppData } : {};
+}
+
+function loadScheduleCatalog() {
+    if (!scheduleCatalogPromise) {
+        scheduleCatalogPromise = fetch('/api/schedule/catalog', {
+            headers: { Accept: 'application/json' }
+        }).then(response => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.json();
+        }).catch(error => {
+            scheduleCatalogPromise = null;
+            throw error;
+        });
+    }
+    return scheduleCatalogPromise;
 }
 
 function entityKey(entity) {
@@ -195,53 +210,25 @@ function renderCurrentEntity() {
 }
 
 function renderEntitySwitcher() {
-    if (!groupQuickSwitch || !groupSelectorManage || !groupSelectorArrow) return;
+    if (!groupSelectorManage || !groupSelectorArrow) return;
 
     const tracked = getTrackedEntities();
-    const useQuickSwitch = tracked.length === 2;
-    const useDropdown = tracked.length > 2;
+    const useDropdown = tracked.length > 1;
 
-    currentGroupName.hidden = useQuickSwitch;
-    groupQuickSwitch.hidden = !useQuickSwitch;
+    currentGroupName.hidden = false;
     groupSelectorArrow.hidden = !useDropdown;
     groupSelectorManage.hidden = useDropdown;
-    groupSelectorManage.textContent = useQuickSwitch ? 'Изменить' : 'Добавить';
-    groupSelectorContainer.classList.toggle('quick-mode', useQuickSwitch);
+    groupSelectorManage.textContent = 'Добавить';
     groupSelectorContainer.classList.toggle('dropdown-mode', useDropdown);
-
-    groupQuickSwitch.replaceChildren();
-    if (!useQuickSwitch) return;
-
-    tracked.forEach(entity => {
-        const button = document.createElement('button');
-        const active = sameEntity(entity, currentEntity);
-        button.type = 'button';
-        button.className = 'group-quick-button';
-        button.textContent = entity.entity_name || entity.entity_id;
-        button.dataset.entityKey = entityKey(entity);
-        button.classList.toggle('active', active);
-        button.setAttribute('role', 'tab');
-        button.setAttribute('aria-selected', String(active));
-        button.addEventListener('click', () => {
-            if (!sameEntity(entity, currentEntity)) selectEntity(entity);
-        });
-        groupQuickSwitch.appendChild(button);
-    });
 }
 
 // --- Выпадающий список ---
 function setupDropdown() {
     groupSelectorArrow.addEventListener('click', toggleDropdown);
     currentGroupName.addEventListener('click', () => {
-        if (getTrackedEntities().length > 2) toggleDropdown();
+        if (getTrackedEntities().length > 1) toggleDropdown();
     });
-    groupSelectorManage.addEventListener('click', () => {
-        if (getTrackedEntities().length === 2) {
-            openDropdown();
-        } else {
-            openAddModal();
-        }
-    });
+    groupSelectorManage.addEventListener('click', openAddModal);
     document.addEventListener('click', (e) => {
         if (!groupSelectorContainer.contains(e.target) && !groupSelectorDropdown.contains(e.target)) {
             closeDropdown();
@@ -250,7 +237,7 @@ function setupDropdown() {
 }
 
 function toggleDropdown() {
-    if (getTrackedEntities().length <= 2) return;
+    if (getTrackedEntities().length <= 1) return;
     if (isDropdownOpen) {
         closeDropdown();
     } else {
@@ -460,6 +447,7 @@ async function removeFavorite(entity) {
 // --- Модальное окно для добавления ---
 function openAddModal() {
     if (!addModal) createAddModal();
+    loadScheduleCatalog().catch(() => {});
     addModal.style.display = 'flex';
     addInput.value = '';
     addResults.innerHTML = '';
@@ -550,10 +538,8 @@ function onAddInputChange() {
 }
 
 async function searchEntities(type, query) {
-    let url = type === 'group' ? '/api/groups' : '/api/teachers';
     try {
-        const resp = await fetch(url);
-        const data = await resp.json();
+        const data = await loadScheduleCatalog();
         let list = (type === 'group') ? (data.groups || []) : (data.teachers || []);
         // Фильтруем по подстроке
         list = list.filter(item => item.toLowerCase().includes(query.toLowerCase()));
@@ -593,4 +579,4 @@ function renderSearchResults(type, list, query) {
 }
 
 // --- Стили для выпадающего и модального окна ---
-// УДАЛЕНО: динамическое добавление <style> со стилями, теперь всё в main.css
+// УДАЛЕНО: динамическое добавление <style> со стилями, теперь всё в main.css 

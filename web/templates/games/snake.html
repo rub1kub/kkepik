@@ -7,6 +7,7 @@
     <meta name="MobileOptimized" content="width">
     <title>Змейка | KKEPIK Games</title>
     <script src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
+    <script defer src="{{ url_for('static', filename='js/miniapp_presence.js') }}?v={{ STATIC_VERSION|default('20260930-1') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/snake.css') }}">
 </head>
 <body>
@@ -41,4 +42,4 @@
     </div>
     <script src="{{ url_for('static', filename='js/snake.js') }}?v={{ STATIC_VERSION }}"></script>
 </body>
-</html>
+</html> 

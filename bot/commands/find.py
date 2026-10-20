@@ -8,6 +8,10 @@ import config
 import os
 import pandas as pd
 import re
+from schedule_preferences import get_preferences
+from schedules.message_constructor import render_schedule_message, personal_subject_aliases
+from tracked_groups import get_user_role
+from schedules.personal_delivery import send_personal_schedule
 
 
 def find_schedule_file(date: str, schedule_type: str) -> str | None:
@@ -65,10 +69,9 @@ def is_teacher_name(name: str) -> bool:
 
 
 def is_group_name(name: str) -> bool:
-    pattern = r'^\d{2,3}-(?:К?Д9)-\d[А-Я]{2,}$'
-    name = name.upper()
-    print(f"Проверяем группу: '{name}'")
-    return bool(re.match(pattern, name))
+    normalized = name.upper()
+    print(f"Проверяем группу: '{normalized}'")
+    return group_schedule.is_group_name(normalized)
 
 
 async def cmd_find(message: types.Message):
@@ -83,7 +86,7 @@ async def cmd_find(message: types.Message):
     if len(parts) < 2:
         await message.answer(
             "⚠️ Использование команды:\n"
-            "- Для групп: /find 103-Д9-1ИНС 17.03.2025\n"
+            "- Для групп: /find 103-Д3-3ИНС 01.09.2026\n"
             "- Для преподавателей: /find Ермолов И.А. 17.03.2025\n\n"
             "💡 Воспользуйтесь приложением для удобного поиска расписания: /app."
         )
@@ -165,23 +168,21 @@ async def cmd_find(message: types.Message):
         if schedule_type == "groups":
             lines = group_schedule.get_schedule_for_group(df, search_name)
             if lines:
-                msg_text = build_group_schedule_message(lines, search_name, search_date)
-                await message.answer(
-                    msg_text + "\n\n💡 Воспользуйтесь приложением для удобного поиска расписания: /app.",
-                    parse_mode="HTML",
-                    reply_markup=create_schedule_keyboard(search_date, "groups"),
-                )
+                preferences = get_preferences(message.from_user.id)
+                msg_text = build_group_schedule_message(lines, search_name, search_date, preferences=preferences,
+                    subject_aliases=personal_subject_aliases(get_user_role(config.get_db_path(), message.from_user.id), search_name))
+                image = global_schedules.last_groups_crop_cache.get(search_name) if search_date == global_schedules.last_groups_date else None
+                await send_personal_schedule(message.bot, message.chat.id, msg_text, image,
+                    create_schedule_keyboard(search_date, "groups"), preferences)
             else:
                 await message.answer(f"❌ Не найдено расписание для группы {search_name} на {search_date}.")
         else:
             lines = teacher_schedule.get_schedule_for_teacher(df, search_name)
             if lines:
-                msg_text = f"📆 Расписание преподавателя {search_name} на {search_date}:\n\n" + "\n".join(lines)
-                await message.answer(
-                    msg_text + "\n\n💡 Воспользуйтесь приложением для удобного поиска расписания: /app.",
-                    parse_mode="HTML",
-                    reply_markup=create_schedule_keyboard(search_date, "teachers"),
-                )
+                preferences = get_preferences(message.from_user.id)
+                msg_text = render_schedule_message(lines, search_name, search_date, preferences=preferences, teacher=True)
+                await send_personal_schedule(message.bot, message.chat.id, msg_text, None,
+                    create_schedule_keyboard(search_date, "teachers"), preferences)
             else:
                 await message.answer(f"❌ Не найдено расписание для преподавателя {search_name} на {search_date}.")
 

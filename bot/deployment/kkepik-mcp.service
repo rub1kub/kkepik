@@ -1,0 +1,28 @@
+[Unit]
+Description=KKEPIK public read-only schedule MCP
+After=network.target
+
+[Service]
+Type=simple
+User=kkepik-mcp
+Group=kkepik-mcp
+WorkingDirectory=/opt/kkepik-mcp
+ExecStart=/opt/kkepik-mcp/agent_mcp/.venv/bin/python -m uvicorn agent_mcp.server:app --host 127.0.0.1 --port 18792 --proxy-headers --forwarded-allow-ips 127.0.0.1 --limit-concurrency 40 --timeout-keep-alive 10
+Restart=on-failure
+RestartSec=5
+MemoryHigh=128M
+MemoryMax=192M
+MemorySwapMax=64M
+TasksMax=64
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+CapabilityBoundingSet=
+UMask=0077
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

@@ -1,56 +1,213 @@
-from flask import Blueprint, jsonify, request, send_file
+"""Public read-only schedule API; the bot service remains loopback-only."""
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+import os
+import re
+import uuid
+
+from flask import Blueprint, Response, current_app, g, jsonify, request, send_file, render_template
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import requests
-from config import API_URL
-import os
-from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor
+from werkzeug.exceptions import HTTPException
+
+from config import API_URL, STATIC_VERSION
+from public_api_contract import build_openapi
 from telegram_auth import authenticated_telegram_user
 
 schedule_bp = Blueprint('schedule', __name__)
 limiter = Limiter(
-    app=None,
-    key_func=get_remote_address,
-    default_limits=["10 per second"]
+    key_func=get_remote_address, default_limits=[],
+    storage_uri=os.getenv('SCHEDULE_RATE_LIMIT_STORAGE_URI', 'memory://'),
+    headers_enabled=True, retry_after='delta-seconds',
 )
+UPSTREAM_TIMEOUT = (3.05, 30)
+_CATALOG_KINDS = ('groups', 'teachers', 'audiences')
+_ERRORS = {
+    400: ('invalid_request', 'Некорректный запрос'),
+    401: ('unauthorized', 'Требуется авторизация Telegram'),
+    403: ('forbidden', 'Доступ запрещён'),
+    404: ('not_found', 'Данные не найдены'),
+    405: ('method_not_allowed', 'Метод не поддерживается'),
+    413: ('payload_too_large', 'Слишком большой запрос'),
+    415: ('unsupported_media_type', 'Используйте Content-Type: application/json'),
+    422: ('invalid_request', 'Некорректные параметры запроса'),
+    429: ('rate_limited', 'Слишком много запросов. Повторите позже'),
+    500: ('internal_error', 'Внутренняя ошибка сервера'),
+    502: ('invalid_upstream_response', 'Некорректный ответ сервиса расписания'),
+    503: ('service_unavailable', 'Сервис расписания временно недоступен'),
+    504: ('upstream_timeout', 'Сервис расписания не ответил вовремя'),
+}
+
+
+class ApiError(Exception):
+    def __init__(self, status, message=None):
+        self.status = status
+        self.message = message or _ERRORS[status][1]
+
+
+def _request_id():
+    if not getattr(g, 'schedule_request_id', None):
+        g.schedule_request_id = uuid.uuid4().hex
+    return g.schedule_request_id
+
+
+def error_response(status, message=None):
+    code, default_message = _ERRORS.get(status, _ERRORS[500])
+    message = message or default_message
+    response = jsonify(error=message, detail=message, code=code, request_id=_request_id())
+    response.status_code = status
+    response.headers['Cache-Control'] = 'private, no-store'
+    response.headers['X-Request-ID'] = _request_id()
+    if status == 429:
+        response.headers['Retry-After'] = '1'
+    return response
+
+
+@schedule_bp.record_once
+def _init_api(state):
+    limiter.init_app(state.app)
+
+
+@schedule_bp.before_request
+def _prepare_request():
+    _request_id()
+    request.max_content_length = 16384
+    if len(request.headers.get('X-Telegram-Init-Data', '')) > 16384:
+        raise ApiError(413)
+
+
+@schedule_bp.after_request
+def _response_headers(response):
+    response.headers['X-Request-ID'] = _request_id()
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers.setdefault('Cache-Control', 'private, no-store')
+    if response.status_code >= 400:
+        # Never log query strings, bodies or Telegram authentication headers.
+        current_app.logger.warning('schedule_api request_id=%s method=%s path=%s status=%s',
+                                   _request_id(), request.method, request.path, response.status_code)
+    return response
+
+
+@schedule_bp.errorhandler(ApiError)
+def _api_error(exc):
+    return error_response(exc.status, exc.message)
+
+
+@schedule_bp.errorhandler(HTTPException)
+def _http_error(exc):
+    response = error_response(exc.code)
+    if exc.code == 405 and exc.valid_methods:
+        response.headers['Allow'] = ', '.join(exc.valid_methods)
+    return response
+
+
+@schedule_bp.errorhandler(Exception)
+def _unexpected_error(exc):
+    current_app.logger.error('schedule_api internal error request_id=%s type=%s',
+                             _request_id(), type(exc).__name__)
+    return error_response(500)
+
 
 def _get_authenticated_user_id():
     telegram_user = authenticated_telegram_user(request)
-    return telegram_user['id'] if telegram_user else None
+    if not telegram_user:
+        raise ApiError(401)
+    return telegram_user['id']
+
+
+def _validate_date(value):
+    if value is None:
+        return
+    if not isinstance(value, str) or not re.fullmatch(r'[0-9]{2}\.[0-9]{2}\.[0-9]{4}', value):
+        raise ApiError(400, 'Дата должна быть в формате ДД.ММ.ГГГГ')
+    try:
+        datetime.strptime(value, '%d.%m.%Y')
+    except ValueError:
+        raise ApiError(400, 'Указана несуществующая дата') from None
+
+
+def _schedule_parameters(entity=None):
+    if request.method in ('GET', 'HEAD'):
+        if any(len(request.args.getlist(key)) != 1 for key in request.args):
+            raise ApiError(400, 'Параметры не должны повторяться')
+        payload = request.args.to_dict()
+    else:
+        if not request.is_json:
+            raise ApiError(415)
+        payload = request.get_json()
+    if not isinstance(payload, dict):
+        raise ApiError(400, 'Тело запроса должно быть JSON-объектом')
+    allowed = {'date', 'tgWebAppData', 'initData'} | ({entity} if entity else set())
+    if set(payload) - allowed:
+        raise ApiError(400, 'Запрос содержит неизвестные параметры')
+    result = {}
+    if entity:
+        value = payload.get(entity)
+        if not isinstance(value, str) or not value.strip() or len(value) > 200:
+            raise ApiError(400, f'Параметр {entity}: требуется строка длиной от 1 до 200 символов')
+        if any(ord(char) < 32 for char in value):
+            raise ApiError(400, f'Параметр {entity} содержит недопустимые символы')
+        result[entity] = value.strip().upper() if entity == 'group' else value.strip()
+    _validate_date(payload.get('date'))
+    if payload.get('date') is not None:
+        result['date'] = payload['date']
+    return result
+
+
+def _upstream(method, path, **kwargs):
+    try:
+        return getattr(requests, method)(f'{API_URL}{path}', timeout=UPSTREAM_TIMEOUT,
+                                         allow_redirects=False, **kwargs)
+    except requests.Timeout:
+        raise ApiError(504) from None
+    except requests.RequestException:
+        raise ApiError(503) from None
 
 
 def _json_from_upstream(response):
     try:
-        return response.json()
+        payload = response.json()
     except ValueError:
-        return {"error": "Ошибка сервера"}
-
-
-def _public_user_payload(payload):
+        raise ApiError(502) from None
     if not isinstance(payload, dict):
-        return payload
-    role = payload.get("role")
-    if role in {"Я преподаватель", "teacher"}:
-        payload["role"] = "teacher"
-    elif role in {"Я студент", "student"}:
-        payload["role"] = "student"
+        raise ApiError(502)
     return payload
 
 
-_CATALOG_KINDS = ("groups", "teachers", "audiences")
+def _public_user_payload(payload):
+    # New internal fields must not become public by accident.
+    result = {key: payload[key] for key in (
+        'user_id', 'role', 'name_or_group', 'is_class_teacher', 'class_group'
+    ) if key in payload}
+    role = result.get('role')
+    if role in {'Я преподаватель', 'teacher'}:
+        result['role'] = 'teacher'
+    elif role in {'Я студент', 'student'}:
+        result['role'] = 'student'
+    return result
+
+
+def _checked_payload(response):
+    if response.status_code == 200:
+        return _json_from_upstream(response)
+    # Do not relay internal exceptions or the server's file inventory.
+    if response.status_code in (400, 401, 403, 404, 422, 429):
+        raise ApiError(response.status_code)
+    raise ApiError(503 if response.status_code >= 500 else 502)
 
 
 def _fetch_catalog_values(kind):
-    response = requests.get(f"{API_URL}/{kind}", timeout=5)
-    if response.status_code == 404:
-        return []
-    response.raise_for_status()
-    payload = _json_from_upstream(response)
-    values = payload.get(kind, []) if isinstance(payload, dict) else []
-    if not isinstance(values, list):
-        return []
-    return [value.strip() for value in values if isinstance(value, str) and value.strip()]
+    response = _upstream('get', f'/{kind}')
+    try:
+        if response.status_code == 404:
+            return []
+        values = _checked_payload(response).get(kind)
+        if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+            raise ApiError(502)
+        return sorted({value.strip() for value in values if value.strip()})
+    finally:
+        response.close()
 
 
 def _catalog_json_response(payload):
@@ -59,428 +216,184 @@ def _catalog_json_response(payload):
     return response
 
 
-def _single_catalog_response(kind):
-    try:
-        values = _fetch_catalog_values(kind)
-    except requests.RequestException:
-        values = []
-    return _catalog_json_response({kind: values})
-
-
 @schedule_bp.route('/api/schedule/catalog')
-@limiter.limit("10 per second")
+@limiter.limit('10 per second')
 def get_schedule_catalog():
-    """Return current-academic-year entities in one mobile-friendly request."""
-    with ThreadPoolExecutor(max_workers=len(_CATALOG_KINDS)) as executor:
-        futures = {
-            kind: executor.submit(_fetch_catalog_values, kind)
-            for kind in _CATALOG_KINDS
-        }
-        payload = {}
-        for kind, future in futures.items():
-            try:
-                payload[kind] = future.result()
-            except requests.RequestException:
-                payload[kind] = []
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        values = executor.map(_fetch_catalog_values, _CATALOG_KINDS)
+        payload = dict(zip(_CATALOG_KINDS, values))
     return _catalog_json_response(payload)
 
 
-# Keep old clients quiet while cached schedule-search assets expire.
 @schedule_bp.route('/api/groups')
-@limiter.limit("10 per second")
+@limiter.limit('10 per second')
 def get_groups_catalog():
-    return _single_catalog_response('groups')
+    return _catalog_json_response({'groups': _fetch_catalog_values('groups')})
 
 
 @schedule_bp.route('/api/teachers')
-@limiter.limit("10 per second")
+@limiter.limit('10 per second')
 def get_teachers_catalog():
-    return _single_catalog_response('teachers')
+    return _catalog_json_response({'teachers': _fetch_catalog_values('teachers')})
 
 
 @schedule_bp.route('/api/audiences')
-@limiter.limit("10 per second")
+@limiter.limit('10 per second')
 def get_audiences_catalog():
-    return _single_catalog_response('audiences')
+    return _catalog_json_response({'audiences': _fetch_catalog_values('audiences')})
 
 
 @schedule_bp.route('/api/me')
-@limiter.limit("10 per second")
+@limiter.limit('10 per second')
 def get_me():
-    """
-    Получение данных авторизованного пользователя
-    ---
-    tags:
-      - Расписание
-    parameters:
-    responses:
-      200:
-        description: Данные пользователя успешно получены
-        schema:
-          type: object
-          properties:
-            user_id:
-              type: integer
-              description: ID пользователя
-            role:
-              type: string
-              description: Роль пользователя
-            name_or_group:
-              type: string
-              description: Имя или группа пользователя
-            is_class_teacher:
-              type: boolean
-              description: Является ли классным руководителем
-            class_group:
-              type: string
-              description: Классная группа
-      404:
-        description: Пользователь не найден
-      500:
-        description: Ошибка сервера
-    """
+    user_id = _get_authenticated_user_id()
+    response = _upstream('get', f'/user/{user_id}')
     try:
-        user_id = _get_authenticated_user_id()
-        if not user_id:
-            return jsonify({"error": "Требуется авторизация Telegram"}), 401
-        response = requests.get(f"{API_URL}/user/{user_id}", timeout=5)
-        return jsonify(_public_user_payload(_json_from_upstream(response))), response.status_code
-    except requests.RequestException:
-        return jsonify({"error": "Ошибка сервера"}), 500
+        # Compatibility with older bot processes that wrapped their own 404.
+        if response.status_code == 500:
+            detail = _json_from_upstream(response).get('detail', '')
+            if isinstance(detail, str) and detail.startswith('404:'):
+                raise ApiError(404, 'Пользователь не найден')
+        return jsonify(_public_user_payload(_checked_payload(response)))
+    finally:
+        response.close()
 
 
-@schedule_bp.route('/api/schedule/me', methods=['POST'])
-@limiter.limit("10 per second")
+def _schedule_response(path, parameters):
+    response = _upstream('post', path, json=parameters)
+    try:
+        payload = _checked_payload(response)
+        lines = payload.get('schedule')
+        if not isinstance(lines, list) or any(not isinstance(line, str) for line in lines):
+            raise ApiError(502)
+        if not isinstance(payload.get('date'), str):
+            raise ApiError(502)
+        if parameters.get('date') and payload['date'] != parameters['date']:
+            raise ApiError(502)
+        return jsonify({key: payload[key] for key in ('group', 'teacher', 'audience', 'date', 'schedule')
+                        if key in payload})
+    finally:
+        response.close()
+
+
+@schedule_bp.route('/api/schedule/me', methods=['GET', 'POST'])
+@limiter.limit('10 per second')
 def get_my_schedule():
-    """
-    Получение расписания авторизованного пользователя
-    ---
-    tags:
-      - Расписание
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          type: object
-          required: ["date"]
-          properties:
-            date:
-              type: string
-              pattern: "^\\d{2}\\.\\d{2}\\.\\d{4}$"
-              description: Дата в формате DD.MM.YYYY
-              example: "22.04.2025"
-    responses:
-      200:
-        description: Расписание успешно получено
-        schema:
-          type: object
-          properties:
-            group:
-              type: string
-              description: Название группы
-            teacher:
-              type: string
-              description: Имя преподавателя
-            date:
-              type: string
-              description: Дата расписания
-            schedule:
-              type: array
-              items:
-                type: object
-                properties:
-                  time:
-                    type: string
-                    description: Время занятия
-                  subject:
-                    type: string
-                    description: Название предмета
-                  room:
-                    type: string
-                    description: Номер аудитории
-      400:
-        description: Неверный формат даты (должен быть DD.MM.YYYY) или отсутствует параметр date
-      404:
-        description: Пользователь не найден
-      500:
-        description: Ошибка сервера
-    """
-    try:
-        user_id = _get_authenticated_user_id()
-        if not user_id:
-            return jsonify({"error": "Требуется авторизация Telegram"}), 401
-        response = requests.post(
-            f"{API_URL}/getUserSchedule/{user_id}",
-            json=request.json,
-            headers={'Content-Type': 'application/json'},
-            timeout=10,
-        )
-        return jsonify(_json_from_upstream(response)), response.status_code
-    except requests.RequestException:
-        return jsonify({"error": "Ошибка сервера"}), 500
+    user_id = _get_authenticated_user_id()
+    return _schedule_response(f'/getUserSchedule/{user_id}', _schedule_parameters())
 
-@schedule_bp.route('/api/schedule/group', methods=['POST'])
-@limiter.limit("10 per second")
+
+@schedule_bp.route('/api/schedule/group', methods=['GET', 'POST'])
+@limiter.limit('10 per second')
 def get_group_schedule():
-    """
-    Получение расписания группы
-    ---
-    tags:
-      - Расписание
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          type: object
-          required: ["group"]
-          properties:
-            group:
-              type: string
-              description: Название группы
-            date:
-              type: string
-              pattern: "^\\d{2}\\.\\d{2}\\.\\d{4}$",
-              description: Дата в формате DD.MM.YYYY
-              example: "22.04.2025"
-    responses:
-      200:
-        description: Расписание группы успешно получено
-      404:
-        description: Группа не найдена в расписании
-      500:
-        description: Ошибка сервера
-    """
-    try:
-        response = requests.post(
-            f"{API_URL}/schedule/group",
-            json=request.json,
-            headers={'Content-Type': 'application/json'}
-        )
-        return jsonify(response.json()), response.status_code
-    except Exception as e:
-        return jsonify({"error": "Ошибка сервера"}), 500
+    return _schedule_response('/schedule/group', _schedule_parameters('group'))
 
-@schedule_bp.route('/api/schedule/teacher', methods=['POST'])
-@limiter.limit("10 per second")
+
+@schedule_bp.route('/api/schedule/teacher', methods=['GET', 'POST'])
+@limiter.limit('10 per second')
 def get_teacher_schedule():
-    """
-    Получение расписания преподавателя
-    ---
-    tags:
-      - Расписание
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          type: object
-          required: ["teacher"]
-          properties:
-            teacher:
-              type: string
-              description: Имя преподавателя
-            date:
-              type: string
-              pattern: "^\\d{2}\\.\\d{2}\\.\\d{4}$",
-              description: Дата в формате DD.MM.YYYY
-              example: "22.04.2025"
-    responses:
-      200:
-        description: Расписание преподавателя успешно получено
-      404:
-        description: Преподаватель не найден в расписании
-      500:
-        description: Ошибка сервера
-    """
-    try:
-        response = requests.post(
-            f"{API_URL}/schedule/teacher",
-            json=request.json,
-            headers={'Content-Type': 'application/json'}
-        )
-        return jsonify(response.json()), response.status_code
-    except Exception as e:
-        return jsonify({"error": "Ошибка сервера"}), 500
+    return _schedule_response('/schedule/teacher', _schedule_parameters('teacher'))
 
-@schedule_bp.route('/api/schedule/audience', methods=['POST'])
-@limiter.limit("10 per second")
+
+@schedule_bp.route('/api/schedule/audience', methods=['GET', 'POST'])
+@limiter.limit('10 per second')
 def get_audience_schedule():
-    """
-    Получение расписания аудитории
-    ---
-    tags:
-      - Расписание
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          type: object
-          required: ["audience"]
-          properties:
-            audience:
-              type: string
-              description: Номер аудитории
-            date:
-              type: string
-              pattern: "^\\d{2}\\.\\d{2}\\.\\d{4}$",
-              description: Дата в формате DD.MM.YYYY
-              example: "22.04.2025"
-    responses:
-      200:
-        description: Расписание аудитории успешно получено
-      404:
-        description: Аудитория не найдена в расписании
-      500:
-        description: Ошибка сервера
-    """
-    try:
-        response = requests.post(
-            f"{API_URL}/schedule/audience",
-            json=request.json,
-            headers={'Content-Type': 'application/json'}
-        )
-        return jsonify(response.json()), response.status_code
-    except Exception as e:
-        return jsonify({"error": "Ошибка сервера"}), 500
+    return _schedule_response('/schedule/audience', _schedule_parameters('audience'))
+
 
 @schedule_bp.route('/api/schedule/download/<schedule_type>/<date>')
-@limiter.limit("10 per second")
+@limiter.limit('10 per second')
 def download_schedule(schedule_type, date):
-    """
-    Скачивание файла расписания
-    ---
-    tags:
-      - Расписание
-    parameters:
-      - name: schedule_type
-        in: path
-        type: string
-        required: true
-        enum: [groups, teachers]
-        description: Тип расписания
-      - name: date
-        in: path
-        type: string
-        required: true
-        pattern: "^\\d{2}\\.\\d{2}\\.\\d{4}$"
-        description: Дата в формате DD.MM.YYYY
-    responses:
-      200:
-        description: Файл расписания успешно скачан
-        schema:
-          type: file
-      400:
-        description: Неверный тип расписания
-      404:
-        description: Файл не найден
-      500:
-        description: Ошибка сервера
-    """
+    if schedule_type not in ('groups', 'teachers'):
+        raise ApiError(400, 'Тип расписания должен быть groups или teachers')
+    _validate_date(date)
+    upstream = _upstream('get', f'/schedule/download/{schedule_type}/{date}', stream=True)
     try:
-        if schedule_type not in ["groups", "teachers"]:
-            return jsonify({"error": "Неверный тип расписания"}), 400
+        if upstream.status_code != 200:
+            _checked_payload(upstream)
+        content_type = upstream.headers.get('Content-Type', '').split(';')[0].strip().lower()
+        extensions = {
+            'application/pdf': '.pdf',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+        }
+        if content_type not in extensions:
+            raise ApiError(502)
+        upstream.raw.decode_content = True
+        response = send_file(upstream.raw, mimetype=content_type, as_attachment=True,
+                             download_name=f'schedule_{schedule_type}_{date}{extensions[content_type]}',
+                             conditional=False)
+        # The raw file wrapper and close callback both release the upstream socket.
+        response.call_on_close(upstream.close)
+        response.direct_passthrough = False
+        response.headers['Cache-Control'] = 'private, no-store'
+        return response
+    except Exception:
+        upstream.close()
+        raise
 
-        response = requests.get(
-            f"{API_URL}/schedule/download/{schedule_type}/{date}",
-            stream=True
-        )
 
-        if response.status_code == 200:
-            # Определяем тип и имя файла из ответа FastAPI
-            content_type = response.headers.get('content-type', 'application/octet-stream')
-            content_disp = response.headers.get('content-disposition', '')
+@schedule_bp.route('/api/openapi.json')
+def openapi_spec():
+    response = jsonify(build_openapi())
+    response.headers['Cache-Control'] = 'no-cache'
+    return response
 
-            # Извлекаем оригинальное имя файла из content-disposition
-            import re as _re
-            from urllib.parse import unquote
-            fname_match = _re.search(r"filename\*=utf-8''(.+)", content_disp)
-            if fname_match:
-                download_name = unquote(fname_match.group(1))
-            else:
-                ext = '.pdf' if 'pdf' in content_type else '.xlsx'
-                download_name = f"schedule_{schedule_type}_{date}{ext}"
 
-            return send_file(
-                response.raw,
-                mimetype=content_type,
-                as_attachment=True,
-                download_name=download_name
-            )
-        else:
-            return jsonify({"error": "Файл не найден"}), 404
-    except Exception as e:
-        return jsonify({"error": "Ошибка сервера"}), 500
+@schedule_bp.route('/settings')
+def message_constructor_page():
+    return render_template('message_settings.html', STATIC_VERSION=STATIC_VERSION)
 
-@schedule_bp.route('/api/groups')
-@limiter.limit("10 per second")
-def get_all_groups():
-    """
-    Получение списка всех групп
-    ---
-    tags:
-      - Расписание
-    responses:
-      200:
-        description: Список групп успешно получен
-        schema:
-          type: object
-          properties:
-            groups:
-              type: array
-              items:
-                type: string
-                description: Название группы
-      404:
-        description: Список групп не найден
-      500:
-        description: Ошибка сервера
-    """
+
+@schedule_bp.route('/api/message-settings', methods=['GET', 'PUT'])
+@limiter.limit('10 per second')
+def message_settings():
+    _get_authenticated_user_id()
+    kwargs = {'headers': {'X-Telegram-Init-Data': request.headers.get('X-Telegram-Init-Data', '')}}
+    if request.method == 'PUT':
+        if not request.is_json:
+            raise ApiError(415)
+        payload = request.get_json()
+        if not isinstance(payload, dict):
+            raise ApiError(400)
+        kwargs['json'] = payload
+    upstream = _upstream(request.method.lower(), '/message-settings', **kwargs)
     try:
-        response = requests.get(f"{API_URL}/groups")
-        return jsonify(response.json()), response.status_code
-    except Exception as e:
-        return jsonify({"error": "Ошибка сервера"}), 500
+        return jsonify(_checked_payload(upstream))
+    finally:
+        upstream.close()
 
-@schedule_bp.route('/api/teachers')
-@limiter.limit("10 per second")
-def get_all_teachers():
-    """
-    Получение списка всех преподавателей
-    ---
-    tags:
-      - Расписание
-    responses:
-      200:
-        description: Список преподавателей успешно получен
-        schema:
-          type: object
-          properties:
-            teachers:
-              type: array
-              items:
-                type: string
-                description: ФИО преподавателя
-      404:
-        description: Список преподавателей не найден
-      500:
-        description: Ошибка сервера
-    """
+
+@schedule_bp.route('/api/message-settings/preview', methods=['POST'])
+@limiter.limit('10 per second')
+def message_settings_preview():
+    _get_authenticated_user_id()
+    if not request.is_json:
+        raise ApiError(415)
+    payload = request.get_json()
+    if not isinstance(payload, dict) or set(payload) - {'preferences', 'entity'}:
+        raise ApiError(400)
+    upstream = _upstream('post', '/message-settings/preview', json=payload,
+                         headers={'X-Telegram-Init-Data': request.headers.get('X-Telegram-Init-Data', '')})
     try:
-        response = requests.get(f"{API_URL}/teachers")
-        return jsonify(response.json()), response.status_code
-    except Exception as e:
-        return jsonify({"error": "Ошибка сервера"}), 500
+        return jsonify(_checked_payload(upstream))
+    finally:
+        upstream.close()
 
 
-@schedule_bp.route('/api/audiences')
-@limiter.limit("10 per second")
-def get_all_audiences():
-    """Получение списка аудиторий текущего учебного года."""
+@schedule_bp.route('/api/message-settings/image')
+@limiter.limit('10 per second')
+def message_settings_image():
+    _get_authenticated_user_id()
+    entity = request.args.get('entity', '')
+    if not entity or len(entity) > 200:
+        raise ApiError(400)
+    upstream = _upstream('get', '/message-settings/image', params={'entity': entity},
+                         headers={'X-Telegram-Init-Data': request.headers.get('X-Telegram-Init-Data', '')})
     try:
-        response = requests.get(f"{API_URL}/audiences", timeout=10)
-        return jsonify(_json_from_upstream(response)), response.status_code
-    except requests.RequestException:
-        return jsonify({"error": "Ошибка сервера"}), 500
+        if upstream.status_code != 200:
+            _checked_payload(upstream)
+        if upstream.headers.get('Content-Type', '').split(';')[0] != 'image/png':
+            raise ApiError(502)
+        return Response(upstream.content, mimetype='image/png')
+    finally:
+        upstream.close()

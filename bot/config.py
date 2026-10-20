@@ -78,6 +78,8 @@ def init_db():
     if "class_group" not in columns:
         cur.execute("ALTER TABLE users ADD COLUMN class_group TEXT")
     migrate_legacy_groups(conn)
+    from schedule_preferences import init_preferences_table
+    init_preferences_table(conn)
     conn.commit()
     conn.close()
 

@@ -11,7 +11,7 @@
         group: {
             tabLabel: 'Группа',
             fieldLabel: 'Номер группы',
-            placeholder: '103-Д9-2ИНС',
+            placeholder: '103-Д3-3ИНС',
             hint: 'Начните вводить название группы',
             resultLabel: 'Группа',
             shortLabel: 'Г',

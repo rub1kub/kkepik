@@ -8,6 +8,7 @@
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_search.css') }}?v={{ STATIC_VERSION }}">
     <script src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
+    <script defer src="{{ url_for('static', filename='js/miniapp_presence.js') }}?v={{ STATIC_VERSION|default('20260930-1') }}"></script>
 </head>
 <body>
     <main class="page-shell">
@@ -41,7 +42,7 @@
                             autocapitalize="characters"
                             enterkeyhint="search"
                             spellcheck="false"
-                            placeholder="Например, 103-Д9-2ИНС"
+                            placeholder="Например, 103-Д3-3ИНС"
                             aria-describedby="field-hint"
                             aria-controls="autocomplete-list"
                             aria-autocomplete="list"

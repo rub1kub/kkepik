@@ -18,6 +18,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Функция для обработки действия (свайп или скролл)
     function handleAction() {
+        if (document.body.classList.contains('pixel-editing')) return;
         const currentTime = Date.now();
         
         // Сбрасываем счетчик, если прошло больше времени, чем таймаут

@@ -9,6 +9,7 @@ import pandas as pd
 
 import global_schedules
 from schedules import parser_all
+from schedules.pdf_to_df import pdf_to_dataframe
 from schedules.schedule_catalog import (
     academic_year_for_date,
     extract_catalog_entries,
@@ -44,6 +45,15 @@ class ScheduleCatalogTest(unittest.TestCase):
         self.assertEqual(entries["teachers"], ["Каркавин Д.О."])
         self.assertEqual(entries["audiences"], ["84", "86-а"])
 
+    def test_zero_placeholders_are_not_audiences(self):
+        df = self._sample_df()
+        df.iat[1, 3] = "00"
+        df.iat[3, 3] = "0_0"
+
+        entries = extract_catalog_entries(df)
+
+        self.assertEqual(entries["audiences"], [])
+
     def test_same_day_update_replaces_source_and_other_days_merge(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "catalog.json"
@@ -76,15 +86,18 @@ class ScheduleCatalogTest(unittest.TestCase):
             self.assertNotIn("84", catalog["audiences"])
             self.assertIn("121", catalog["audiences"])
 
-    def test_old_schedule_cannot_seed_new_academic_year(self):
-        df = self._sample_df()
+    def test_old_real_pdf_cannot_seed_new_academic_year(self):
+        pdf_path = Path(__file__).parents[1] / "data" / "Расписание на 24.06.2026_ГРУППЫ.pdf"
+        if not pdf_path.is_file():
+            self.skipTest('Optional local PDF fixture is not included in the public repository')
+        df = pdf_to_dataframe(str(pdf_path))
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "catalog.json"
             result = update_schedule_catalog(
                 df,
                 "24.06.2026",
                 "groups",
-                source_name="archived-2025-2026.pdf",
+                source_name=pdf_path.name,
                 today=dt.date(2026, 8, 24),
                 path=path,
             )

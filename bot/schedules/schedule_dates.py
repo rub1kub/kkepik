@@ -6,7 +6,9 @@ import datetime as dt
 from zoneinfo import ZoneInfo
 
 
-COLLEGE_TIMEZONE = ZoneInfo("Asia/Krasnoyarsk")
+# ККЭП находится в Краснодаре: относительные даты всегда считаются по МСК,
+# независимо от часового пояса сервера или устройства пользователя.
+COLLEGE_TIMEZONE = ZoneInfo("Europe/Moscow")
 
 
 def current_college_date() -> dt.date:

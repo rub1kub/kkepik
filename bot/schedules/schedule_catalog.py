@@ -166,6 +166,8 @@ def _canonical_audience(value: str) -> str | None:
     value = re.sub(r"\s+", " ", value).strip().strip(".,")
     if not value or value == "0" or is_group_name(value):
         return None
+    if re.fullmatch(r"0+(?:[._/\-]0+)*", value.replace(" ", "")):
+        return None
 
     try:
         number = float(value.replace(",", "."))
