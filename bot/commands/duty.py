@@ -24,12 +24,13 @@ log = logging.getLogger(__name__)
 
 def keyboard(rows):
     return types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text=label, callback_data='du:' + data) for label, data in row]
+        [types.InlineKeyboardButton(text=label, web_app=types.WebAppInfo(url='https://kkepik.rub1kub.ru' + data[4:]))
+         if data.startswith('web:') else types.InlineKeyboardButton(text=label, callback_data='du:' + data) for label, data in row]
         for row in rows if row])
 
 
 def toggle(value):
-    return '✓' if value else '○'
+    return '✅' if value else '◻️'
 
 
 def date_label(value):
@@ -223,16 +224,14 @@ class DutyBot:
             return self.panel(spaces[0]['id'], uid)
         text = '<b>Дежурства</b>\n\n'
         if not spaces:
-            text += 'Ведёте дежурства в группе? Нажмите «Настроить дежурства».\n\n' \
-                    'Если староста уже добавил вас, список появится здесь. Иначе попросите у него приглашение.'
+            text += 'Пока нет подключённых дежурств.'
         else:
             # Preserve access to previously created or delegated rosters.
             text += 'Какие дежурства открыть?'
         roles = {'owner': 'вы ведёте', 'manager': 'вы заместитель', 'member': 'вы участвуете'}
         rows = [[(f"{s['group_name']} · {roles[s['role']]}" + (' · пауза' if s['status'] == 'paused' else ''), f"open:{s['id']}")] for s in spaces]
         if not spaces:
-            rows.append([('Настроить дежурства', 'create')])
-        rows.append([('Как это работает', 'help')])
+            rows += [[('Открыть мини-апп', 'web:/duties')], [('Настроить в чате', 'create')]]
         return text, rows
 
     async def command(self, message, state=None, command=None):
@@ -287,28 +286,21 @@ class DutyBot:
         if step == 'setup_group':
             await self.send(target, '<b>Для какой группы?</b>\n\nНапишите полный номер, например 116-КД9-3ССА.', [cancel])
         elif step == 'setup_pairs':
-            await self.send(target, f'<b>1 из 3 · Пары {group}</b>\n\n'
-                'Пришлите пары: одна пара на строку, между людьми знак +.\n'
-                '<code>@ivan_ivanov + @anna_petrova\n@petr_sidorov + Мария Орлова</code>\n\n'
-                'Укажите @username или Telegram user ID числом. Если их нет — имя из профиля Telegram. '
-                'Имена по известным username бот подставит сам.\n\n'
-                'Можно прислать людей по одному в строке: соседние строки станут парой. '
-                'Перед сохранением проверим список.', [[('Другая группа', 'wgroup')], cancel])
+            await self.send(target, f'👥 <b>Шаг 1 из 3 · Пары</b>\n\n'
+                'Каждая пара — с новой строки.\n'
+                '<code>@ivan_ivanov + @anna_petrova</code>\n\n'
+                'Укажите @username или Telegram user ID числом. Если их нет — имя из профиля Telegram.',
+                [[('Другая группа', 'wgroup')], cancel])
         elif step == 'setup_reserves':
-            await self.send(target, f'<b>1 из 3 · Запасные</b>\n\nПары: {len(data["pairs"])}.\n\n'
-                'Кто сможет подменять дежурных? Пришлите запасных по одному в строке.\n\n'
-                'Укажите @username, Telegram user ID числом или имя из профиля Telegram.\n\n'
-                'Если запасных нет, нажмите «Без запасных».',
+            await self.send(target, '🔄 <b>Запасные</b>\n\n'
+                'Пришлите запасных по одному в строке или нажмите «Без запасных».',
                 [[('Без запасных', 'wskip')], [('Назад к парам', 'wpairs')], cancel])
         elif step == 'setup_options':
             opts = settings(data.get('options'))
-            await self.send(target, '<b>2 из 3 · Уведомления</b>\n\n'
-                'Бот сообщает, кто дежурит, в 08:00 МСК с понедельника по субботу. '
-                'Если в расписании нет пар, дежурства не будет.\n\n'
-                'Выберите, кому писать. Нажатие на кнопку меняет настройку, ✓ означает «включено». '
-                'Время и дни можно поменять после создания списка.',
+            await self.send(target, '🔔 <b>Шаг 2 из 3 · Когда писать</b>\n\n'
+                'Напоминание — в 08:00 МСК.',
                 [[(toggle(opts['owner_daily']) + ' Сообщать мне о дежурных', 'wopt:owner_daily')],
-                 [(f"Участникам: { {'all':'всем','assigned':'дежурным','off':'не отправлять'}[opts['audience']]}", 'wopt:audience')],
+                 [(toggle(opts['audience'] != 'off') + ' Напоминать самим дежурным', 'wopt:audience')],
                  [(toggle(opts['requests']) + ' Предлагать замены в личке', 'wopt:requests')],
                  [(toggle(opts['owner_events']) + ' Сообщать мне о проблемах и итогах', 'wopt:owner_events')],
                  [('Дальше →', 'wpreview')], [('Назад', 'wreserves')], cancel])
@@ -324,17 +316,12 @@ class DutyBot:
             opts = settings(data.get('options'))
             now = clock()
             first = now.date() if now.strftime('%H:%M') < opts['time'] else now.date()+timedelta(days=1)
-            text = f'<b>3 из 3 · Проверьте список {group}</b>\n\n' + roster_lines(data['pairs'], data['reserves'])
-            text += (f"\n\nНачало: <b>{first.strftime('%d.%m')}</b>. Время рассылки: {opts['time']} МСК.\n"
-                f"На замену должны согласиться оба. Ждём ответа {opts['wait_minutes']} мин., ищем замену до {opts['cutoff']}. "
-                'Постоянные пары при этом не меняются.\n\n')
+            text = f'✅ <b>Шаг 3 из 3 · Всё верно?</b>\n{group}\n\n' + roster_lines(data['pairs'], data['reserves'])
+            text += f"\n\nНачнём <b>{first.strftime('%d.%m')}</b> в {opts['time']} МСК.\n\n"
             if plan.ids is not None:
-                text += ('Все участники найдены, у всех выбрана ваша группа. После создания бот добавит их сам '
-                         'и сообщит каждому об этом. Приглашения не нужны. Участники смогут отключить уведомления или выйти.')
+                text += 'Участники подключатся автоматически и получат уведомление. Приглашения не нужны.'
             else:
-                text += h(plan.reason) + '\n\n' + (
-                    'Автоподключения не будет. После создания отправьте участникам приглашения: '
-                    'они откроют ссылку, вы подтвердите заявки. Дежурства неподключённых участников можно отмечать вручную.')
+                text += h(plan.reason) + '\n\nМожно уточнить аккаунт или добавить участников по приглашениям.'
             clarify = [[('Уточнить аккаунт', f'rclarify:{data["auto_token"]}')]] if plan.issues else []
             await self.send(target, text, clarify + [[('Создать список', 'wpublish')], [('Исправить пары', 'wpairs')],
                                          [('Уведомления', 'woptions')], cancel])
@@ -343,38 +330,44 @@ class DutyBot:
 
     def panel(self, sid, uid):
         data = self.store.view(sid, uid)
-        space, access, members = data['space'], data['access'], data['members']
-        opts = json.loads(space['settings'])
-        admin = access['role'] != 'member'
-        text = f"<b>Дежурства {h(space['group_name'])}</b>\n\n"
-        text += ('⏸ На паузе\n' if space['status'] == 'paused' else '')
-        pairs = len({m['pair'] for m in members if m['pair']})
-        linked = sum(bool(m['uid']) for m in members)
-        text += f"Пар: {pairs} · запасных: {sum(m['pair'] is None for m in members)}\nПодключены к списку дежурств: {linked} из {len(members)}\n"
-        text += f"Время рассылки: {opts['time']} МСК\n"
+        space, access = data['space'], data['access']
         today = next((d for d in data['days'] if d['date'] == clock().date().isoformat()), None)
+        mine = next((m for m in data['members'] if m['uid'] == uid), None)
         rows = []
-        if today:
-            rows.append([('Сегодняшнее дежурство', f'day:{today["id"]}')])
+        if space['status'] == 'paused':
+            text = '⏸ Дежурства на паузе.'
+        elif today:
+            current = self.store.day_view(today['id'], uid)
+            people = [a for a in current['assignments'] if a['state'] in ('assigned', 'reported', 'done')]
+            me = next((a for a in people if a['uid'] == uid and a['state'] == 'assigned'), None)
+            if today['status'] == 'no_duty':
+                text = 'Сегодня дежурства нет.'
+            elif today['status'] == 'cancelled':
+                text = 'Сегодняшнее дежурство отменено.'
+            elif me and len(people) == 2:
+                partner = next(p for p in people if p['member'] != me['member'])
+                text = '🧹 Ты сегодня дежуришь с ' + h(partner['name']) + '.'
+                rows.append([('Сегодня не могу', f'decline:{today["id"]}')])
+            elif people:
+                title = 'Сегодня отдежурили' if today['status'] == 'closed' else 'Сегодня дежурят'
+                text = f'🧹 <b>{title}</b>\n\n' + '\n'.join('• ' + h(p['name']) for p in people)
+            elif today['status'] == 'searching':
+                text = '🔄 Подбираем замену на сегодня.'
+            else:
+                text = 'Сегодня дежурные пока не назначены.'
+            for offer in current['offers']:
+                if uid in (offer['host_uid'], offer['guest_uid']):
+                    rows.append([('Ответить на предложение', f'offer:{offer["id"]}')])
         else:
-            text += f"\nДежурных на сегодня пока нет. Начало работы списка: {date_label(space['first_date'])}."
-        if admin and linked < len(members):
-            unlinked = [m for m in members if not m['uid']]
-            names = ', '.join(h(m['name'][:35]) for m in unlinked[:3]) + ('…' if len(unlinked) > 3 else '')
-            text += '\n\nБез привязанного аккаунта: ' + names + '.\nПриглашение нужно только тем, кто ещё не подключён к этому списку. Заявки появятся в разделе «Заявки».'
-        rows.append([('Пары и запасные', f'roster:{sid}:0')])
-        if admin:
-            if linked < len(members):
-                rows.append([('Пригласить участников', f'invite:{sid}:0')])
-            if linked < len(members) or data['claims']:
-                rows.append([('Заявки' + (f" · {len(data['claims'])}" if data['claims'] else ''), f'claims:{sid}')])
-            rows += [[('Кто отдежурил', f'results:{sid}')], [('Настройки', f'options:{sid}')]]
-        else:
-            rows += [[('Мои уведомления: ' + ('выключены' if access['muted'] else 'включены'), f'mute:{sid}')],
-                     [('Выйти из списка', f'leaveask:{sid}')]]
+            opts = json.loads(space['settings'])
+            text = 'Сегодня дежурства нет.' if clock().weekday() not in opts['days'] else 'Сегодня дежурные ещё не назначены.'
+            if space['first_date'] > clock().date().isoformat():
+                text = 'Дежурства начнутся ' + date_label(space['first_date']) + '.'
+        rows.append([('Открыть мини-апп', 'web:/duties')])
+        rows.append([('График', f'calendar:{sid}'),
+                     ('Управление' if access['role'] != 'member' else 'Мои настройки', f'manage:{sid}' if access['role'] != 'member' else f'personal:{sid}')])
         if len(self.store.lists(uid)) > 1:
             rows.append([('Другие дежурства', 'home')])
-        rows.append([('Как это работает', 'help')])
         return text, rows
 
     def roster(self, sid, uid, page=0):
@@ -387,10 +380,7 @@ class DutyBot:
         pair_numbers = {pid: i for i, pid in enumerate(sorted({m['pair'] for m in members if m['pair']}), 1)}
         for m in members[page*8:page*8+8]:
             role = f"Пара {pair_numbers[m['pair']]}" if m['pair'] else 'Запасной'
-            status = 'подключён к списку' if m['uid'] else 'ещё не подключился к списку'
-            text += f"{h(m['name'])} · {role}\n{status} · дежурств: {m['completed']}"
-            if m['credit']:
-                text += ' · в этот раз уже отдежурил'
+            text += f"{role} · {h(m['name'])}"
             if m['exempt_until']:
                 text += f" · освобождение до {date_label(m['exempt_until'])}"
             text += '\n\n'
@@ -404,69 +394,35 @@ class DutyBot:
         rows.append(nav)
         if admin:
             rows += [[('＋ Добавить пары', f'addpairs:{sid}'), ('＋ Запасные', f'addreserves:{sid}')]]
-        rows.append([('Назад', f'open:{sid}')])
+            if any(not m['uid'] for m in members) or data['claims']:
+                rows.append([('Подключение участников', f'connect:{sid}')])
+        rows.append([('Назад', f'manage:{sid}' if admin else f'personal:{sid}')])
         return text, rows
 
     def member_panel(self, mid, uid):
         with self.store.connect() as db:
             m = self.store._member(db, mid)
-            access = self.store.permission(db, m['space'], uid, manage=True)
-            identity = db.execute('SELECT * FROM identities WHERE uid=?', (m['uid'],)).fetchone() if m['uid'] else None
-            # Only a hint that a verified username is known; never reveal a
-            # stranger's group or private profile to the roster creator.
-            known = bool(m['username'] and db.execute('SELECT 1 FROM identities WHERE username=?', (m['username'],)).fetchone())
-        text = f"<b>{h(m['name'])}</b>\n\n"
-        if m.get('telegram_id'):
-            text += f"Telegram user ID: <code>{m['telegram_id']}</code>\n"
-        if identity:
-            text += 'Telegram: ' + h(identity['name']) + '\n'
-            if identity['group_hint']:
-                text += 'Указанная в боте группа: ' + h(identity['group_hint']) + '\n'
-        elif m['uid']:
-            text += 'Аккаунт подключён к списку. Имя профиля пока не удалось получить.\n'
-        else:
-            text += 'Ещё не подключился к списку. Отправьте ему личное приглашение.\n'
-            if known:
-                text += 'Этот username бот уже знает.\n'
-        rows = []
+            self.store.permission(db, m['space'], uid, manage=True)
+        data = self.store.view(m['space'], uid)
+        mate = next((p for p in data['members'] if m['pair'] and p['pair'] == m['pair'] and p['id'] != mid), None)
+        text = '<b>' + h(m['name']) + '</b>'
+        text += '\n\nНапарник: ' + h(mate['name']) if mate else '\n\nВ запасных.' if not m['pair'] else '\n\nНапарник пока не участвует.'
+        rows = [[('Поменять местами', f'swap:{mid}')], [('Освободить до даты', f'exempt:{mid}')]]
+        if m['exempt_until']:
+            text += '\nОсвобождение до ' + date_label(m['exempt_until']) + '.'
+            rows.append([('Снять освобождение', f'unexempt:{mid}')])
         if not m['uid']:
-            rows.append([('Получить личное приглашение', f'invite:{m["space"]}:{mid}')])
-        rows += [[('Изменить имя', f'rename:{mid}')], [('Освободить до даты', f'exempt:{mid}'), ('Снять освобождение', f'unexempt:{mid}')]]
-        if m['pair']:
-            rows.append([('Изменить состав постоянных пар', f'swap:{mid}')])
-        if m['uid']:
-            rows += [[('Отвязать аккаунт', f'unlinkask:{mid}')]]
-            if access['role'] == 'owner' and m['uid'] != uid:
-                rows += [[('Заместитель: включить / выключить', f'role:{m["space"]}:{m["uid"]}')],
-                         [('Передать управление', f'transferask:{m["space"]}:{m["uid"]}')]]
-        rows.append([('Назад к составу', f'roster:{m["space"]}:0')])
+            rows.append([('Подключить уведомления', f'invite:{m["space"]}:{mid}')])
+        rows += [[('Другие действия', f'membermore:{mid}')], [('Назад', f'roster:{m["space"]}:0')]]
         return text, rows
 
     def options_panel(self, sid, uid):
         data = self.store.view(sid, uid)
         if data['access']['role'] == 'member':
-            raise DutyError("Настройки списка доступны старосте и заместителям.")
-        opts = json.loads(data['space']['settings'])
-        names = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
-        text = '<b>Настройки дежурств</b>\n\n' \
-            f"Рассылка: {opts['time']} · подбор до {opts['cutoff']} · итоги: {opts['report']} МСК\n" \
-            f"Дни: {', '.join(names[d] for d in opts['days'])}\n" \
-            f"Место: {h(opts['place']) or 'не указано'}\nОбязанности: {h(opts['tasks']) or 'не указаны'}\n\n" \
-            'Нажмите на кнопку, чтобы изменить настройку. ✓ означает «включено».\n\n' \
-            'Если дежурный не ответил, он по-прежнему дежурит. Для замены нужно согласие обоих. ' \
-            'Пока расписания занятий нет, бот назначает дежурных по выбранным дням недели.'
-        rows = [[(toggle(opts['owner_daily'])+' Утром писать создателю списка', f'opt:{sid}:owner_daily')],
-                [("Участникам: " + {'all':'всем','assigned':'только дежурным','off':'выключено'}[opts['audience']], f'opt:{sid}:audience')],
-                [(toggle(opts['requests'])+' Предлагать замены в личке', f'opt:{sid}:requests')],
-                [(toggle(opts['owner_events'])+' Отказы, проблемы и итоги старосте', f'opt:{sid}:owner_events')],
-                [('При отказе: ' + ('предлагать запасного' if opts['mode']=='reserve' else 'переносить пару'), f'opt:{sid}:mode')],
-                [('Время рассылки', f'input:{sid}:time'), ('До скольки искать замену', f'input:{sid}:cutoff')],
-                [('Время итогов', f'input:{sid}:report'), ('Сколько ждать ответа', f'input:{sid}:wait_minutes')],
-                [('Дни недели', f'week:{sid}')], [('Место', f'input:{sid}:place'), ('Обязанности', f'input:{sid}:tasks')],
-                [('Мои уведомления: '+('выкл.' if data['access']['muted'] else 'вкл.'), f'mute:{sid}')],
-                [('Возобновить' if data['space']['status']=='paused' else 'Пауза', f"status:{sid}:{'resume' if data['space']['status']=='paused' else 'pause'}")],
-                [('История изменений', f'history:{sid}')], [('Архивировать список', f'archiveask:{sid}')], [('Назад', f'open:{sid}')]]
-        return text, rows
+            raise DutyError('Настройки списка доступны старосте и заместителям.')
+        return '<b>Настройки дежурств</b>', [
+            [('Уведомления', f'cfg:{sid}:notifications')], [('Дни и время', f'cfg:{sid}:schedule')],
+            [('Замены', f'cfg:{sid}:replacements')], [('Другое', f'cfg:{sid}:extra')], [('Назад', f'manage:{sid}')]]
 
     def day_panel(self, did, uid, *, notification=False):
         data = self.store.day_view(did, uid)
@@ -477,26 +433,25 @@ class DutyBot:
                 and day['status'] == 'assigned' and not data['offers']
                 and len(assigned) == 2 and any(a['uid'] == uid for a in assigned)):
             partner = next(a for a in assigned if a['uid'] != uid)
-            text = f"Ты сегодня дежуришь.\nС тобой в паре — {h(partner['name'])}."
+            text = f"🧹 Ты сегодня дежуришь.\n👥 С тобой в паре — {h(partner['name'])}."
             if opts['place']:
                 text += '\n\nМесто: ' + h(opts['place'])
             if opts['tasks']:
                 text += '\n\nЧто нужно сделать: ' + h(opts['tasks'])
             text += ('\n\nОтвечать на это сообщение не нужно. '
                      'Если не можешь отдежурить — нажми «Сегодня не могу».')
-            return text, [[('Сегодня не могу', f'decline:{did}')]]
-        if notification and day['date'] == clock().date().isoformat() and data['access']['role'] == 'owner':
+            return text, [[('❌ Сегодня не могу', f'decline:{did}')]]
+        if notification and day['date'] == clock().date().isoformat() and data['access']['role'] in ('owner','manager'):
             rows = [[('Открыть дежурство', f'day:{did}')]]
             if day['status'] == 'no_duty':
                 return 'Сегодня дежурства нет.', rows
             if day['status'] == 'assigned' and len(assigned) == 2 and not data['offers']:
-                text = 'Сегодня дежурят:\n' + '\n'.join('• ' + h(a['name']) for a in assigned)
-                if day['source_state'] not in ('available', 'no_lessons'):
-                    text += '\n\nНе удалось проверить расписание занятий. Дежурство назначено по выбранным дням недели.'
+                text = '🧹 Сегодня дежурят:\n' + '\n'.join('• ' + h(a['name']) for a in assigned)
                 return text, rows
         labels = {'assigned':'дежурит', 'waiting':'ждём ответа на замену', 'reported':'отдежурил, ждём подтверждения старосты',
                   'done':'отдежурил', 'missed':'не отдежурил', 'excused':'освобождён', 'declined':'сегодня не может', 'released':'дежурство перенесено', 'cancelled':'отменено'}
-        text = f"<b>Дежурства {h(space['group_name'])} · {date_label(day['date'])}</b>\n\n"
+        heading = 'Сегодняшнее дежурство' if day['date'] == clock().date().isoformat() else 'Дежурство ' + date_label(day['date'])
+        text = f'<b>{heading}</b>\n\n'
         if day['status'] == 'no_duty':
             text += 'Сегодня дежурства нет.\n'
         elif day['status'] == 'cancelled':
@@ -505,20 +460,16 @@ class DutyBot:
             text += '⚠️ Дежурных не хватает. Старосте нужно договориться о замене.\n'
         elif day['status'] == 'searching':
             text += 'Ищем замену. Ждём ответов участников.\n'
-        visible = [a for a in data['assignments'] if a['state'] not in ('declined','released')]
-        visible += [a for a in data['assignments'] if a['state'] in ('declined','released')][-4:]
-        for item in visible[:12]:
-            text += f"• {h(item['name'])} — {labels[item['state']]}\n"
-        if len(data['assignments']) > len(visible[:12]):
-            text += f"Ещё переносов: {len(data['assignments']) - len(visible[:12])}.\n"
-        if opts['place']:
-            text += '\nМесто: ' + h(opts['place'])
-        if opts['tasks']:
-            text += '\nОбязанности: ' + h(opts['tasks'])
-        if day['source_state'] not in ('available', 'no_lessons') and day['status'] != 'no_duty':
-            text += '\n\nНе удалось проверить расписание занятий. Дежурство назначено по дням, которые выбрал староста.'
-        rows = []
+        visible = [a for a in data['assignments'] if a['state'] in ('assigned','waiting','reported','done','missed','excused')]
+        for item in visible:
+            suffix = '' if item['state'] == 'assigned' else ' — ' + labels[item['state']]
+            text += f"• {h(item['name'])}{suffix}\n"
         mine = next((a for a in data['assignments'] if a['uid'] == uid and a['state'] in ('assigned','waiting')), None)
+        if mine and opts['place']:
+            text += '\nМесто: ' + h(opts['place'])
+        if mine and opts['tasks']:
+            text += '\nОбязанности: ' + h(opts['tasks'])
+        rows = []
         if mine and day['date'] == clock().date().isoformat():
             rows.append([('Сегодня не могу', f'decline:{did}')])
         with self.store.connect() as db:
@@ -533,13 +484,9 @@ class DutyBot:
         if data['access']['role'] != 'member':
             if any(a['state'] in ('assigned','reported') for a in data['assignments']) and clock().timestamp() >= day['cutoff']:
                 rows.append([('Все дежурные отдежурили', f'finishask:{did}')])
-            rows.append([('Отметить каждого отдельно', f'marks:{did}')])
-            if day['date'] == clock().date().isoformat():
-                rows.append([('Назначить пару вручную', f'manual:{did}')])
-            if day['status'] not in ('cancelled','no_duty','closed'):
-                rows.append([('Отменить дежурство', f'canceldayask:{did}')])
-        rows.append([('Обновить', f'day:{did}')])
-        rows.append([('Открыть список', f'open:{space["id"]}')])
+                rows.append([('Отметить по одному', f'marks:{did}')])
+            rows.append([('Другие действия', f'daymore:{did}')])
+        rows.append([('Назад', f'open:{space["id"]}')])
         return text, rows
 
     def offer_panel(self, oid, uid):
@@ -550,13 +497,12 @@ class DutyBot:
         host = uid == data['host']['uid']
         other = data['guest'] if host else data['host']
         if offer['kind'] == 'reserve':
-            text = f"Напарник сегодня не дежурит. Продежуришь с запасным — {h(other['name'])}?" if host else \
-                   f"Нужна подмена. Продежуришь сегодня с {h(other['name'])}?"
+            text = f"🔄 Напарник сегодня не может. Продежуришь с запасным — {h(other['name'])}?" if host else \
+                   f"🔄 Нужна подмена. Продежуришь сегодня с {h(other['name'])}?"
         else:
             text = f"Предыдущая пара сегодня не дежурит. Сможешь подменить её со своим напарником — {h(other['name'])}?"
         deadline = datetime.fromtimestamp(offer['expires'], MSK).strftime('%H:%M')
-        text = f"<b>Дежурства {h(data['space']['group_name'])}</b>\n\n" + text
-        text += f'\n\nОтветь до {deadline} МСК. Замену подтвердим, когда вы оба согласитесь. Постоянные пары не меняются.'
+        text += f'\n\nОтветь до {deadline} МСК.'
         already = offer['host_yes'] if host else offer['guest_yes']
         if already:
             text += '\n\nТвой ответ принят. Осталось дождаться напарника.'
@@ -652,7 +598,7 @@ class DutyBot:
                     'Староста добавляет пары и запасных. Если бот нашёл всех участников и у всех выбрана его группа, '
                     'он подключит их сам и сообщит об этом. Иначе нужны приглашения и подтверждение заявок. '
                     'Кто не подключился, остаётся в списке — его дежурства староста отмечает вручную.\n\n'
-                    'В 08:00 бот сообщает, кто дежурит. Время и получателей можно поменять в настройках списка. '
+                    'В 08:00 бот пишет только дежурным и админу списка. В выходные сообщений нет. Время можно поменять в настройках. '
                     'Если дежурный не ответил, он по-прежнему дежурит.\n\n'
                     'По кнопке «Сегодня не могу» бот ищет замену. Напарник и запасной должны согласиться оба. '
                     'Не договорились — дежурство пары переносится, бот спрашивает следующую пару. '
@@ -704,6 +650,31 @@ class DutyBot:
             elif action == 'open':
                 self.store.set_session(uid)
                 panel = self.panel(int(args[0]), uid)
+            elif action == 'manage':
+                panel = self.manage_panel(int(args[0]), uid)
+            elif action == 'personal':
+                panel = self.personal_panel(int(args[0]), uid)
+            elif action == 'connect':
+                panel = self.connections_panel(int(args[0]), uid)
+            elif action == 'cfg':
+                panel = self.settings_category(int(args[0]), uid, args[1])
+            elif action == 'membermore':
+                panel = self.member_more_panel(int(args[0]), uid)
+            elif action == 'daymore':
+                panel = self.day_more_panel(int(args[0]), uid)
+            elif action == 'dayinfo':
+                panel = self.day_info_panel(int(args[0]), uid)
+            elif action == 'calendar':
+                from duties.views import forecast
+                sid = int(args[0])
+                self.store.view(sid, uid)
+                days = forecast(self.store, sid, uid, self.data_dir / 'knowledge.db', count=14)
+                text = '📅 <b>Ближайшие дежурства</b>\n\n'
+                for day in days:
+                    if day['status'] != 'no_duty':
+                        text += date_label(day['date']) + ' — ' + (', '.join(h(m['name']) for m in day['people']) or 'пока не назначено') + '\n'
+                text += '\nГрафик предварительный: отказы и подмены могут изменить очередь.'
+                panel = (text, [[('📅 Открыть график в мини-аппе', 'web:/duties')], [('Назад', f'open:{sid}')]])
             elif action == 'roster':
                 panel = self.roster(int(args[0]), uid, int(args[1]))
             elif action == 'member':
@@ -733,7 +704,8 @@ class DutyBot:
                 sid, key = int(args[0]), args[1]
                 opts = json.loads(self.store.view(sid, uid)['space']['settings'])
                 if key == 'audience':
-                    choices = ['all','assigned','off']
+                    choices = ['assigned','off']
+                    opts[key] = 'assigned' if opts[key] == 'all' else opts[key]
                     value = choices[(choices.index(opts[key])+1)%3]
                 elif key == 'mode':
                     value = 'pair' if opts[key] == 'reserve' else 'reserve'
@@ -742,7 +714,7 @@ class DutyBot:
                 else:
                     raise DutyError('Настройка не найдена.')
                 self.store.update_settings(sid, uid, {key: value})
-                panel = self.options_panel(sid, uid)
+                panel = self.settings_category(sid, uid, 'replacements' if key in ('mode','requests') else 'notifications')
             elif action in ('week','weekday'):
                 sid = int(args[0])
                 data = self.store.view(sid, uid)
@@ -795,7 +767,7 @@ class DutyBot:
             elif action in ('mute', 'silence'):
                 sid = int(args[0])
                 self.store.manage(sid, uid, action)
-                panel = self.panel(sid, uid)
+                panel = self.personal_panel(sid, uid)
             elif action in ('leaveask','leave','archiveask','status'):
                 sid = int(args[0])
                 self.store.view(sid, uid)
@@ -914,7 +886,8 @@ class DutyBot:
             key = args[0]
             opts = settings(data.get('options'))
             if key == 'audience':
-                values = ['all','assigned','off']
+                values = ['assigned','off']
+                opts[key] = 'assigned' if opts[key] == 'all' else opts[key]
                 opts[key] = values[(values.index(opts[key])+1)%3]
             elif key in ('owner_daily','requests','owner_events'):
                 opts[key] = not opts[key]
@@ -1052,22 +1025,138 @@ class DutyBot:
             member = self.store._member(db, first)
         members = self.store.view(member['space'], uid)['members']
         if action == 'swap':
-            return f"С кем поменять местами {h(member['name'])}? Меняются две постоянные пары. История выполнения сохраняется.", [
-                [(m['name'][:45], f'swapask:{first}:{m["id"]}')] for m in members if m['pair'] and m['pair'] != member['pair']] + [
+            return f"🔄 С кем поменять местами {h(member['name'])}?\n\nМожно выбрать человека из другой пары или запасного. История дежурств сохранится.", [
+                [(('🔄 ' if not m['pair'] else '👥 ') + m['name'][:40], f'swapask:{first}:{m["id"]}')] for m in members if m['pair'] != member['pair']] + [
                 [('Назад', f'member:{first}')]]
         second = int(args[1])
-        other = next((m for m in members if m['id']==second and m['pair']), None)
+        other = next((m for m in members if m['id']==second and m['pair'] != member['pair']), None)
         if not other:
             raise DutyError('Участник не найден.')
         if action == 'swapask':
-            a_partner = next((m for m in members if m['pair']==member['pair'] and m['id']!=first), None)
-            b_partner = next((m for m in members if m['pair']==other['pair'] and m['id']!=second), None)
-            if not a_partner or not b_partner:
-                raise DutyError('В паре не хватает участника.')
-            text = '<b>Новые постоянные пары</b>\n\n' + h(other['name'])+' + '+h(a_partner['name'])+'\n'+h(member['name'])+' + '+h(b_partner['name'])
-            return text, [[('Сохранить пары', f'swapset:{first}:{second}')], [('Отмена', f'member:{first}')]]
+            text = '🔄 <b>После обмена</b>\n\n'
+            for source, replacement in ((member, other), (other, member)):
+                if source['pair']:
+                    partner = next((m for m in members if m['pair']==source['pair'] and m['id']!=source['id']), None)
+                    if not partner:
+                        raise DutyError('В паре не хватает участника.')
+                    text += '👥 ' + h(replacement['name']) + ' + ' + h(partner['name']) + '\n'
+                else:
+                    text += '🔄 В запасных: ' + h(replacement['name']) + '\n'
+            return text, [[('✅ Сохранить обмен', f'swapset:{first}:{second}')], [('Отмена', f'member:{first}')]]
         self.store.swap_partners(first, second, uid)
         return self.roster(member['space'], uid)
+
+    def manage_panel(self, sid, uid):
+        data = self.store.view(sid, uid)
+        if data['access']['role'] == 'member':
+            raise DutyError('Управление доступно старосте и заместителям.')
+        today = next((d for d in data['days'] if d['date'] == clock().date().isoformat()), None)
+        rows = [[('Сегодня', f'day:{today["id"]}')]] if today else []
+        rows += [[('Пары и запасные', f'roster:{sid}:0')], [('Отметить дежурства', f'results:{sid}')], [('Настройки', f'options:{sid}')]]
+        if data['claims']:
+            rows.append([(f'Заявки · {len(data["claims"])}', f'claims:{sid}')])
+        rows.append([('Назад', f'open:{sid}')])
+        return '<b>Управление дежурствами</b>', rows
+
+
+    def personal_panel(self, sid, uid):
+        data = self.store.view(sid, uid)
+        rows = [[('Уведомления: ' + ('выключены' if data['access']['muted'] else 'включены'), f'mute:{sid}')],
+                [('Пары и запасные', f'roster:{sid}:0')], [('Как это работает', 'help')]]
+        if data['access']['role'] != 'owner':
+            rows.append([('Выйти из дежурств', f'leaveask:{sid}')])
+        rows.append([('Назад', f'open:{sid}')])
+        return '<b>Мои настройки</b>', rows
+
+
+    def connections_panel(self, sid, uid):
+        data = self.store.view(sid, uid)
+        if data['access']['role'] == 'member':
+            raise DutyError('Подключать участников может староста.')
+        missing = [m for m in data['members'] if not m['uid']]
+        text = '<b>Подключение участников</b>\n\n'
+        text += ('Пока не получают уведомления:\n' + '\n'.join('• ' + h(m['name']) for m in missing)) if missing else 'Все участники подключены.'
+        rows = [[('Пригласить участников', f'invite:{sid}:0')]] if missing else []
+        if data['claims']:
+            rows.append([('Заявки', f'claims:{sid}')])
+        rows.append([('Назад', f'roster:{sid}:0')])
+        return text, rows
+
+
+    def settings_category(self, sid, uid, category):
+        data = self.store.view(sid, uid)
+        self.options_panel(sid, uid)
+        opts = json.loads(data['space']['settings'])
+        if category == 'notifications':
+            title = 'Уведомления'
+            rows = [[(toggle(opts['audience'] != 'off') + ' Напоминать дежурным', f'opt:{sid}:audience')],
+                    [(toggle(opts['owner_daily']) + ' Писать мне, кто дежурит', f'opt:{sid}:owner_daily')],
+                    [(toggle(opts['owner_events']) + ' Отказы и итоги', f'opt:{sid}:owner_events')],
+                    [('Мои уведомления', f'personal:{sid}')]]
+        elif category == 'schedule':
+            title = 'Дни и время'
+            days = ', '.join(['Пн','Вт','Ср','Чт','Пт','Сб','Вс'][d] for d in opts['days'])
+            rows = [[('Напоминание: ' + opts['time'], f'input:{sid}:time')], [('Дни: ' + days, f'week:{sid}')],
+                    [('Итоги: ' + opts['report'], f'input:{sid}:report')]]
+        elif category == 'replacements':
+            title = 'Замены'
+            rows = [[('При отказе: ' + ('предлагать запасного' if opts['mode']=='reserve' else 'следующая пара'), f'opt:{sid}:mode')],
+                    [(toggle(opts['requests']) + ' Спрашивать в личке', f'opt:{sid}:requests')],
+                    [('Искать до: ' + opts['cutoff'], f'input:{sid}:cutoff')],
+                    [(f'Ждать ответа: {opts["wait_minutes"]} мин.', f'input:{sid}:wait_minutes')]]
+        elif category == 'extra':
+            title = 'Дополнительно'
+            rows = [[('Место', f'input:{sid}:place'), ('Обязанности', f'input:{sid}:tasks')],
+                    [('Возобновить' if data['space']['status']=='paused' else 'Поставить на паузу', f"status:{sid}:{'resume' if data['space']['status']=='paused' else 'pause'}")],
+                    [('История изменений', f'history:{sid}')], [('Архивировать', f'archiveask:{sid}')]]
+        else:
+            raise DutyError('Настройка не найдена.')
+        rows.append([('Назад', f'options:{sid}')])
+        return f'<b>{title}</b>', rows
+
+
+    def member_more_panel(self, mid, uid):
+        with self.store.connect() as db:
+            m = self.store._member(db, mid)
+            access = self.store.permission(db, m['space'], uid, manage=True)
+        rows = [[('Изменить имя', f'rename:{mid}')]]
+        if m['uid']:
+            rows.append([('Отвязать аккаунт', f'unlinkask:{mid}')])
+            if access['role'] == 'owner' and m['uid'] != uid:
+                rows += [[('Назначить / убрать заместителя', f'role:{m["space"]}:{m["uid"]}')],
+                         [('Передать управление', f'transferask:{m["space"]}:{m["uid"]}')]]
+        rows.append([('Назад', f'member:{mid}')])
+        return '<b>' + h(m['name']) + '</b>', rows
+
+
+    def day_more_panel(self, did, uid):
+        data = self.store.day_view(did, uid)
+        if data['access']['role'] == 'member':
+            raise DutyError('Эти действия доступны старосте.')
+        day = data['day']
+        rows = []
+        if day['date'] == clock().date().isoformat():
+            rows.append([('Назначить пару вручную', f'manual:{did}')])
+        if day['status'] not in ('cancelled','no_duty','closed'):
+            rows.append([('Отменить дежурство', f'canceldayask:{did}')])
+        rows += [[('Подробности', f'dayinfo:{did}')], [('Назад', f'day:{did}')]]
+        return '<b>Другие действия</b>', rows
+
+
+    def day_info_panel(self, did, uid):
+        data = self.store.day_view(did, uid)
+        if data['access']['role'] == 'member':
+            raise DutyError('Подробности доступны старосте.')
+        text = '<b>' + date_label(data['day']['date']) + '</b>'
+        if data['day']['source_state'] not in ('available','no_lessons'):
+            text += '\n\nРасписание занятий не удалось проверить. Назначение сделано по дням недели.'
+        changes = [a for a in data['assignments'] if a['state'] in ('declined','released','cancelled')]
+        for a in changes[-8:]:
+            text += '\n• ' + h(a['name']) + ' — ' + {'declined':'не может','released':'перенос','cancelled':'отменено'}[a['state']]
+        if not changes and data['day']['source_state'] in ('available','no_lessons'):
+            text += '\n\nЗамен не было.'
+        return text, [[('Назад', f'day:{did}')]]
+
 
     def register(self, dp):
         middleware = IdentityMiddleware(self)

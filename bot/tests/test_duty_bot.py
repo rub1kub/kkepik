@@ -13,7 +13,7 @@ from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter, Telegra
 from aiogram.methods import SendMessage, EditMessageText, GetMe, GetChat
 
 from commands.duty import DutyBot, keyboard, roster_lines
-from duties.store import Store, MSK, parse_people
+from duties.store import Store, MSK, parse_people, DutyError
 from duties.worker import DutyWorker, schedule_state
 
 NOW = datetime(2026,10,19,8,0,tzinfo=MSK)
@@ -124,7 +124,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         await self.update(callback='du:wpublish')
         self.assertEqual(len(self.store.lists(99)),1)
         await self.update('/duty')
-        self.assertIn('Дежурства 116-КД9-3ССА',self.session.calls[-1].text)
+        self.assertIn('Дежурства начнутся',self.session.calls[-1].text)
         self.assertNotIn('Выберите свой список', self.session.calls[-1].text)
         self.assertNotIn('Все мои списки', str(self.session.calls[-1].reply_markup))
         self.assertTrue(all(int(m.chat_id)==99 for m in self.session.calls if isinstance(m,(SendMessage,EditMessageText))))
@@ -134,7 +134,9 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         for uid in (99, 11):
             await self.update('/duty', uid=uid)
             message = self.session.calls[-1]
-            self.assertIn('Дежурства 116-КД9-3ССА', message.text)
+            self.assertIn('дежурные', message.text)
+            self.assertNotIn('Напоминаю', message.text)
+            self.assertLessEqual(sum(len(row) for row in message.reply_markup.inline_keyboard),4)
             self.assertNotIn('список ' + str(sid), message.text)
             callbacks = [b.callback_data for row in message.reply_markup.inline_keyboard for b in row]
             self.assertNotIn('du:create', callbacks)
@@ -143,17 +145,17 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         await self.update(callback='du:create')
         self.assertIsNone(self.store.session(99))
         self.assertEqual(len(self.store.lists(99)), 1)
-        self.assertIn('Дежурства 116-КД9-3ССА', self.session.calls[-1].text)
+        self.assertIn('дежурные', self.session.calls[-1].text)
         self.store.manage(sid, 99, 'pause')
         await self.update(callback='du:create')
-        self.assertIn('На паузе', self.session.calls[-1].text)
+        self.assertIn('на паузе', self.session.calls[-1].text)
         self.assertIsNone(self.store.session(99))
 
     async def test_setup_remains_available_after_archive(self):
         sid = self.fixture()
         self.store.manage(sid, 99, 'archive')
         await self.update('/duty')
-        self.assertIn('Настроить дежурства', str(self.session.calls[-1].reply_markup))
+        self.assertIn('Настроить в чате', str(self.session.calls[-1].reply_markup))
         await self.update(callback='du:create')
         self.assertEqual(self.store.session(99)[0], 'setup_pairs')
 
@@ -174,7 +176,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Укажите @username', text)
         self.assertIn('Если их нет — имя из профиля Telegram', text)
         self.assertIn('Telegram user ID числом', text)
-        self.assertIn('Имена по известным username бот подставит сам', text)
+        self.assertIn('Telegram user ID', text)
         self.assertNotIn('Во второй строке', text)
         self.assertNotIn('Можно добавить @username', text)
         self.assertNotIn('приглашени', text)
@@ -182,17 +184,16 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('@ivan_ivanov + @anna_petrova', text)
         await self.update('@ivan_ivanov + Анна Петрова')
         text = self.session.calls[-1].text
-        self.assertIn('Telegram user ID числом или имя из профиля Telegram', text)
-        self.assertIn('Если запасных нет, нажмите «Без запасных»', text)
+        self.assertIn('Без запасных', text)
         self.assertEqual(self.store.session(99)[1]['pairs'][0][0]['username'], 'ivan_ivanov')
         self.assertEqual(self.store.session(99)[1]['pairs'][0][1]['name'], 'Анна Петрова')
         await self.update(callback='du:wskip')
         await self.update(callback='du:wpreview')
         text = self.session.calls[-1].text
-        self.assertIn('отправьте участникам приглашения', text)
-        self.assertIn('вы подтвердите заявки', text)
-        self.assertIn('На замену должны согласиться оба', text)
-        self.assertIn('вручную', text)
+        self.assertIn('по приглашениям', text)
+        self.assertIn('Анна Петрова', text)
+        self.assertLess(len(text),1200)
+        self.assertEqual(self.row('SELECT count(*) n FROM outbox')['n'],0)
 
     async def test_add_roster_prompts_also_explain_telegram_identity(self):
         sid = self.fixture()
@@ -562,15 +563,14 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
             await worker.deliver(job['id'], NOW)
         notices = [m for m in self.session.calls if isinstance(m, SendMessage) and m.chat_id in (11, 12, 13)]
         self.assertEqual(len(notices), 3)
-        self.assertIn('Вас добавили в список дежурств группы 116-КД9-3ССА', notices[0].text)
-        self.assertIn('Список создал @test_user_99.', notices[0].text)
+        self.assertIn('Вас добавили в дежурства 116-КД9-3ССА', notices[0].text)
+        self.assertIn('Список ведёт @test_user_99.', notices[0].text)
         self.assertNotIn('Предложения о подмене', notices[0].text)
-        self.assertIn('В дни дежурств в 08:00 МСК бот будет сообщать, кто дежурит.', notices[0].text)
-        self.assertIn('Посмотреть список и настроить уведомления можно в /duty.', notices[0].text)
+        self.assertNotIn('08:00', notices[0].text)
+        self.assertNotIn('Посмотреть список и настроить уведомления', notices[0].text)
         self.assertIn('Ваш напарник: Анна', notices[0].text)
-        self.assertIn('в списке запасных', notices[2].text)
-        self.assertIn(f'du:silence:{sid}', str(notices[0].reply_markup))
-        self.assertIn(f'du:leaveask:{sid}', str(notices[0].reply_markup))
+        self.assertIn('Вы в запасных', notices[2].text)
+        self.assertEqual(sum(len(row) for row in notices[0].reply_markup.inline_keyboard),1)
         await self.update(callback='du:wpublish')
         self.assertEqual(self.row('SELECT count(*) AS n FROM spaces')['n'], 1)
         self.assertEqual(self.row("SELECT count(*) AS n FROM outbox WHERE kind='added'")['n'], 3)
@@ -582,7 +582,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         await self.update(callback='du:wpublish')
         self.assertEqual(self.store.lists(99), [])
         self.assertIsNone(self.store.session(99)[1]['auto_preview'])
-        self.assertIn('Автоподключения не будет', self.session.calls[-1].text)
+        self.assertIn('по приглашениям', self.session.calls[-1].text)
         self.assertNotIn('103-Д9-3ИНС', self.session.calls[-1].text)
         await self.update(callback='du:wpublish')
         sid = self.store.lists(99)[0]['id']
@@ -626,7 +626,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
             await worker.deliver(job['id'], NOW)
         notices = [m for m in self.session.calls if isinstance(m, SendMessage) and 'Вас добавили' in m.text]
         self.assertEqual([m.chat_id for m in notices], [13])
-        self.assertIn('Утренняя рассылка в этом списке выключена', notices[0].text)
+        self.assertNotIn('Утренняя рассылка', notices[0].text)
         self.assertEqual(self.store.lists(12), [])
         self.assertIsNone(next(m for m in self.store.view(sid, 99)['members'] if m['telegram_id'] == 12)['uid'])
 
@@ -685,7 +685,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_account_can_be_corrected_alone_from_preview(self):
         self.registered_group()
         await self.update(callback='du:create')
-        await self.update('@first_user + UnknownClassmate')
+        await self.update('@first_user + Neoxz2')
         await self.update('@backup_user')
         await self.update(callback='du:wpreview')
         step, data = self.store.session(99)
@@ -693,7 +693,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['auto_issue']['path'], ['pairs', 0, 1])
         self.assertIn('Уточнить аккаунт', str(self.session.calls[-1].reply_markup))
         await self.update(callback=f'du:rclarify:{data["auto_token"]}')
-        self.assertIn('UnknownClassmate', self.session.calls[-1].text)
+        self.assertIn('Neoxz2', self.session.calls[-1].text)
         self.assertEqual(self.store.session(99)[0], 'roster_clarify')
         await self.update('12')
         step, corrected = self.store.session(99)
@@ -710,8 +710,9 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         sid = self.store.create(99, '116-КД9-3ССА', parse_people('11 + 12'), [], auto_link=True)
         member = self.store.view(sid, 99)['members'][0]
         text, rows = self.app.member_panel(member['id'], 99)
-        self.assertIn('Аккаунт подключён', text)
+        self.assertIn('Напарник:', text)
         self.assertNotIn('приглашение', text)
+        self.assertNotIn('Пригласить', str(rows))
 
     async def test_reserves_and_added_pairs_accept_numeric_user_ids(self):
         await self.update(callback='du:create')
@@ -753,14 +754,14 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
                 message = self.session.calls[-1]
                 self.assertIsInstance(message, SendMessage)
                 self.assertEqual(int(message.chat_id), uid)
-                self.assertEqual(message.text, f'Ты сегодня дежуришь.\nС тобой в паре — {partner}.\n\n'
+                self.assertEqual(message.text, f'🧹 Ты сегодня дежуришь.\n👥 С тобой в паре — {partner}.\n\n'
                     'Отвечать на это сообщение не нужно. '
                     'Если не можешь отдежурить — нажми «Сегодня не могу».')
-                self.assertEqual(message.reply_markup, keyboard([[('Сегодня не могу', f'decline:{did}')]]))
+                self.assertEqual(message.reply_markup, keyboard([[('❌ Сегодня не могу', f'decline:{did}')]]))
         # The detailed card stays available explicitly through /duty.
         text, rows = self.app.day_panel(did, 11)
-        self.assertIn('Дежурства 116-КД9-3ССА', text)
-        self.assertIn('Открыть список', str(rows))
+        self.assertIn('Сегодняшнее дежурство', text)
+        self.assertIn('Назад', str(rows))
 
     async def test_morning_notice_does_not_assign_observers_or_owner(self):
         sid = self.fixture()
@@ -768,11 +769,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         worker = DutyWorker(self.app, self.bot)
         for uid in (13, 15):
             with self.subTest(uid=uid):
-                job = self.row("SELECT * FROM outbox WHERE kind='daily' AND uid=?", (uid,))
-                text, rows = worker.render(job)
-                self.assertNotIn('Ты сегодня дежуришь', text)
-                self.assertIn('Иван — дежурит', text)
-                self.assertNotIn('Сегодня не могу', str(rows))
+                self.assertEqual(self.row("SELECT count(*) n FROM outbox WHERE kind='daily' AND uid=?", (uid,))['n'], 0)
 
     async def test_owner_gets_short_morning_notice_even_when_participant_broadcast_is_off(self):
         sid = self.fixture(audience='off')
@@ -782,7 +779,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         await DutyWorker(self.app, self.bot).deliver(job['id'], NOW)
         message = self.session.calls[-1]
         self.assertEqual(int(message.chat_id), 99)
-        self.assertEqual(message.text, 'Сегодня дежурят:\n• Иван\n• Анна')
+        self.assertEqual(message.text, '🧹 Сегодня дежурят:\n• Иван\n• Анна')
         self.assertEqual(message.reply_markup, keyboard([[('Открыть дежурство', f'day:{did}')]]))
 
     async def test_owner_daily_setting_and_personal_mute_still_apply(self):
@@ -790,7 +787,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         self.store.ensure_day(sid, NOW, 'available')
         self.assertEqual(self.row("SELECT count(*) AS n FROM outbox WHERE kind='daily'")['n'], 0)
         self.store.update_settings(sid, 99, {'owner_daily': True})
-        self.store.ensure_day(sid, NOW + timedelta(days=1), 'no_lessons')
+        self.store.ensure_day(sid, NOW + timedelta(days=1), 'available')
         job = self.row("SELECT * FROM outbox WHERE kind='daily' AND uid=99")
         self.store.manage(sid, 99, 'silence')
         with patch('duties.worker.clock', return_value=NOW + timedelta(days=1)):
@@ -819,8 +816,8 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         did = self.store.ensure_day(sid, NOW, 'available')
         job = self.row("SELECT * FROM outbox WHERE kind='daily' AND uid=99")
         text, rows = DutyWorker(self.app, self.bot).render(job)
-        self.assertTrue(text.startswith('Ты сегодня дежуришь.\nС тобой в паре — Анна.'))
-        self.assertEqual(rows, [[('Сегодня не могу', f'decline:{did}')]])
+        self.assertTrue(text.startswith('🧹 Ты сегодня дежуришь.\n👥 С тобой в паре — Анна.'))
+        self.assertEqual(rows, [[('❌ Сегодня не могу', f'decline:{did}')]])
 
     async def test_morning_notice_escapes_partner_and_keeps_configured_instructions(self):
         sid = self.fixture(place='Кабинет <10>', tasks='Полить цветы & убрать столы')
@@ -837,10 +834,12 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         sid = self.fixture()
         did = self.store.ensure_day(sid, NOW, 'unknown')
         text, _ = self.app.day_panel(did, 11, notification=True)
-        self.assertTrue(text.startswith('Ты сегодня дежуришь'))
+        self.assertTrue(text.startswith('🧹 Ты сегодня дежуришь'))
         self.assertNotIn('Не удалось проверить', text)
         manager_text, _ = self.app.day_panel(did, 99, notification=True)
-        self.assertIn('Не удалось проверить расписание занятий', manager_text)
+        self.assertNotIn('Не удалось проверить расписание занятий', manager_text)
+        info, _ = self.app.day_info_panel(did, 99)
+        self.assertIn('Расписание занятий не удалось проверить', info)
 
     async def test_morning_update_stays_personal_when_pair_unchanged(self):
         sid = self.fixture()
@@ -858,7 +857,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(message, EditMessageText)
         self.assertEqual(message.message_id, message_id)
         self.assertEqual(message.text, text)
-        self.assertEqual(message.reply_markup, keyboard([[('Сегодня не могу', f'decline:{did}')]]))
+        self.assertEqual(message.reply_markup, keyboard([[('❌ Сегодня не могу', f'decline:{did}')]]))
 
     async def test_morning_decline_button_works_and_pending_replacement_needs_an_answer(self):
         sid = self.fixture()
@@ -886,8 +885,8 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         for uid, partner in ((12, 'Максим'), (15, 'Анна')):
             job = self.row("SELECT * FROM outbox WHERE kind='update' AND uid=? ORDER BY id DESC LIMIT 1", (uid,))
             text, rows = worker.render(job)
-            self.assertTrue(text.startswith(f'Ты сегодня дежуришь.\nС тобой в паре — {partner}.'))
-            self.assertEqual(rows, [[('Сегодня не могу', f'decline:{did}')]])
+            self.assertTrue(text.startswith(f'🧹 Ты сегодня дежуришь.\n👥 С тобой в паре — {partner}.'))
+            self.assertEqual(rows, [[('❌ Сегодня не могу', f'decline:{did}')]])
 
     async def test_no_reserve_moves_to_next_whole_pair_without_mixing_partners(self):
         sid = self.fixture(reserves='')
@@ -918,8 +917,8 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         self.store.reply_offer(offer['id'], 14, True, NOW)
         for uid, partner in ((13, 'Мария'), (14, 'Пётр')):
             text, rows = self.app.day_panel(did, uid, notification=True)
-            self.assertTrue(text.startswith(f'Ты сегодня дежуришь.\nС тобой в паре — {partner}.'))
-            self.assertEqual(rows, [[('Сегодня не могу', f'decline:{did}')]])
+            self.assertTrue(text.startswith(f'🧹 Ты сегодня дежуришь.\n👥 С тобой в паре — {partner}.'))
+            self.assertEqual(rows, [[('❌ Сегодня не могу', f'decline:{did}')]])
         self.assertEqual({m['uid']: m['pair'] for m in self.store.view(sid, 99)['members']}, pairs_before)
 
     async def test_morning_notice_is_not_used_for_no_duty_cancelled_or_old_day(self):
@@ -998,7 +997,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.row('SELECT state FROM assignments WHERE day=? ORDER BY id',(did,))['state'],'assigned')
         alert = self.row("SELECT * FROM outbox WHERE kind='delivery_issue' AND uid=99")
         await worker.deliver(alert['id'],NOW)
-        self.assertIn('не считает это отказом',self.session.calls[-1].text)
+        self.assertIn('Не удалось доставить уведомление участнику Иван',self.session.calls[-1].text)
 
     async def test_disabled_notifications_send_nothing_on_worker_pass(self):
         sid = self.fixture(owner_daily=False,audience='off',requests=False,owner_events=False)
@@ -1030,12 +1029,14 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
     async def test_unlinked_copy_distinguishes_list_membership_from_telegram_account(self):
         sid = self.store.create(99, '116-КД9-3ССА', parse_people('@ivan_ivanov + Анна'), [], now=NOW)
         text, rows = self.app.panel(sid,99)
-        self.assertIn('Подключены к списку дежурств: 0 из 2',text)
-        self.assertIn('Приглашение нужно только тем, кто ещё не подключён',text)
-        self.assertIn('Пригласить участников', str(rows))
+        self.assertNotIn('Подключены',text)
+        self.assertNotIn('Приглашение',text)
+        self.assertNotIn('Пригласить участников', str(rows))
         self.assertNotIn('Подключились к боту',text)
-        text, _ = self.app.roster(sid,99)
-        self.assertIn('ещё не подключился к списку',text)
+        text, rows = self.app.connections_panel(sid,99)
+        self.assertIn('@ivan_ivanov',text)
+        self.assertIn('Пока не получают уведомления',text)
+        self.assertIn('Пригласить участников',str(rows))
         self.assertNotIn('без аккаунта',text)
 
     async def test_offer_copy_keeps_deadline_two_consents_and_pair_rules(self):
@@ -1045,8 +1046,8 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         offer = self.row("SELECT * FROM offers WHERE day=? AND state='pending'",(did,))
         text, rows = self.app.offer_panel(offer['id'],12)
         self.assertIn('Ответь до 08:10 МСК',text)
-        self.assertIn('когда вы оба согласитесь',text)
-        self.assertIn('Постоянные пары не меняются',text)
+        self.assertNotIn('Постоянные пары не меняются',text)
+        self.assertNotIn('Дежурства 116',text)
         self.assertIn('Да, могу',str(rows))
         self.store.reply_offer(offer['id'],12,True,NOW)
         text, rows = self.app.offer_panel(offer['id'],12)
@@ -1060,6 +1061,55 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         await self.update(callback=f'du:input:{sid}:time')
         self.assertIn('Время московское',self.session.calls[-1].text)
         self.assertIn('для следующих дежурств',self.session.calls[-1].text)
+
+    async def test_home_shows_today_without_service_statistics_for_any_role(self):
+        sid = self.fixture()
+        with self.store.connect(True) as db:
+            db.execute('UPDATE members SET uid=NULL WHERE space=? AND uid=15', (sid,))
+        self.store.ensure_day(sid,NOW,'available')
+        for uid in (99,11,13):
+            text,rows = self.app.panel(sid,uid)
+            for word in ('Подключены','Пар:','Напоминаю','08:00','В выходные','приглашение','Максим'):
+                self.assertNotIn(word,text)
+            self.assertLessEqual(sum(map(len,rows)),4)
+            self.assertNotIn('invite:',str(rows))
+            self.assertNotIn('claims:',str(rows))
+        self.assertIn('Ты сегодня дежуришь с Анна',self.app.panel(sid,11)[0])
+        self.assertIn('manage:',str(self.app.panel(sid,99)[1]))
+        self.assertIn('personal:',str(self.app.panel(sid,13)[1]))
+
+    async def test_management_and_configuration_have_small_permission_checked_menus(self):
+        sid = self.fixture()
+        self.store.ensure_day(sid,NOW,'available')
+        for category in ('notifications','schedule','replacements','extra'):
+            text,rows = self.app.settings_category(sid,99,category)
+            self.assertLessEqual(len(rows),5)
+            with self.assertRaises(DutyError):
+                self.app.settings_category(sid,11,category)
+        with self.assertRaises(DutyError):self.app.manage_panel(sid,11)
+        with self.assertRaises(DutyError):self.app.connections_panel(sid,11)
+        await self.update(callback=f'du:manage:{sid}')
+        self.assertIn('Управление',self.session.calls[-1].text)
+        await self.update(callback=f'du:cfg:{sid}:notifications')
+        self.assertIn('Уведомления',self.session.calls[-1].text)
+        await self.update(callback=f'du:opt:{sid}:owner_daily')
+        self.assertIn('Уведомления',self.session.calls[-1].text)
+
+    async def test_secondary_day_and_member_actions_stay_out_of_main_cards(self):
+        sid = self.fixture()
+        did = self.store.ensure_day(sid,NOW,'available')
+        _,rows = self.app.day_panel(did,99)
+        self.assertNotIn('manual:',str(rows))
+        self.assertNotIn('canceldayask:',str(rows))
+        _,extra = self.app.day_more_panel(did,99)
+        self.assertIn('manual:',str(extra))
+        with self.assertRaises(DutyError):self.app.day_more_panel(did,11)
+        mid = self.store.view(sid,99)['members'][0]['id']
+        _,rows = self.app.member_panel(mid,99)
+        self.assertNotIn('transferask:',str(rows))
+        self.assertNotIn('rename:',str(rows))
+        self.assertIn('membermore:',str(rows))
+        self.assertIn('rename:',str(self.app.member_more_panel(mid,99)[1]))
 
     async def test_real_dispatcher_private_scope_rejects_foreign_callback(self):
         sid = self.fixture()

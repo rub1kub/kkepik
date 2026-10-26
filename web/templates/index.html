@@ -84,13 +84,6 @@
     <div id="auth-error" style="display:none;color:red;text-align:center;margin-top:30px;font-size:18px;">Ошибка авторизации через Telegram. Попробуйте открыть приложение заново.</div>
     <div class="menu-container" id="main-content" style="display:none;">
         <div id="connection-status" class="connection-status" role="status" hidden></div>
-        <button class="anarchy-banner" id="canvasBanner" type="button" aria-label="мама-анархия — пора рисовать на доске!" aria-controls="pixelTools" aria-expanded="false" hidden>
-            <span class="anarchy-banner-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24"><path d="m15 5 4 4M4 20l4-1 12-12a2.8 2.8 0 0 0-4-4L4 15l-1 5Z" /></svg>
-            </span>
-            <span class="anarchy-banner-copy"><strong>мама-анархия</strong><span id="canvasBannerSubtitle" role="timer" aria-live="off">пора рисовать на доске!</span></span>
-            <svg class="anarchy-banner-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
-        </button>
         <!-- Выбор группы/ФИО -->
         <div id="groupSelectorContainer" class="group-selector-container">
             <span id="currentGroupName" class="group-selector-current"></span>
@@ -191,6 +184,17 @@
                 </svg>
             </a>
 
+            <a href="/duties" class="game-card schedule-card" id="dutiesLink">
+                <span class="schedule-card-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M9 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3M9 3h6v4H9zm-1 11 2 2 5-5" /></svg>
+                </span>
+                <span class="schedule-card-copy">
+                    <span class="game-title">Дежурства</span>
+                    <span class="game-description">Кто дежурит, пары и настройки</span>
+                </span>
+                <svg class="schedule-card-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+            </a>
+
             <section class="compact-games-section" aria-labelledby="compact-games-title">
                 <h2 id="compact-games-title">Игры</h2>
                 <div class="compact-games-list">
@@ -241,6 +245,13 @@
                 </svg>
                 Настройки расписания
             </a>
+            <details class="miniapp-archive" id="canvasArchive" hidden>
+                <summary>Архив<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg></summary>
+                <button class="feedback-link" id="canvasBanner" type="button" aria-controls="pixelTools" aria-expanded="false" hidden>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M9 3v18M9 15h12M15 9v12" /></svg>
+                    <span id="canvasBannerTitle">Итоги пиксель-батла</span>
+                </button>
+            </details>
         </div>
     </div>
 

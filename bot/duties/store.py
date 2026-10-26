@@ -18,7 +18,7 @@ import sqlite3
 
 MSK = ZoneInfo("Europe/Moscow")
 DEFAULTS = dict(time="08:00", cutoff="08:30", report="16:00", days=[0, 1, 2, 3, 4, 5],
-                owner_daily=True, audience="all", requests=True, owner_events=True,
+                owner_daily=True, audience="assigned", requests=True, owner_events=True,
                 mode="reserve", place="", tasks="", wait_minutes=10)
 
 
@@ -44,12 +44,16 @@ def at(day, value):
 
 def settings(values=None):
     result = {**DEFAULTS, **(values or {})}
+    # Older lists used a group-wide morning announcement. Keep the stored
+    # value readable, but never revive that audience after an old button click.
+    if result['audience'] == 'all':
+        result['audience'] = 'assigned'
     for key in ("time", "cutoff", "report"):
         if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", str(result[key])):
             raise DutyError("Укажите время в формате 08:00.")
     if not result['time'] < result['cutoff'] < result['report']:
         raise DutyError("Проверьте время: сначала утренняя рассылка, затем окончание поиска замен, потом итоги.")
-    if result['audience'] not in ('all', 'assigned', 'off') or result['mode'] not in ('reserve', 'pair'):
+    if result['audience'] not in ('assigned', 'off') or result['mode'] not in ('reserve', 'pair'):
         raise DutyError("Неизвестный режим.")
     if not result['days'] or any(type(d) is not int or d not in range(7) for d in result['days']):
         raise DutyError("Выберите хотя бы один день недели.")
@@ -229,7 +233,16 @@ class Store:
             if 'telegram_id' not in {r['name'] for r in db.execute('PRAGMA table_info(members)')}:
                 db.execute('ALTER TABLE members ADD COLUMN telegram_id INTEGER')
             db.execute('CREATE UNIQUE INDEX IF NOT EXISTS member_telegram_target ON members(space,telegram_id) WHERE telegram_id IS NOT NULL')
-            db.execute('PRAGMA user_version=2')
+            if db.execute('PRAGMA user_version').fetchone()[0] < 3:
+                for row in db.execute('SELECT id,settings FROM spaces').fetchall():
+                    opts = json.loads(row['settings'])
+                    if opts.get('audience') == 'all':
+                        opts['audience'] = 'assigned'
+                        db.execute('UPDATE spaces SET settings=? WHERE id=?', (json.dumps(opts, ensure_ascii=False), row['id']))
+                        self.event(db, row['id'], None, 'notification_migration', 'assigned_only')
+                db.execute("UPDATE outbox SET status='cancelled' WHERE status='pending' AND kind IN ('daily','update','source_change') "
+                           "AND ref IN (SELECT id FROM days WHERE status='no_duty')")
+            db.execute('PRAGMA user_version=3')
         self.path.chmod(0o600)
 
     @contextmanager
@@ -519,22 +532,23 @@ class Store:
         return dict(row)
 
     def _daily_targets(self, db, day):
+        if day['status'] == 'no_duty':
+            return set()
         opts = json.loads(self.space(db, day['space'])['settings'])
         targets = set()
-        if opts['audience'] == 'all':
-            targets.update(row[0] for row in db.execute('SELECT DISTINCT m.uid FROM members m JOIN access a '
-                'ON a.space=m.space AND a.uid=m.uid WHERE m.space=? AND m.active=1 AND a.muted=0', (day['space'],)))
-        elif opts['audience'] == 'assigned':
+        if opts['audience'] != 'off':
             targets.update(row[0] for row in db.execute("SELECT DISTINCT m.uid FROM assignments x JOIN members m ON m.id=x.member "
                 "JOIN access a ON a.space=m.space AND a.uid=m.uid WHERE x.day=? AND a.muted=0 "
                 "AND x.state IN ('assigned','waiting','reported','done') AND m.active=1", (day['id'],)))
         if opts['owner_daily']:
-            targets.update(row[0] for row in db.execute("SELECT uid FROM access WHERE space=? AND role='owner' AND muted=0", (day['space'],)))
+            targets.update(row[0] for row in db.execute("SELECT uid FROM access WHERE space=? AND role IN ('owner','manager') AND muted=0", (day['space'],)))
         return targets - {None}
 
     def _changed(self, db, did, *, initial=False):
         db.execute('UPDATE days SET revision=revision+1 WHERE id=?', (did,))
         day = self._day(db, did)
+        if day['status'] == 'no_duty':
+            return
         # Update previous morning cards too, including somebody whose assignment
         # was just cancelled. Settings/membership are rechecked before delivery.
         targets = self._daily_targets(db, day)
@@ -1037,14 +1051,16 @@ class Store:
         with self.connect(True) as db:
             a, b = self._member(db, first), self._member(db, second)
             self.permission(db, a['space'], actor, manage=True)
-            if a['space'] != b['space'] or not a['pair'] or not b['pair'] or a['pair'] == b['pair']:
-                raise DutyError("Выберите людей из двух разных постоянных пар этого списка.")
-            involved = db.execute('SELECT * FROM members WHERE pair IN (?,?)', (a['pair'], b['pair'])).fetchall()
+            if a['space'] != b['space'] or not a['active'] or not b['active'] or a['pair'] == b['pair']:
+                raise DutyError("Выберите участника другой пары или запасного из этого списка.")
+            involved = db.execute('SELECT * FROM members WHERE id IN (?,?) OR pair IN (?,?)',
+                                  (first, second, a['pair'], b['pair'])).fetchall()
             for m in involved:
                 if m['credit'] or db.execute("SELECT 1 FROM assignments WHERE member=? AND state IN ('assigned','waiting','reported')", (m['id'],)).fetchone():
-                    raise DutyError("Пока нельзя менять эти пары: есть дежурства без результата или один напарник ещё не отдежурил за свою пару.")
+                    raise DutyError("Сначала отметьте незакрытые дежурства этих участников. Если один напарник уже отдежурил за пару, дождитесь второго — так очередь останется справедливой.")
             db.execute('UPDATE members SET pair=? WHERE id=?', (b['pair'], a['id']))
             db.execute('UPDATE members SET pair=? WHERE id=?', (a['pair'], b['id']))
+            db.execute('UPDATE members SET credit=0 WHERE id IN (?,?) AND pair IS NULL', (first, second))
             self._recalculate(db, a['space'])
             self.event(db, a['space'], actor, 'partners_changed', f'{first},{second}')
 
@@ -1084,16 +1100,21 @@ class Store:
                 "WHERE a.day=? AND m.uid=? AND a.state='assigned'", (job['ref'], uid)).fetchone())
         if kind == 'claim':
             return opts['owner_events'] and access['role'] in ('owner', 'manager') and bool(db.execute("SELECT 1 FROM claims WHERE id=? AND status='pending'", (job['ref'],)).fetchone())
-        if kind in ('report', 'alert', 'change', 'source_change', 'delivery_issue'):
+        if kind == 'delivery_issue':
             return access['role'] in ('owner', 'manager') and opts['owner_events']
+        if kind in ('report', 'alert', 'change', 'source_change'):
+            day = self._day(db, job['ref'])
+            return day['status'] != 'no_duty' and access['role'] in ('owner', 'manager') and opts['owner_events']
         day = self._day(db, job['ref'])
-        if day['date'] != now.date().isoformat():
+        if day['status'] == 'no_duty' or day['date'] != now.date().isoformat():
             return False
         if uid in self._daily_targets(db, day):
             return True
         # Remove stale assignment buttons from an existing card without sending
         # another daily announcement to somebody outside today's audience.
         return kind == 'update' and opts['audience'] != 'off' and bool(db.execute(
+            'SELECT 1 FROM assignments a JOIN members m ON m.id=a.member WHERE a.day=? AND m.uid=?',
+            (day['id'], uid)).fetchone()) and bool(db.execute(
             "SELECT 1 FROM outbox WHERE kind='daily' AND ref=? AND uid=? AND status='sent'", (day['id'], uid)).fetchone())
 
     def begin_delivery(self, jid, now=None):

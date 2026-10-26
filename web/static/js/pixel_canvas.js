@@ -7,6 +7,7 @@
     const background = document.getElementById('pixelBackground');
     const canvas = document.getElementById('pixelCanvas');
     const banner = document.getElementById('canvasBanner');
+    const archive = document.getElementById('canvasArchive');
     const bannerSubtitle = document.getElementById('canvasBannerSubtitle');
     const tools = document.getElementById('pixelTools');
     const main = document.getElementById('main-content');
@@ -286,10 +287,10 @@
             eventDeadline.textContent = eventFinished ? 'Игра завершена' : countdown;
             eventDeadline.title = 'Окончание игры: ' + new Date(eventEnds).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', day:'numeric', month:'long', hour:'2-digit', minute:'2-digit' }) + ' МСК';
             if (bannerSubtitle) bannerSubtitle.textContent = eventFinished ? 'Посмотреть, как росло полотно' : countdown;
-            const bannerTitle=banner.querySelector('strong');
+            const bannerTitle=document.getElementById('canvasBannerTitle');
             if (bannerTitle) bannerTitle.textContent = eventFinished ? 'Итоги пиксель-батла' : 'мама-анархия';
             banner.setAttribute('aria-label', eventFinished ? 'Итоги пиксель-батла — смотреть таймлапс' : 'мама-анархия — ' + countdown);
-            if (!eventFinished && pageActive && !document.hidden) eventTimer = setTimeout(updateEventDisplay, Math.min(1000, remaining));
+            if (editing && !eventFinished && pageActive && !document.hidden) eventTimer = setTimeout(updateEventDisplay, Math.min(1000, remaining));
         }
         const blocked = editing && banned;
         if (blocked && banScreen.hidden) {
@@ -413,7 +414,7 @@
     function schedulePoll(delay) {
         clearTimeout(pollTimer);
         pollTimer = null;
-        if (initialized && pageActive && !document.hidden && navigator.onLine) pollTimer = setTimeout(sync, delay);
+        if (initialized && editing && pageActive && !document.hidden && navigator.onLine) pollTimer = setTimeout(sync, delay);
     }
 
     function invalidateView() {
@@ -457,7 +458,7 @@
     async function sync() {
         clearTimeout(pollTimer);
         pollTimer = null;
-        if (!initialized || !pageActive || document.hidden || !navigator.onLine || state.busy) return;
+        if (!initialized || !editing || !pageActive || document.hidden || !navigator.onLine || state.busy) return;
         const ownEpoch = epoch;
         const requestedRevision = state.revision;
         try {
@@ -565,6 +566,7 @@
             if (restoreSwipes) tg.disableVerticalSwipes();
         } catch (_error) { /* Expanded layout works in older clients too. */ }
         savedScroll = window.scrollY;
+        background.hidden = false;
         main.inert = true;
         document.body.classList.add('pixel-editing');
         banner.setAttribute('aria-expanded', 'true');
@@ -587,6 +589,8 @@
         if (!editing) return;
         if (window.KepikCanvasChat?.isOpen()) { window.KepikCanvasChat.close(); return; }
         editing = false;
+        cancelRead();
+        clearTimeout(eventTimer);
         if (replay) replay.close();
         window.KepikCanvasChat?.setContext({active:false,admin:adminAllowed,banned,finished:eventFinished});
         stopBrush();
@@ -604,6 +608,7 @@
         pinch = null;
         closePicker();
         tools.hidden = true;
+        background.hidden = true;
         banScreen.hidden = true;
         document.body.classList.remove('pixel-banned');
         canvas.tabIndex = -1;
@@ -1031,10 +1036,7 @@
     if (window.KepikCanvasReplay) replay=window.KepikCanvasReplay.create({onChange:drawSoon,onFit:fitReplayView});
     ready.then(function () {
         initialized = true;
-        background.hidden = false;
         banner.hidden = false;
-        resize();
-        // Optional artwork never delays the schedule's bootstrap or first paint.
-        schedulePoll((window.kkepikApp && window.kkepikApp.lowData) ? 1500 : 400);
+        if (archive) archive.hidden = false;
     }).catch(function () { /* The normal app handles authentication errors. */ });
 }());

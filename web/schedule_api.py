@@ -72,7 +72,7 @@ def _init_api(state):
 @schedule_bp.before_request
 def _prepare_request():
     _request_id()
-    request.max_content_length = 16384
+    request.max_content_length = 65536 if request.path.startswith('/api/duties') else 16384
     if len(request.headers.get('X-Telegram-Init-Data', '')) > 16384:
         raise ApiError(413)
 
@@ -342,6 +342,43 @@ def openapi_spec():
 @schedule_bp.route('/settings')
 def message_constructor_page():
     return render_template('message_settings.html', STATIC_VERSION=STATIC_VERSION)
+
+
+@schedule_bp.route('/duties')
+def duties_page():
+    return render_template('duties.html', STATIC_VERSION=STATIC_VERSION)
+
+
+@schedule_bp.route('/api/duties', defaults={'suffix': ''}, methods=['GET', 'POST'])
+@schedule_bp.route('/api/duties/<path:suffix>', methods=['GET', 'POST', 'PUT'])
+@limiter.limit('120 per minute', key_func=lambda: str(_get_authenticated_user_id()))
+def duties_api(suffix):
+    _get_authenticated_user_id()
+    allowed = (suffix == '' and request.method in ('GET', 'POST') or
+               suffix in ('preview', 'people') and request.method == 'POST' or
+               re.fullmatch(r'[1-9]\d*', suffix) and request.method == 'GET' or
+               re.fullmatch(r'[1-9]\d*/settings', suffix) and request.method == 'PUT' or
+               re.fullmatch(r'[1-9]\d*/(?:actions|roster)', suffix) and request.method == 'POST')
+    if not allowed:
+        raise ApiError(404)
+    kwargs = {'headers': {'X-Telegram-Init-Data': request.headers.get('X-Telegram-Init-Data', '')}}
+    if request.method != 'GET':
+        if not request.is_json:
+            raise ApiError(415)
+        payload = request.get_json()
+        if not isinstance(payload, dict):
+            raise ApiError(400)
+        kwargs['json'] = payload
+    upstream = _upstream(request.method.lower(), '/duties' + ('/' + suffix if suffix else ''), **kwargs)
+    try:
+        payload = _json_from_upstream(upstream)
+        if upstream.status_code != 200:
+            message = payload.get('detail') if upstream.status_code in (400, 403, 404) else None
+            raise ApiError(upstream.status_code if upstream.status_code in _ERRORS else 502,
+                           message if isinstance(message, str) else None)
+        return jsonify(payload)
+    finally:
+        upstream.close()
 
 
 @schedule_bp.route('/api/message-settings', methods=['GET', 'PUT'])

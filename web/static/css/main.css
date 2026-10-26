@@ -2943,6 +2943,39 @@ button:active {
     font-weight: 500;
 }
 
+.miniapp-archive {
+    width: 100%;
+    margin: 0;
+    text-align: center;
+    color: var(--mobile-muted);
+}
+
+.miniapp-archive > summary {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    list-style: none;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.miniapp-archive > summary::-webkit-details-marker { display: none; }
+.miniapp-archive > summary > svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.miniapp-archive[open] > summary > svg { transform: rotate(90deg); }
+.miniapp-archive .feedback-link { margin: 0 auto; font-size: 12px; }
+.miniapp-archive > summary:focus-visible { outline: 2px solid var(--tg-theme-button-color); outline-offset: 2px; }
+
 .compact-game-link:focus-visible,
 .schedule-card:focus-visible,
 .feedback-link:focus-visible {
@@ -2991,7 +3024,7 @@ button:active {
     }
 }
 
-/* The shared canvas is the entire background of the Telegram mini app. */
+/* The canvas is shown only while its archive is open. */
 .pixel-background {
     position: fixed;
     inset: 0;

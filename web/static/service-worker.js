@@ -1,27 +1,29 @@
-const CACHE_VERSION = 'kkepik-shell-20261008-knowledge-1';
+const CACHE_VERSION = 'kkepik-shell-20261026-pixel-archive-1';
 const SHELL_URL = '/';
 const APP_SHELL = [
     SHELL_URL,
-    '/static/css/main.css?v=20261008-knowledge-1',
-    '/static/css/message_settings.css?v=20261008-knowledge-1',
+    '/static/css/main.css?v=20261026-pixel-archive-1',
+    '/static/css/message_settings.css?v=20261026-pixel-archive-1',
+    '/static/css/duties.css?v=20261026-pixel-archive-1',
+    '/static/js/duties.js?v=20261026-pixel-archive-1',
     '/static/js/vendor/telegram-web-app.63.js',
-    '/static/js/app_bootstrap.js?v=20261008-knowledge-1',
-    '/static/js/effects.js?v=20261008-knowledge-1',
-    '/static/js/swipe_detector.js?v=20261008-knowledge-1',
-    '/static/js/schedule.js?v=20261008-knowledge-1',
-    '/static/js/main.js?v=20261008-knowledge-1',
-    '/static/js/kepik-entry.js?v=20261008-knowledge-1',
-    '/static/js/message_settings.js?v=20261008-knowledge-1',
-    '/static/js/image_cards.js?v=20261008-knowledge-1',
-    '/static/js/schedule_reactions.js?v=20261008-knowledge-1',
-    '/static/js/group_selector.js?v=20261008-knowledge-1',
-    '/static/js/miniapp_presence.js?v=20261008-knowledge-1',
-    '/static/js/pixel_state.js?v=20261008-knowledge-1',
-    '/static/js/pixel_canvas.js?v=20261008-knowledge-1',
-    '/static/js/pixel_replay.js?v=20261008-knowledge-1',
-    '/static/css/pixel_replay.css?v=20261008-knowledge-1',
-    '/static/js/pixel_chat.js?v=20261008-knowledge-1',
-    '/static/css/pixel_chat.css?v=20261008-knowledge-1',
+    '/static/js/app_bootstrap.js?v=20261026-pixel-archive-1',
+    '/static/js/effects.js?v=20261026-pixel-archive-1',
+    '/static/js/swipe_detector.js?v=20261026-pixel-archive-1',
+    '/static/js/schedule.js?v=20261026-pixel-archive-1',
+    '/static/js/main.js?v=20261026-pixel-archive-1',
+    '/static/js/kepik-entry.js?v=20261026-pixel-archive-1',
+    '/static/js/message_settings.js?v=20261026-pixel-archive-1',
+    '/static/js/image_cards.js?v=20261026-pixel-archive-1',
+    '/static/js/schedule_reactions.js?v=20261026-pixel-archive-1',
+    '/static/js/group_selector.js?v=20261026-pixel-archive-1',
+    '/static/js/miniapp_presence.js?v=20261026-pixel-archive-1',
+    '/static/js/pixel_state.js?v=20261026-pixel-archive-1',
+    '/static/js/pixel_canvas.js?v=20261026-pixel-archive-1',
+    '/static/js/pixel_replay.js?v=20261026-pixel-archive-1',
+    '/static/css/pixel_replay.css?v=20261026-pixel-archive-1',
+    '/static/js/pixel_chat.js?v=20261026-pixel-archive-1',
+    '/static/css/pixel_chat.css?v=20261026-pixel-archive-1',
 ];
 
 self.addEventListener('install', function (event) {
@@ -51,6 +53,7 @@ function isPrivateRequest(url) {
         || url.pathname.startsWith('/colleges/')
         || url.pathname === '/agents'
         || url.pathname === '/mcp'
+        || url.pathname === '/duties'
         || url.pathname === '/robots.txt'
         || url.pathname === '/sitemap.xml'
         || url.pathname === '/llms.txt'

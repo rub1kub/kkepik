@@ -20,6 +20,8 @@ from message_settings_api import router as message_settings_router
 app.include_router(message_settings_router)
 from knowledge_api import router as knowledge_router
 app.include_router(knowledge_router)
+from duty_api import router as duty_router
+app.include_router(duty_router)
 
 _TELEGRAM_TAG_RE = re.compile(
     r"</?(?:b|strong|i|em|u|s|code|tg-emoji)\b[^>]*>",

@@ -3,8 +3,8 @@ import ast
 from html.parser import HTMLParser
 from pathlib import Path
 import re
-import tempfile
 import unittest
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from urllib.parse import parse_qs, quote, urlsplit
 from xml.etree import ElementTree
@@ -230,17 +230,17 @@ class AgentDiscoveryTest(unittest.TestCase):
         self.assertTrue(all(url.startswith(public.PUBLIC_ORIGIN + '/') for url in urls))
 
     def test_indexnow_key_is_only_one_fixed_public_file_with_get_and_head(self):
-        fixture = tempfile.TemporaryDirectory()
+        fixture = TemporaryDirectory()
         self.addCleanup(fixture.cleanup)
         key_path = Path(fixture.name) / 'indexnow-key.txt'
-        key_path.write_bytes(b'publication-test-indexnow-key\n')
-        path_patch = patch.object(public, '__file__', str(Path(fixture.name) / 'knowledge_public.py'))
-        path_patch.start()
-        self.addCleanup(path_patch.stop)
-        expected = key_path.read_bytes()
+        expected = b'test-indexnow-ownership-key\n'
+        key_path.write_bytes(expected)
         self.assertRegex(expected.decode('ascii').strip(), r'^[A-Za-z0-9-]{8,128}$')
         client = self.app.test_client()
-        with patch.object(public, 'send_file', wraps=public.send_file) as send:
+        with (
+            patch.object(public, '__file__', str(key_path.with_name('knowledge_public.py'))),
+            patch.object(public, 'send_file', wraps=public.send_file) as send,
+        ):
             response = client.get('/indexnow-key.txt')
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.mimetype, 'text/plain')

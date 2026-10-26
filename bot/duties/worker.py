@@ -87,7 +87,8 @@ class DutyWorker:
                     if (day['source_state'], day['source_revision']) != (state, revision):
                         # Publish a warning, not a silent change to today's pair.
                         db.execute('UPDATE days SET source_state=?,source_revision=? WHERE id=?', (state, revision, did))
-                        self.store._managers_job(db, space['id'], 'source_change', did, f'source:{did}:{state}:{revision}')
+                        if day['status'] != 'no_duty':
+                            self.store._managers_job(db, space['id'], 'source_change', did, f'source:{did}:{state}:{revision}')
                         self.store._changed(db, did)
         self.store.tick(now)
         for job in self.store.pending_jobs(now):
@@ -112,25 +113,15 @@ class DutyWorker:
             with self.store.connect() as db:
                 owner = db.execute('SELECT name,username FROM identities WHERE uid=?', (space['owner'],)).fetchone()
             creator = ('@' + h(owner['username']) if owner['username'] else h(owner['name'])) if owner else 'староста'
-            text = f'<b>Вас добавили в список дежурств группы {h(space["group_name"])}.</b>\n\nСписок создал {creator}.\n'
+            text = f'🧹 <b>Вас добавили в дежурства {h(space["group_name"])}.</b>\n\nСписок ведёт {creator}.\n'
             partner = next((m for m in data['members'] if member['pair'] and m['pair'] == member['pair'] and m['id'] != ref), None)
             if partner:
-                text += 'Ваш напарник: ' + h(partner['name']) + '.\n'
+                text += '👥 Ваш напарник: ' + h(partner['name']) + '.\n'
             elif member['pair']:
                 text += 'Уточните напарника у создателя списка.\n'
             else:
-                text += 'Вы в списке запасных.\n'
-            opts = json.loads(space['settings'])
-            if opts['audience'] == 'off':
-                text += '\nУтренняя рассылка в этом списке выключена.'
-            elif opts['audience'] == 'all':
-                text += f'\nВ дни дежурств в {opts["time"]} МСК бот будет сообщать, кто дежурит.'
-            else:
-                text += f'\nКогда придёт ваша очередь, бот напишет в {opts["time"]} МСК.'
-            text += '\n\nПосмотреть список и настроить уведомления можно в /duty.'
-            rows = [[('Открыть дежурства', f'open:{space["id"]}')], [('Отключить уведомления', f'silence:{space["id"]}')]]
-            if data['access']['role'] != 'owner':
-                rows.append([('Выйти из списка', f'leaveask:{space["id"]}')])
+                text += '🔄 Вы в запасных.\n'
+            rows = [[('Открыть дежурства', f'open:{space["id"]}')]]
             return text, rows
         if kind == 'claim_result':
             with self.store.connect() as db:
@@ -138,19 +129,21 @@ class DutyWorker:
             if not claim:
                 raise DutyError('Заявка не найдена.')
             if claim['status'] == 'approved':
-                return f"Староста подтвердил вашу заявку в {h(claim['group_name'])}. Посмотреть дежурных и настроить уведомления: /duty.", [[('Открыть дежурства', f'open:{claim["space"]}')]]
+                return 'Староста подтвердил заявку.', [[('Открыть дежурства', f'open:{claim["space"]}')]]
             return 'Староста отклонил заявку. Проверьте с ним имя в списке и попросите новое приглашение.', [[('Мои дежурства', 'home')]]
         if kind == 'delivery_issue':
-            return ('Одно из уведомлений могло не дойти. Свяжитесь с участниками напрямую. '
-                    'Бот не считает это отказом от дежурства.'), [[('Открыть список', f'open:{job["space"]}')]]
+            with self.store.connect() as db:
+                member = db.execute('SELECT m.name FROM outbox o LEFT JOIN members m ON m.space=o.space AND m.uid=o.uid '
+                                    'WHERE o.id=? AND o.space=?', (ref, job['space'])).fetchone()
+            text = 'Не удалось доставить уведомление' + (' участнику ' + h(member['name']) if member and member['name'] else '') + '.'
+            return text, [[('Открыть дежурства', f'open:{job["space"]}')]]
         text, rows = self.app.day_panel(ref, uid, notification=kind in ('daily', 'update'))
         if kind == 'report':
-            text = ('Отметьте, кто отдежурил: всех сразу или каждого отдельно кнопками ниже. '
-                    'Если человек не ответил боту, сначала уточните у него.\n\n') + text
+            text = 'Пора отметить дежурство.\n\n' + text
         elif kind == 'accepted':
-            text = 'Вы оба согласились. Замена подтверждена.\n\n' + text
+            text = 'Замена подтверждена.\n\n' + text
         elif kind == 'source_change':
-            text = 'Обновились данные расписания. Проверьте, нужны ли сегодня дежурные. Бот пока оставил прежний состав.\n\n' + text
+            text = 'Расписание изменилось. Проверьте назначение на сегодня.\n\n' + text
         return text, rows
 
     async def deliver(self, jid, now=None):

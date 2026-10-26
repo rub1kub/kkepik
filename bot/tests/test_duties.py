@@ -58,8 +58,8 @@ class DutyStoreTest(unittest.TestCase):
         self.assertEqual(self.store.ensure_day(self.sid, self.time(8, 1)), did)
         self.assertEqual(len(self.query('SELECT * FROM assignments WHERE day=?', (did,))), 2)
         jobs = self.query("SELECT uid FROM outbox WHERE kind='daily'")
-        self.assertEqual({r['uid'] for r in jobs}, {99,11,12,13,14,15,16})
-        self.assertEqual(len(jobs), 7)
+        self.assertEqual({r['uid'] for r in jobs}, {99,11,12})
+        self.assertEqual(len(jobs), 3)
 
     def test_punctuation_names_and_user_ids_parse_without_placeholder_people(self):
         for name in ('-', '—', '–', '()', '.', '-,()'):
@@ -153,7 +153,7 @@ class DutyStoreTest(unittest.TestCase):
         upgraded = Store(self.path)
         self.assertEqual(len(upgraded.view(self.sid,99)['members']),6)
         self.assertEqual(upgraded.session(99)[0],'setup_pairs')
-        self.assertEqual(self.query('PRAGMA user_version')[0]['user_version'],2)
+        self.assertEqual(self.query('PRAGMA user_version')[0]['user_version'],3)
         Store(self.path)
         self.assertEqual(len(upgraded.view(self.sid,99)['members']),6)
 
@@ -532,6 +532,68 @@ class DutyStoreTest(unittest.TestCase):
         other = self.store.ensure_day(sid2,self.time(),source_state='available')
         self.assertEqual(self.query('SELECT status FROM days WHERE id=?',(other,))[0]['status'],'unfilled')
         self.assertEqual(self.query('SELECT status FROM days WHERE id=?',(did,))[0]['status'],'assigned')
+
+
+    def test_sundays_and_confirmed_days_off_never_queue_announcements(self):
+        for moment, source in ((self.time(days=6), 'available'), (self.time(days=1), 'no_lessons')):
+            did = self.store.ensure_day(self.sid, moment, source)
+            self.assertEqual(self.store.day_view(did, 99)['day']['status'], 'no_duty')
+            self.assertFalse(self.query('SELECT * FROM outbox WHERE ref=?', (did,)))
+            with self.store.connect(True) as db:
+                self.store._job(db, self.sid, 99, 'daily', did, f'old-day-off:{did}')
+            job = self.query('SELECT * FROM outbox WHERE ref=?', (did,))[0]
+            self.assertIsNone(self.store.begin_delivery(job['id'], moment))
+
+    def test_legacy_all_audience_is_migrated_and_never_broadcasts_to_observers(self):
+        with self.store.connect(True) as db:
+            opts = json_load(db.execute('SELECT settings FROM spaces WHERE id=?', (self.sid,)).fetchone()[0])
+            opts['audience'] = 'all'
+            import json
+            db.execute('UPDATE spaces SET settings=?', (json.dumps(opts),))
+            db.execute('PRAGMA user_version=2')
+        Store(self.path)
+        self.assertEqual(json_load(self.store.view(self.sid, 99)['space']['settings'])['audience'], 'assigned')
+        did = self.day()
+        self.assertEqual({r['uid'] for r in self.query("SELECT uid FROM outbox WHERE kind='daily'")}, {99,11,12})
+        with self.store.connect(True) as db:
+            self.store._job(db, self.sid, 13, 'daily', did, 'legacy-observer')
+            db.execute("UPDATE outbox SET status='sent',message_id=55 WHERE dedup='legacy-observer:13'")
+            self.store._job(db, self.sid, 13, 'update', did, 'legacy-observer-update')
+        job = self.query("SELECT * FROM outbox WHERE dedup='legacy-observer-update:13'")[0]
+        self.assertIsNone(self.store.begin_delivery(job['id'], self.time()))
+
+    def test_reserve_and_paired_member_can_exchange_places_in_both_directions(self):
+        paired, reserve = self.ids[0], self.ids[4]
+        original = self.people[0]['pair']
+        self.store.swap_partners(reserve, paired, 99)
+        members = {m['id']: m for m in self.store.view(self.sid,99)['members']}
+        self.assertEqual(members[reserve]['pair'], original)
+        self.assertIsNone(members[paired]['pair'])
+        self.assertEqual(members[reserve]['uid'], 15)
+        self.assertEqual(members[paired]['uid'], 11)
+        self.store.swap_partners(reserve, paired, 99)
+        members = {m['id']: m for m in self.store.view(self.sid,99)['members']}
+        self.assertEqual(members[paired]['pair'], original)
+        self.assertIsNone(members[reserve]['pair'])
+
+    def test_reserve_swap_is_atomic_when_a_partner_has_an_unfinished_shift(self):
+        self.day()
+        before = self.store.view(self.sid,99)['members']
+        with self.assertRaises(DutyError):
+            self.store.swap_partners(self.ids[4], self.ids[0], 99)
+        self.assertEqual(self.store.view(self.sid,99)['members'], before)
+
+    def test_forecast_uses_queue_without_changing_real_assignments_or_notifications(self):
+        from duties.views import forecast
+        self.day()
+        with self.store.connect() as db:
+            before = '\n'.join(db.iterdump())
+        days = forecast(self.store, self.sid, 99, now=self.time(), count=8)
+        self.assertEqual([p['id'] for p in days[0]['people']], self.ids[:2])
+        self.assertEqual([p['id'] for p in days[1]['people']], self.ids[2:4])
+        self.assertEqual(days[6]['status'], 'no_duty')
+        with self.store.connect() as db:
+            self.assertEqual('\n'.join(db.iterdump()), before)
 
 
 def json_load(value):

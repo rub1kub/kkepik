@@ -89,7 +89,7 @@ class ScheduleCatalogTest(unittest.TestCase):
     def test_old_real_pdf_cannot_seed_new_academic_year(self):
         pdf_path = Path(__file__).parents[1] / "data" / "Расписание на 24.06.2026_ГРУППЫ.pdf"
         if not pdf_path.is_file():
-            self.skipTest('Optional local PDF fixture is not included in the public repository')
+            self.skipTest('Optional archived PDF is not included in the source checkout')
         df = pdf_to_dataframe(str(pdf_path))
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "catalog.json"

@@ -118,7 +118,7 @@ function client(kind, responder) {
     const context2d={clearRect(){frames=[];},fillRect(x,y,w,h){frames.push({x,y,w,h,color:this.fillStyle});},setTransform(){},save(){},restore(){},beginPath(){},rect(){},clip(){},moveTo(){},lineTo(){},stroke(){},strokeRect(){}};
     const html=fs.readFileSync(path.join(__dirname,kind==='mini'?'../templates/index.html':'../templates/admin/canvas.html'),'utf8');
     const elements=new Map(Array.from(html.matchAll(/id="([^"]+)"/g),m=>[m[1],new Element(m[1])]));
-    for(const id of ['pixelAdminTools','pixelColorPicker','pixelTools'])if(elements.has(id))elements.get(id).hidden=true;
+    for(const id of ['pixelAdminTools','pixelColorPicker','pixelTools','pixelBackground','canvasArchive','canvasBanner'])if(elements.has(id))elements.get(id).hidden=true;
     for(const canvas of ['pixelCanvas','pixelMagnifier','adminCanvas'])if(elements.has(canvas))elements.get(canvas).parentElement=new Element('stage');
     const document=new Events();document.hidden=false;document.getElementById=id=>elements.get(id)||null;
     document.createElement=()=>new Element('created');document.body=new Element('body');document.documentElement=new Element('html');
@@ -142,6 +142,19 @@ function client(kind, responder) {
     return {window,document,navigator,elements,requests,tick,frames:()=>frames,click:id=>elements.get(id).dispatch('click'),pointer:(name,x,y)=>elements.get(kind==='mini'?'pixelCanvas':'adminCanvas').dispatch(name,{clientX:x,clientY:y,pointerId:1,pointerType:'touch',button:0})};
 }
 
+test('mini: archive stays hidden and makes no canvas reads until opened, then stops on exit',async()=>{
+    const page=client('mini',()=>snapshot(1,[[0,0,5,1]]));await page.tick(10000);
+    assert.equal(page.requests.length,0);assert.equal(page.elements.get('pixelBackground').hidden,true);
+    assert.equal(page.elements.get('canvasArchive').hidden,false);assert.equal(page.elements.get('canvasBanner').hidden,false);
+    page.click('canvasBanner');await page.tick(30);
+    assert.equal(page.elements.get('pixelBackground').hidden,false);assert.equal(page.requests.length,1);
+    page.click('pixelDone');assert.equal(page.elements.get('pixelBackground').hidden,true);
+    const before=page.requests.length;page.window.dispatch('online');page.window.dispatch('pageshow',{persisted:true});await page.tick(10000);
+    assert.equal(page.requests.length,before);assert.equal(page.elements.get('main-content').inert,false);
+    page.click('canvasBanner');await page.tick(30);assert.equal(page.requests.length,before+1);
+    page.window.dispatch('pagehide');
+});
+
 for(const kind of ['mini','admin'])test(`${kind}: distant artwork is drawn during drag before releasing the pointer`,async()=>{
     const page=client(kind,()=>snapshot(1,[[30,0,5,1]]));await page.tick(500);
     if(kind==='mini')page.click('canvasBanner');else page.click('adminPan');await page.tick(30);
@@ -163,7 +176,7 @@ test('mini: other players keep updating while pointer movement continues',async(
 });
 
 for(const event of ['offline','pagehide','visibilitychange'])test(`mini: late response after ${event} cannot overwrite resumed state`,async()=>{
-    const gate=deferred();const page=client('mini',(_,index)=>index===1?gate.promise:snapshot(2,[[0,0,5,2]]));await page.tick(500);
+    const gate=deferred();const page=client('mini',(_,index)=>index===1?gate.promise:snapshot(2,[[0,0,5,2]]));await page.tick(500);page.click('canvasBanner');await page.tick(10);
     if(event==='visibilitychange'){page.document.hidden=true;page.document.dispatch(event);page.document.hidden=false;page.document.dispatch(event);}
     else if(event==='offline'){page.navigator.onLine=false;page.window.dispatch(event);page.navigator.onLine=true;page.window.dispatch('online');}
     else{page.window.dispatch(event);page.window.dispatch('pageshow',{persisted:true});}
@@ -185,7 +198,7 @@ test('mini: expired event disables drawing but keeps canvas navigation and admin
 
 test('mini: an older access snapshot in the same millisecond cannot clear a newer ban',async()=>{
     const page=client('mini',(_,index)=>({...snapshot(1),banned:index===1,access_at_ms:1000,access_revision:index===1?2:1}));
-    await page.tick(500);page.click('canvasBanner');assert.equal(page.elements.get('pixelBanScreen').hidden,false);
+    await page.tick(500);page.click('canvasBanner');await page.tick(20);assert.equal(page.elements.get('pixelBanScreen').hidden,false);
     await page.tick(1600);assert(page.requests.length>1);assert.equal(page.elements.get('pixelBanScreen').hidden,false);
     page.click('pixelBanBack');assert.equal(page.elements.get('main-content').inert,false);assert.equal(page.elements.get('pixelTools').hidden,true);
     page.window.dispatch('pagehide');
