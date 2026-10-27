@@ -33,7 +33,7 @@ from schedules.schedule_formatter import (
 )
 from schedules.schedule_keyboard import create_schedule_keyboard
 from schedules.schedule_dates import is_current_schedule
-from schedules.schedule_notices import append_broadcast_schedule_notice, get_schedule_settings_notice
+from schedules.schedule_notices import append_broadcast_schedule_notice, get_broadcast_schedule_notice
 from schedules.pdf_crop import crop_group_screenshots
 from tracked_groups import get_all_tracked_groups
 from message_registry import message_tracking_context
@@ -133,7 +133,7 @@ async def _send_tracked_group_schedule_impl(
         message = "‼️ РАСПИСАНИЕ ИЗМЕНИЛОСЬ\n\n" + message
     message = append_broadcast_schedule_notice(message, recipient_role, schedule_date)
     await send_personal_schedule(bot, uid, message, image, keyboard, preferences,
-                                 notice=get_schedule_settings_notice(schedule_date))
+                                 notice=get_broadcast_schedule_notice(schedule_date, recipient_role))
     return True
 
 

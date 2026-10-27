@@ -20,16 +20,25 @@ SETTINGS_NOTICE = (
     'шаблоны, поля и вид сообщений — /settings.'
 )
 
+DUTY_SCHEDULE_DATE = '29.10.2026'
+DUTY_NOTICE = '🧹 Старостам и замам: теперь в боте есть учёт дежурств — /duty'
+
 
 def get_schedule_settings_notice(schedule_date: str) -> str | None:
     return SETTINGS_NOTICE if schedule_date == SETTINGS_SCHEDULE_DATE else None
 
 
+def get_broadcast_schedule_notice(schedule_date: str, recipient_role: str | None = None) -> str | None:
+    if recipient_role == config.ROLE_STUDENT and schedule_date == DUTY_SCHEDULE_DATE:
+        return DUTY_NOTICE
+    return get_schedule_settings_notice(schedule_date)
+
+
 def append_broadcast_schedule_notice(message: str, recipient_role: str | None, schedule_date: str) -> str:
     message = append_student_schedule_notice(message, recipient_role, schedule_date)
-    notice = get_schedule_settings_notice(schedule_date)
+    notice = get_broadcast_schedule_notice(schedule_date, recipient_role)
     if notice and not message.endswith(notice):
-        message += '\n\n' + notice
+        message = message.rstrip() + '\n\n' + notice
     return message
 
 
