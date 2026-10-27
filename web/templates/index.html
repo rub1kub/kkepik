@@ -86,11 +86,15 @@
         <div id="connection-status" class="connection-status" role="status" hidden></div>
         <!-- Выбор группы/ФИО -->
         <div id="groupSelectorContainer" class="group-selector-container">
-            <span id="currentGroupName" class="group-selector-current"></span>
-            <button id="groupSelectorManage" class="group-selector-manage" type="button" hidden>Добавить</button>
-            <span id="groupSelectorArrow" class="group-selector-arrow" hidden>&#8250;</span>
+            <button id="groupSelectorToggle" class="group-selector-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="groupSelectorDropdown" disabled>
+                <span id="currentGroupName" class="group-selector-current"></span>
+                <svg id="groupSelectorArrow" class="group-selector-arrow" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="m6 9 6 6 6-6" /></svg>
+            </button>
+            <button id="groupSelectorManage" class="group-selector-manage" type="button" aria-label="Добавить расписание" title="Добавить расписание" hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            </button>
         </div>
-        <div id="groupSelectorDropdown" class="group-selector-dropdown"></div>
+        <div id="groupSelectorDropdown" class="group-selector-dropdown" role="menu" aria-label="Сохранённые расписания" hidden></div>
         <div id="progressBox">
             <div id="progress_bar" role="button" tabindex="0" aria-label="Оставшееся время">
                 <div id="progress_line"></div>

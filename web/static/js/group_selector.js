@@ -1,582 +1,254 @@
-// group_selector.js
+(function () {
+    'use strict';
+    const tg = window.Telegram?.WebApp;
+    const tgWebAppData = window.tgWebAppData || tg?.initData || '';
+    const $ = id => document.getElementById(id);
+    const container = $('groupSelectorContainer'), currentName = $('currentGroupName');
+    const toggle = $('groupSelectorToggle'), manage = $('groupSelectorManage');
+    const arrow = $('groupSelectorArrow'), menu = $('groupSelectorDropdown');
+    if (!container || !toggle || !manage || !menu) return;
 
-// --- Константы и переменные ---
-const tgWebAppData = window.tgWebAppData || (window.Telegram && Telegram.WebApp && Telegram.WebApp.initData) || '';
-let favorites = [];
-let currentEntity = null; // {entity_type, entity_id, entity_name}
-let isDropdownOpen = false;
-let userEntity = null; // Кэш для личной группы/ФИО пользователя
-
-// --- DOM элементы ---
-const groupSelectorContainer = document.getElementById('groupSelectorContainer');
-const currentGroupName = document.getElementById('currentGroupName');
-const groupSelectorManage = document.getElementById('groupSelectorManage');
-const groupSelectorArrow = document.getElementById('groupSelectorArrow');
-const groupSelectorDropdown = document.getElementById('groupSelectorDropdown');
-
-// --- Модальное окно для добавления ---
-let addModal = null;
-let addInput = null;
-let addTypeSelect = null;
-let addResults = null;
-let addConfirmBtn = null;
-let addCloseBtn = null;
-let addError = null;
-let searchTimeout = null;
-let searchList = [];
-let selectedSearchItem = null;
-let scheduleCatalogPromise = null;
-
-function telegramAuthHeaders() {
-    return tgWebAppData ? { 'X-Telegram-Init-Data': tgWebAppData } : {};
-}
-
-function loadScheduleCatalog() {
-    if (!scheduleCatalogPromise) {
-        scheduleCatalogPromise = fetch('/api/schedule/catalog', {
-            headers: { Accept: 'application/json' }
-        }).then(response => {
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            return response.json();
-        }).catch(error => {
-            scheduleCatalogPromise = null;
-            throw error;
-        });
+    let favorites = [], userEntity = null, currentEntity = null, menuOpen = false;
+    let catalog = null, catalogPromise = null, catalogFailed = false, searchVersion = 0;
+    let sheet, input, results, confirmButton, error, status, retry, fieldLabel;
+    let entityType = 'group', selected = null, activeOption = -1, saving = false, oldOverflow = '';
+    const HISTORY_KEY = 'groupSelectorHistory';
+    const paths = { plus: 'M12 5v14M5 12h14', close: 'm6 6 12 12M6 18 18 6',
+        check: 'm5 12 4 4L19 6', trash: 'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7' };
+    const key = entity => entity?.entity_type && entity.entity_id ? `${entity.entity_type}:${entity.entity_id}` : '';
+    const same = (a, b) => Boolean(key(a) && key(a) === key(b));
+    function node(tag, className, text) {
+        const element = document.createElement(tag);
+        if (className) element.className = className;
+        if (text !== undefined) element.textContent = text;
+        return element;
     }
-    return scheduleCatalogPromise;
-}
-
-function entityKey(entity) {
-    return entity && entity.entity_type && entity.entity_id
-        ? `${entity.entity_type}:${entity.entity_id}`
-        : '';
-}
-
-function sameEntity(left, right) {
-    return Boolean(entityKey(left) && entityKey(left) === entityKey(right));
-}
-
-function getTrackedEntities() {
-    const tracked = [];
-    const seen = new Set();
-    [userEntity, ...favorites].forEach(entity => {
-        const key = entityKey(entity);
-        if (!key || seen.has(key)) return;
-        seen.add(key);
-        tracked.push(entity);
-    });
-    return tracked;
-}
-
-function selectEntity(entity) {
-    if (!entityKey(entity)) return;
-    currentEntity = entity;
-    addToHistory(entity);
-    renderCurrentEntity();
-    closeDropdown();
-    window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('soft');
-    window.updateScheduleForEntity?.(entity);
-}
-
-function applyBootstrapData(data) {
-    if (!data) return;
-    if (Array.isArray(data.favorites)) favorites = data.favorites;
-    if (data.user && data.user.name_or_group) {
-        userEntity = {
-            entity_type: data.user.role === 'teacher' ? 'teacher' : 'group',
-            entity_id: data.user.name_or_group,
-            entity_name: data.user.name_or_group
-        };
+    function icon(name) {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.7','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true'}).forEach(([k,v]) => svg.setAttribute(k,v));
+        const path = document.createElementNS(svg.namespaceURI, 'path');path.setAttribute('d',paths[name]);svg.append(path);return svg;
     }
-}
-
-document.addEventListener('kkepik:bootstrap-updated', function (event) {
-    applyBootstrapData(event.detail);
-    if (!currentEntity && userEntity) currentEntity = userEntity;
-    renderCurrentEntity();
-});
-
-// --- Работа с историей выбранных сущностей ---
-const HISTORY_KEY = 'groupSelectorHistory';
-function getHistory() {
-    try {
-        const raw = localStorage.getItem(HISTORY_KEY);
-        if (!raw) return [];
-        return JSON.parse(raw);
-    } catch (e) { return []; }
-}
-function saveHistory(history) {
-    try {
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-    } catch (e) {}
-}
-function addToHistory(entity) {
-    if (!entity || !entity.entity_id || !entity.entity_type) return;
-    let history = getHistory();
-    // Удаляем дубликаты
-    history = history.filter(e => !(e.entity_id === entity.entity_id && e.entity_type === entity.entity_type));
-    history.unshift({ entity_type: entity.entity_type, entity_id: entity.entity_id, entity_name: entity.entity_name });
-    // Ограничим историю 10 элементами
-    if (history.length > 10) history = history.slice(0, 10);
-    saveHistory(history);
-}
-function removeFromHistory(entity) {
-    if (!entity || !entity.entity_id || !entity.entity_type) return;
-    let history = getHistory();
-    history = history.filter(e => !(e.entity_id === entity.entity_id && e.entity_type === entity.entity_type));
-    saveHistory(history);
-}
-
-// --- Инициализация ---
-async function initGroupSelector() {
-    if (window.kkepikApp) {
+    function button(text, handler, className) {
+        const element = node('button',className,text);element.type='button';element.addEventListener('click',handler);return element;
+    }
+    function history() {
+        try { const value=JSON.parse(localStorage.getItem(HISTORY_KEY)||'[]');return Array.isArray(value)?value.filter(e=>key(e)&&['group','teacher'].includes(e.entity_type)):[]; }
+        catch (_) { return []; }
+    }
+    function saveHistory(items) { try {localStorage.setItem(HISTORY_KEY,JSON.stringify(items.slice(0,10)));}catch (_) {} }
+    function remember(entity) {saveHistory([entity,...history().filter(e=>!same(e,entity))]);}
+    function tracked() {
+        const seen=new Set();return [userEntity,...favorites].filter(e=>{const id=key(e);if(!id||seen.has(id))return false;seen.add(id);return true;});
+    }
+    function renderEntitySwitcher() {
+        currentName.textContent=currentEntity?.entity_name||currentEntity?.entity_id||'Моё расписание';
+        const multiple=tracked().length>1;
+        toggle.disabled=!multiple;arrow.toggleAttribute('hidden',!multiple);manage.hidden=false;manage.disabled=saving;
+        toggle.setAttribute('aria-expanded',String(menuOpen));
+    }
+    function selectEntity(entity) {
+        currentEntity=entity;remember(entity);renderEntitySwitcher();closeDropdown();
+        tg?.HapticFeedback?.impactOccurred?.('soft');window.updateScheduleForEntity?.(entity);
+    }
+    function bootstrap(data) {
+        if (Array.isArray(data?.favorites)) favorites=data.favorites.filter(e=>key(e));
+        if (data?.user?.name_or_group) userEntity={entity_type:['teacher','Я преподаватель'].includes(data.user.role)?'teacher':'group',entity_id:data.user.name_or_group,entity_name:data.user.name_or_group};
+        if (!currentEntity) currentEntity=userEntity||favorites[0]||null;
+        renderEntitySwitcher();
+    }
+    document.addEventListener('kkepik:bootstrap-updated',event=>bootstrap(event.detail));
+    async function init() {
         try {
-            applyBootstrapData(await window.kkepikApp.ready);
-        } catch (e) {}
-    } else {
-        await loadFavorites();
-        if (tgWebAppData) {
-            try {
-                const resp = await fetch('/api/me', { headers: telegramAuthHeaders() });
-                const data = await resp.json();
-                applyBootstrapData({ user: data });
-            } catch (e) {}
-        }
-    }
-    await setDefaultEntity();
-    renderCurrentEntity();
-    setupDropdown();
-}
-
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initGroupSelector, { once: true });
-} else {
-    initGroupSelector();
-}
-
-// --- Загрузка избранных ---
-async function loadFavorites() {
-    try {
-        const resp = await fetch(`/api/favorites?tgWebAppData=${encodeURIComponent(tgWebAppData)}`);
-        const data = await resp.json();
-        if (data.success) {
-            favorites = data.favorites;
-            // Выводим все избранные группы и ФИО пользователя в консоль
-            if (Array.isArray(favorites)) {
-                console.log('Избранные группы/ФИО пользователя:', favorites.map(f => `${f.entity_type}: ${f.entity_id} (${f.entity_name})`));
-            } else {
-                console.log('Избранные группы/ФИО пользователя: []');
+            if (window.kkepikApp) bootstrap(await window.kkepikApp.ready);
+            else if (tgWebAppData) {
+                const [me,saved]=await Promise.all([
+                    fetch('/api/me',{headers:{'X-Telegram-Init-Data':tgWebAppData}}).then(r=>r.json()),
+                    fetch('/api/favorites?tgWebAppData='+encodeURIComponent(tgWebAppData)).then(r=>r.json())
+                ]);bootstrap({user:me,favorites:saved.favorites});
             }
-        } else {
-            favorites = [];
-            console.log('Избранные группы/ФИО пользователя: [] (ошибка ответа сервера)');
+        } catch (_) {renderEntitySwitcher();}
+        if (tgWebAppData) loadScheduleCatalog().catch(()=>{});
+    }
+    if (document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true});else init();
+
+    function positionMenu() {
+        const rect=container.getBoundingClientRect(), viewport=window.visualViewport;
+        const width=viewport?.width||innerWidth, bottom=(viewport?.offsetTop||0)+(viewport?.height||innerHeight);
+        const space=bottom-rect.bottom-16, above=space<160&&rect.top>space;
+        menu.style.width=Math.min(rect.width,width-32)+'px';
+        menu.style.left=Math.max(16,Math.min(rect.left,width-menu.getBoundingClientRect().width-16))+'px';
+        menu.style.maxHeight=Math.max(80,Math.min(360,above?rect.top-24:space))+'px';
+        menu.style.top=above?'auto':rect.bottom+6+'px';menu.style.bottom=above?innerHeight-rect.top+6+'px':'auto';
+    }
+    function closeDropdown(returnFocus=false) {
+        menuOpen=false;menu.hidden=true;toggle.setAttribute('aria-expanded','false');
+        if(returnFocus)toggle.focus({preventScroll:true});
+    }
+    function openDropdown(keyboard=false) {
+        if(tracked().length<2)return;
+        renderMenu();menuOpen=true;menu.hidden=false;toggle.setAttribute('aria-expanded','true');positionMenu();
+        if(keyboard)menu.querySelector('[role="menuitem"]')?.focus({preventScroll:true});
+    }
+    function renderMenu() {
+        menu.replaceChildren();const seen=new Set();
+        function entry(entity, removable, note) {
+            const id=key(entity);if(!id||seen.has(id))return;seen.add(id);
+            const row=node('div','entity-menu-row');
+            const choose=button('',()=>selectEntity(entity),'entity-menu-choice');choose.setAttribute('role','menuitem');
+            const copy=node('span','entity-menu-copy');copy.append(node('span','entity-menu-name',entity.entity_name||entity.entity_id));
+            if(note)copy.append(node('small','',note));choose.append(copy);
+            if(same(entity,currentEntity)){choose.append(icon('check'));choose.setAttribute('aria-current','true');}
+            row.append(choose);
+            if(removable){const remove=button('',()=>removeFavorite(entity),'entity-menu-remove');remove.append(icon('trash'));remove.setAttribute('aria-label','Удалить '+(entity.entity_name||entity.entity_id)+' из избранного');row.append(remove);}
+            menu.append(row);
         }
-    } catch (e) {
-        favorites = [];
-        console.log('Избранные группы/ФИО пользователя: [] (ошибка запроса)');
+        if(userEntity)entry(userEntity,false,userEntity.entity_type==='group'?'Моя группа':'Моё расписание');
+        const saved=favorites.filter(e=>!same(e,userEntity));
+        if(saved.length)menu.append(node('p','entity-menu-heading','Сохранённые'));
+        saved.forEach(e=>entry(e,true));
+        const recent=history().filter(e=>!seen.has(key(e))).slice(0,5);
+        if(recent.length)menu.append(node('p','entity-menu-heading','Недавние'));
+        recent.forEach(e=>entry(e,false));
+        const add=button('Добавить расписание',()=>{closeDropdown();openAddModal();},'entity-menu-add');add.prepend(icon('plus'));add.setAttribute('role','menuitem');menu.append(add);
     }
-}
-
-// --- Установка дефолтной сущности ---
-async function setDefaultEntity() {
-    if (userEntity) {
-        currentEntity = userEntity;
-        return;
-    }
-    if (favorites.length > 0) {
-        currentEntity = favorites[0];
-        return;
-    }
-    currentEntity = { entity_type: 'group', entity_id: '', entity_name: 'Ваша группа/ФИО' };
-}
-
-// --- Рендер текущей сущности ---
-function renderCurrentEntity() {
-    if (
-        currentEntity &&
-        userEntity &&
-        currentEntity.entity_id === userEntity.entity_id &&
-        currentEntity.entity_type === userEntity.entity_type
-    ) {
-        currentGroupName.textContent = userEntity.entity_name || 'Ваша группа/ФИО';
-    } else if (currentEntity) {
-        currentGroupName.textContent = currentEntity.entity_name || 'Ваша группа/ФИО';
-    } else if (userEntity) {
-        currentGroupName.textContent = userEntity.entity_name || 'Ваша группа/ФИО';
-    } else {
-        currentGroupName.textContent = 'Ваша группа/ФИО';
-    }
-    renderEntitySwitcher();
-}
-
-function renderEntitySwitcher() {
-    if (!groupSelectorManage || !groupSelectorArrow) return;
-
-    const tracked = getTrackedEntities();
-    const useDropdown = tracked.length > 1;
-
-    currentGroupName.hidden = false;
-    groupSelectorArrow.hidden = !useDropdown;
-    groupSelectorManage.hidden = useDropdown;
-    groupSelectorManage.textContent = 'Добавить';
-    groupSelectorContainer.classList.toggle('dropdown-mode', useDropdown);
-}
-
-// --- Выпадающий список ---
-function setupDropdown() {
-    groupSelectorArrow.addEventListener('click', toggleDropdown);
-    currentGroupName.addEventListener('click', () => {
-        if (getTrackedEntities().length > 1) toggleDropdown();
+    toggle.addEventListener('click',()=>menuOpen?closeDropdown():openDropdown());
+    toggle.addEventListener('keydown',event=>{if(event.key==='ArrowDown'){event.preventDefault();openDropdown(true);}});
+    manage.addEventListener('click',openAddModal);
+    manage.addEventListener('pointerdown',()=>{if(!catalogFailed)loadScheduleCatalog().catch(()=>{});},{passive:true});
+    document.addEventListener('pointerdown',event=>{if(menuOpen&&!container.contains(event.target)&&!menu.contains(event.target))closeDropdown();});
+    document.addEventListener('keydown',event=>{if(menuOpen&&event.key==='Escape'){event.preventDefault();closeDropdown(true);}});
+    menu.addEventListener('keydown',event=>{
+        if(event.key==='Escape'){event.preventDefault();closeDropdown(true);return;}
+        if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
+        event.preventDefault();const items=[...menu.querySelectorAll('button:not(:disabled)')],index=items.indexOf(document.activeElement);
+        const next=event.key==='Home'?0:event.key==='End'?items.length-1:(index+(event.key==='ArrowDown'?1:-1)+items.length)%items.length;
+        items[next]?.focus({preventScroll:true});
     });
-    groupSelectorManage.addEventListener('click', openAddModal);
-    document.addEventListener('click', (e) => {
-        if (!groupSelectorContainer.contains(e.target) && !groupSelectorDropdown.contains(e.target)) {
-            closeDropdown();
-        }
-    });
-}
+    window.addEventListener('resize',()=>{if(menuOpen)positionMenu();resizeSheet();});
+    window.visualViewport?.addEventListener('resize',resizeSheet);
+    window.visualViewport?.addEventListener('scroll',resizeSheet);
+    document.addEventListener('scroll',event=>{if(menuOpen&&!menu.contains(event.target))closeDropdown();},true);
 
-function toggleDropdown() {
-    if (getTrackedEntities().length <= 1) return;
-    if (isDropdownOpen) {
-        closeDropdown();
-    } else {
-        openDropdown();
+    function showError(message) {
+        if(sheet?.open){error.textContent=message;return;}
+        let notice=$('entitySelectorStatus');
+        if(!notice){notice=node('p','entity-selector-error');notice.id='entitySelectorStatus';notice.setAttribute('role','alert');container.after(notice);}
+        notice.textContent=message;
     }
-}
-
-function openDropdown() {
-    isDropdownOpen = true;
-    groupSelectorDropdown.classList.add('open');
-    groupSelectorArrow.classList.add('open');
-    // Позиционирование
-    const rect = groupSelectorContainer.getBoundingClientRect();
-    groupSelectorDropdown.style.top = (rect.bottom + window.scrollY + 4) + 'px';
-    groupSelectorDropdown.style.left = (rect.left + window.scrollX) + 'px';
-    groupSelectorDropdown.style.minWidth = rect.width + 'px';
-    renderDropdownContent();
-}
-
-function closeDropdown() {
-    if (!isDropdownOpen) return;
-    isDropdownOpen = false;
-    groupSelectorDropdown.classList.remove('open');
-    groupSelectorArrow.classList.remove('open');
-    groupSelectorDropdown.classList.add('closing');
-    groupSelectorDropdown.addEventListener('transitionend', function handler(e) {
-        if (e.propertyName === 'opacity') {
-            groupSelectorDropdown.classList.remove('closing');
-            groupSelectorDropdown.removeEventListener('transitionend', handler);
-        }
-    });
-}
-
-async function getUserEntity() {
-    // Теперь просто возвращаем кэшированное значение
-    return userEntity;
-}
-
-async function renderDropdownContent() {
-    groupSelectorDropdown.innerHTML = '';
-    let favs = [...favorites];
-    const userEntity = await getUserEntity();
-    // Получаем историю
-    let history = getHistory();
-    // Исключаем личную группу/ФИО из истории
-    if (userEntity) {
-        history = history.filter(e => !(e.entity_id === userEntity.entity_id && e.entity_type === userEntity.entity_type));
+    async function mutateFavorite(action,entity) {
+        const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),12000);
+        try {
+            const response=await fetch('/api/favorites/'+action,{method:'POST',headers:{'Content-Type':'application/json'},signal:controller.signal,
+                body:JSON.stringify({tgWebAppData,entity_type:entity.entity_type,entity_id:entity.entity_id,entity_name:entity.entity_name})});
+            const data=await response.json();
+            if(!response.ok||(!data.success&&!(action==='add'&&data.error==='Уже в избранном')))throw new Error(data.error||'Не удалось сохранить. Попробуйте ещё раз.');
+        } finally {clearTimeout(timeout);}
     }
-    // Исключаем дубликаты (оставляем только уникальные по entity_id+entity_type)
-    const seen = new Set();
-    history = history.filter(e => {
-        const key = e.entity_type + ':' + e.entity_id;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    });
-    // Рендерим личную группу/ФИО
-    if (userEntity) {
-        const item = document.createElement('div');
-        item.className = 'dropdown-item';
-        item.textContent = userEntity.entity_name;
-        if (currentEntity && userEntity.entity_id === currentEntity.entity_id && userEntity.entity_type === currentEntity.entity_type) {
-            // item.style.fontWeight = 'bold';
-        }
-        item.onclick = () => {
-            selectEntity(userEntity);
-        };
-        groupSelectorDropdown.appendChild(item);
+    async function addFavorite() {
+        if(!selected||saving)return;
+        const entity={...selected};saving=true;error.textContent='';setSaving();
+        try {
+            await mutateFavorite('add',entity);
+            if(!favorites.some(e=>same(e,entity)))favorites.push(entity);
+            closeAddModal();selectEntity(entity);
+        } catch(e){showError(e.name==='AbortError'?'Не удалось сохранить. Попробуйте ещё раз.':e.message);}
+        finally {saving=false;setSaving();renderEntitySwitcher();}
     }
-    // Рендерим избранные (favorites) кроме userEntity
-    favs.forEach(fav => {
-        if (userEntity && fav.entity_id === userEntity.entity_id && fav.entity_type === userEntity.entity_type) return;
-        const key = fav.entity_type + ':' + fav.entity_id;
-        if (seen.has(key)) return; // не дублируем с историей
-        seen.add(key);
-        const item = document.createElement('div');
-        item.className = 'dropdown-item';
-        item.textContent = fav.entity_name;
-        if (currentEntity && fav.entity_id === currentEntity.entity_id && fav.entity_type === currentEntity.entity_type) {
-            // item.style.fontWeight = 'bold';
+    async function removeFavorite(entity) {
+        if(saving||!window.confirm('Удалить '+(entity.entity_name||entity.entity_id)+' из избранного?'))return;
+        saving=true;renderEntitySwitcher();
+        try {
+            await mutateFavorite('remove',entity);favorites=favorites.filter(e=>!same(e,entity));saveHistory(history().filter(e=>!same(e,entity)));
+            if(same(currentEntity,entity)){const fallback=userEntity||favorites[0];if(fallback)selectEntity(fallback);else{currentEntity=null;closeDropdown();}}
+            if(tracked().length<2)closeDropdown();else if(menuOpen){renderMenu();positionMenu();}
+            renderEntitySwitcher();
+        } catch(e){showError(e.name==='AbortError'?'Не удалось удалить. Попробуйте ещё раз.':e.message);}
+        finally {saving=false;renderEntitySwitcher();}
+    }
+    function loadScheduleCatalog() {
+        if(catalog)return Promise.resolve(catalog);
+        if(!catalogPromise){
+            catalogPromise=fetch('/api/schedule/catalog',{headers:{Accept:'application/json'}}).then(response=>{
+                if(!response.ok)throw new Error('Не удалось загрузить список.');return response.json();
+            }).then(data=>{
+                if(!Array.isArray(data.groups)||!Array.isArray(data.teachers))throw new Error('Не удалось загрузить список.');
+                catalog={groups:[...new Set(data.groups.filter(x=>typeof x==='string'&&x.trim()))],teachers:[...new Set(data.teachers.filter(x=>typeof x==='string'&&x.trim()))]};
+                catalogFailed=false;return catalog;
+            }).catch(e=>{catalogFailed=true;catalogPromise=null;throw e;});
         }
-        item.onclick = () => {
-            selectEntity(fav);
-        };
-        // Кнопка удаления
-        const delBtn = document.createElement('span');
-        delBtn.textContent = '✕';
-        delBtn.className = 'dropdown-del-btn';
-        delBtn.title = 'Удалить из избранного';
-        delBtn.onclick = (e) => {
-            e.stopPropagation();
-            removeFavorite(fav);
-        };
-        item.appendChild(delBtn);
-        groupSelectorDropdown.appendChild(item);
-    });
-    // Рендерим историю (оставшиеся элементы)
-    history.forEach(fav => {
-        const item = document.createElement('div');
-        item.className = 'dropdown-item';
-        item.textContent = fav.entity_name;
-        if (currentEntity && fav.entity_id === currentEntity.entity_id && fav.entity_type === currentEntity.entity_type) {
-            // item.style.fontWeight = 'bold';
-        }
-        item.onclick = () => {
-            selectEntity(fav);
-        };
-        // Кнопка удаления только если элемент есть в избранном
-        const isFavorite = favorites.some(f => f.entity_id === fav.entity_id && f.entity_type === fav.entity_type);
-        if (isFavorite) {
-            const delBtn = document.createElement('span');
-            delBtn.textContent = '✕';
-            delBtn.className = 'dropdown-del-btn';
-            delBtn.title = 'Удалить из избранного';
-            delBtn.onclick = (e) => {
-                e.stopPropagation();
-                removeFavorite(fav);
-            };
-            item.appendChild(delBtn);
-        }
-        groupSelectorDropdown.appendChild(item);
-    });
-    // Кнопка добавить
-    const addBtn = document.createElement('button');
-    addBtn.textContent = 'Добавить';
-    addBtn.className = 'dropdown-add-btn';
-    addBtn.onclick = () => { closeDropdown(); openAddModal(); };
-    groupSelectorDropdown.appendChild(addBtn);
-}
-
-// --- Добавление в избранное ---
-async function addFavorite(entity) {
-    try {
-        const resp = await fetch('/api/favorites/add', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                tgWebAppData,
-                entity_type: entity.entity_type,
-                entity_id: entity.entity_id,
-                entity_name: entity.entity_name
-            })
+        return catalogPromise;
+    }
+    function resizeSheet() {
+        if(!sheet?.open)return;
+        const viewport=window.visualViewport;
+        sheet.style.setProperty('--entity-viewport-height',(viewport?.height||innerHeight)+'px');
+        sheet.style.setProperty('--entity-keyboard-bottom',Math.max(0,innerHeight-(viewport?.height||innerHeight)-(viewport?.offsetTop||0))+'px');
+    }
+    function openAddModal() {
+        if(saving)return;closeDropdown();
+        if(!sheet)createAddModal();
+        $('entitySelectorStatus')?.remove();input.value='';error.textContent='';selected=null;entityType='group';catalogFailed=false;
+        updateType();oldOverflow=document.body.style.overflow;document.body.style.overflow='hidden';
+        if(!sheet.open)sheet.showModal();tg?.BackButton?.onClick?.(closeAddModal);tg?.BackButton?.show?.();resizeSheet();input.focus({preventScroll:true});onAddInputChange();
+    }
+    function closeAddModal() {if(sheet?.open)sheet.close();}
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden&&sheet?.open)tg?.BackButton?.show?.();});
+    function setSaving() {
+        if(!sheet)return;
+        manage.disabled=saving;
+        confirmButton.disabled=saving||!selected;confirmButton.textContent=saving?'Сохраняем…':'Сохранить';input.disabled=saving;
+        sheet.querySelectorAll('[data-entity-type]').forEach(b=>{b.disabled=saving;});
+        results.querySelectorAll('button').forEach(b=>{b.disabled=saving||b.getAttribute('aria-disabled')==='true';});
+    }
+    function updateType() {
+        sheet.querySelectorAll('[data-entity-type]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.entityType===entityType)));
+        const title=entityType==='group'?'Группа':'Преподаватель';fieldLabel.textContent=title;input.setAttribute('aria-label',title);
+        input.placeholder=entityType==='group'?'Номер группы':'Фамилия преподавателя';
+    }
+    function createAddModal() {
+        sheet=node('dialog','entity-sheet');sheet.id='entityAddDialog';sheet.setAttribute('aria-labelledby','entityAddTitle');
+        const header=node('div','entity-sheet-header'),heading=node('h2','','Сохранить расписание');heading.id='entityAddTitle';
+        const close=button('',closeAddModal,'entity-sheet-close');close.append(icon('close'));close.setAttribute('aria-label','Закрыть');header.append(heading,close);
+        const body=node('div','entity-sheet-body'),types=node('div','entity-type-switch');types.setAttribute('role','group');types.setAttribute('aria-label','Что добавить');
+        for(const [type,title] of [['group','Группа'],['teacher','Преподаватель']]){const b=button(title,()=>{if(entityType===type)return;entityType=type;input.value='';updateType();onAddInputChange();input.focus({preventScroll:true});},'');b.dataset.entityType=type;types.append(b);}
+        const field=node('label','entity-search-field');fieldLabel=node('span','');input=node('input','');input.id='addInput';input.type='search';input.autocomplete='off';input.spellcheck=false;
+        input.setAttribute('role','combobox');input.setAttribute('aria-autocomplete','list');input.setAttribute('aria-controls','addAutocomplete');input.setAttribute('aria-expanded','false');field.append(fieldLabel,input);
+        status=node('p','entity-search-status');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+        retry=button('Повторить',()=>{catalogFailed=false;onAddInputChange();},'entity-search-retry');retry.hidden=true;
+        results=node('div','entity-search-results');results.id='addAutocomplete';results.setAttribute('role','listbox');results.setAttribute('aria-label','Подсказки');
+        error=node('p','entity-selector-error');error.setAttribute('role','alert');body.append(types,field,status,retry,results,error);
+        const footer=node('div','entity-sheet-footer');confirmButton=button('Сохранить',addFavorite,'entity-save-button');footer.append(confirmButton);sheet.append(header,body,footer);document.body.append(sheet);
+        input.addEventListener('input',onAddInputChange);
+        input.addEventListener('keydown',event=>{
+            if(event.key==='Escape'){event.preventDefault();closeAddModal();return;}
+            const options=[...results.querySelectorAll('button:not(:disabled)')];
+            if(['ArrowDown','ArrowUp'].includes(event.key)&&options.length){event.preventDefault();activeOption=event.key==='ArrowDown'?(activeOption+1)%options.length:(activeOption<0?options.length-1:(activeOption-1+options.length)%options.length);options.forEach((b,i)=>b.classList.toggle('is-active',i===activeOption));input.setAttribute('aria-activedescendant',options[activeOption].id);options[activeOption].scrollIntoView({block:'nearest'});}
+            else if(event.key==='Enter'){event.preventDefault();if(activeOption>=0)options[activeOption]?.click();else if(selected)addFavorite();}
         });
-        const data = await resp.json();
-        if (data.success) {
-            await loadFavorites();
-            currentEntity = entity;
-            addToHistory(entity);
-            renderCurrentEntity();
-            if (window.updateScheduleForEntity) {
-                window.updateScheduleForEntity(entity);
-            }
-        } else {
-            alert(data.error || 'Ошибка при добавлении');
-        }
-    } catch (e) {
-        alert('Ошибка при добавлении');
+        sheet.addEventListener('click',event=>{if(event.target!==sheet)return;const rect=sheet.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeAddModal();});
+        sheet.addEventListener('close',()=>{tg?.BackButton?.offClick?.(closeAddModal);tg?.BackButton?.hide?.();searchVersion++;document.body.style.overflow=oldOverflow;input.removeAttribute('aria-activedescendant');manage.focus({preventScroll:true});});
     }
-}
-
-// --- Удаление из избранного ---
-async function removeFavorite(entity) {
-    if (!confirm('Удалить из избранного?')) return;
-    try {
-        const resp = await fetch('/api/favorites/remove', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                tgWebAppData,
-                entity_type: entity.entity_type,
-                entity_id: entity.entity_id
-            })
-        });
-        const data = await resp.json();
-        if (data.success) {
-            await loadFavorites();
-            removeFromHistory(entity);
-            // Если удалили текущую — сбросить на личную группу/ФИО пользователя, если возможно
-            if (currentEntity && entity.entity_id === currentEntity.entity_id && entity.entity_type === currentEntity.entity_type) {
-                if (userEntity) {
-                    currentEntity = userEntity;
-                    addToHistory(currentEntity);
-                    renderCurrentEntity();
-                    if (window.updateScheduleForEntity) {
-                        window.updateScheduleForEntity(currentEntity);
-                    }
-                } else if (favorites.length > 0) {
-                    currentEntity = favorites[0];
-                    addToHistory(currentEntity);
-                    renderCurrentEntity();
-                } else {
-                    currentEntity = { entity_type: 'group', entity_id: '', entity_name: 'Ваша группа/ФИО' };
-                    addToHistory(currentEntity);
-                    renderCurrentEntity();
-                }
-            }
-            renderCurrentEntity();
-            renderDropdownContent();
-        } else {
-            alert(data.error || 'Ошибка при удалении');
-        }
-    } catch (e) {
-        alert('Ошибка при удалении');
+    function normalizeSearch(value) {return value.normalize('NFKC').toLocaleLowerCase('ru').replace(/ё/g,'е').replace(/[\s.\-‐‑‒–—−]/g,'');}
+    function onAddInputChange() {
+        const version=++searchVersion;selected=null;activeOption=-1;confirmButton.disabled=true;error.textContent='';retry.hidden=true;input.removeAttribute('aria-activedescendant');
+        const query=input.value.trim(),type=entityType;
+        function render(){if(version===searchVersion&&sheet.open&&type===entityType)renderSearchResults(type,query);}
+        if(catalog){render();return;}
+        results.replaceChildren();input.setAttribute('aria-expanded','false');
+        if(catalogFailed){status.textContent='Не удалось загрузить список.';retry.hidden=false;return;}
+        status.textContent='Загружаем список…';
+        loadScheduleCatalog().then(render).catch(()=>{if(version===searchVersion&&sheet.open){status.textContent='Не удалось загрузить список.';retry.hidden=false;}});
     }
-}
-
-// --- Модальное окно для добавления ---
-function openAddModal() {
-    if (!addModal) createAddModal();
-    loadScheduleCatalog().catch(() => {});
-    addModal.style.display = 'flex';
-    addInput.value = '';
-    addResults.innerHTML = '';
-    addError.textContent = '';
-    selectedSearchItem = null;
-    addConfirmBtn.disabled = true;
-    document.body.style.overflow = 'hidden'; // Запретить скролл
-    // Фокус на инпут
-    setTimeout(() => addInput.focus(), 100);
-}
-
-function closeAddModal() {
-    if (!addModal) return;
-    addModal.classList.add('closing');
-    const modalContent = addModal.querySelector('.modal-content');
-    if (modalContent) modalContent.classList.add('closing');
-    document.body.style.overflow = ''; // Разрешить скролл
-    addModal.addEventListener('animationend', function handler(e) {
-        if (e.animationName === 'fadeOut') {
-            addModal.style.display = 'none';
-            addModal.classList.remove('closing');
-            if (modalContent) modalContent.classList.remove('closing');
-            addModal.removeEventListener('animationend', handler);
-            // Прокручиваем страницу наверх после закрытия модального окна
-            window.scrollTo(0, 0);
-        }
-    });
-}
-
-function createAddModal() {
-    addModal = document.createElement('div');
-    addModal.className = 'modal';
-    addModal.style.display = 'none';
-    addModal.innerHTML = `
-        <div class="modal-content" style="max-width:400px;">
-            <span class="close" id="closeAddModal">&times;</span>
-            <h2>Добавить группу или преподавателя</h2>
-            <div style="margin-bottom:10px;">
-                <div class="select-wrapper" style="position:relative;">
-                    <select id="addTypeSelect" class="addTypeSelect">
-                        <option value="group">Группа</option>
-                        <option value="teacher">Преподаватель</option>
-                    </select>
-                    <span class="select-arrow" style="position:absolute;right:16px;top:50%;transform:translateY(-50%) rotate(90deg);font-size:22px;color:var(--tg-theme-hint-color);pointer-events:none;">&#8250;</span>
-                </div>
-            </div>
-            <div class="input-group" style="position:relative;">
-                <input type="text" id="addInput" class="search-input" placeholder="Начните вводить...">
-                <div class="autocomplete-dropdown" id="addAutocomplete"></div>
-            </div>
-            <div id="addError" style="color:red;margin-top:6px;"></div>
-            <button id="addConfirmBtn" class="search-button" style="margin-top:12px;">Добавить в избранное</button>
-        </div>
-    `;
-    document.body.appendChild(addModal);
-    addInput = addModal.querySelector('#addInput');
-    addTypeSelect = addModal.querySelector('#addTypeSelect');
-    addResults = addModal.querySelector('#addAutocomplete');
-    addConfirmBtn = addModal.querySelector('#addConfirmBtn');
-    addCloseBtn = addModal.querySelector('#closeAddModal');
-    addError = addModal.querySelector('#addError');
-
-    // Клик по оверлею закрывает модалку
-    addModal.addEventListener('mousedown', (e) => {
-        if (e.target === addModal) closeAddModal();
-    });
-    addCloseBtn.onclick = closeAddModal;
-    addConfirmBtn.onclick = () => {
-        if (selectedSearchItem) {
-            addFavorite(selectedSearchItem);
-            closeAddModal();
-        }
-    };
-    addInput.oninput = onAddInputChange;
-    addTypeSelect.onchange = onAddInputChange;
-}
-
-function onAddInputChange() {
-    const type = addTypeSelect.value;
-    const query = addInput.value.trim();
-    addResults.innerHTML = '';
-    addResults.classList.remove('open');
-    addConfirmBtn.disabled = true;
-    selectedSearchItem = null;
-    if (!query) return;
-    if (searchTimeout) clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => searchEntities(type, query), 300);
-}
-
-async function searchEntities(type, query) {
-    try {
-        const data = await loadScheduleCatalog();
-        let list = (type === 'group') ? (data.groups || []) : (data.teachers || []);
-        // Фильтруем по подстроке
-        list = list.filter(item => item.toLowerCase().includes(query.toLowerCase()));
-        searchList = list;
-        renderSearchResults(type, list, query);
-    } catch (e) {
-        addError.textContent = 'Ошибка загрузки списка';
+    function renderSearchResults(type,query) {
+        const needle=normalizeSearch(query),items=(type==='group'?catalog.groups:catalog.teachers).filter(name=>normalizeSearch(name).includes(needle));
+        items.sort((a,b)=>Number(!normalizeSearch(a).startsWith(needle))-Number(!normalizeSearch(b).startsWith(needle))||a.localeCompare(b,'ru',{numeric:true}));
+        results.replaceChildren();status.textContent=items.length?'':query?'Ничего не найдено.':type==='group'?'Пока нет групп в каталоге.':'Пока нет преподавателей в каталоге.';
+        items.slice(0,20).forEach((name,index)=>{
+            const entity={entity_type:type,entity_id:name,entity_name:name},existing=tracked().some(e=>same(e,entity));
+            const option=button('',()=>{selected=entity;input.value=name;input.removeAttribute('aria-activedescendant');activeOption=-1;confirmButton.disabled=false;results.querySelectorAll('button').forEach(b=>{b.classList.remove('is-active');b.setAttribute('aria-selected',String(b===option));});},'entity-search-option');
+            option.id='entityOption'+index;option.tabIndex=-1;option.setAttribute('role','option');option.setAttribute('aria-selected',String(same(entity,selected)));option.append(node('span','',name));
+            if(existing){option.disabled=true;option.setAttribute('aria-disabled','true');option.append(node('small','',same(entity,userEntity)?'Моё расписание':'Уже сохранено'));}
+            results.append(option);
+        });input.setAttribute('aria-expanded',String(items.length>0));
     }
-}
-
-function renderSearchResults(type, list, query) {
-    addResults.innerHTML = '';
-    if (list.length === 0) {
-        addResults.classList.remove('open');
-        return;
-    }
-    addResults.classList.add('open');
-    list.forEach(item => {
-        const div = document.createElement('div');
-        div.className = 'dropdown-item';
-        div.textContent = item;
-        div.onclick = () => {
-            selectedSearchItem = {
-                entity_type: type,
-                entity_id: item, // для групп — название, для преподов — ФИО
-                entity_name: item
-            };
-            addInput.value = item;
-            addConfirmBtn.disabled = false;
-            // Подсветка выбранного
-            Array.from(addResults.children).forEach(child => child.classList.remove('selected'));
-            div.classList.add('selected');
-            addResults.classList.remove('open');
-        };
-        addResults.appendChild(div);
-    });
-}
-
-// --- Стили для выпадающего и модального окна ---
-// УДАЛЕНО: динамическое добавление <style> со стилями, теперь всё в main.css 
+}());
