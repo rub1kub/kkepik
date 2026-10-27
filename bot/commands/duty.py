@@ -298,9 +298,9 @@ class DutyBot:
         elif step == 'setup_options':
             opts = settings(data.get('options'))
             await self.send(target, '🔔 <b>Шаг 2 из 3 · Когда писать</b>\n\n'
-                'Напоминание — в 08:00 МСК.',
+                f'Рассылка — в {opts["time"]} МСК.',
                 [[(toggle(opts['owner_daily']) + ' Сообщать мне о дежурных', 'wopt:owner_daily')],
-                 [(toggle(opts['audience'] != 'off') + ' Напоминать самим дежурным', 'wopt:audience')],
+                 [('Кому: ' + {'all':'всем участникам','assigned':'только дежурным','off':'не отправлять'}[opts['audience']], 'wopt:audience')],
                  [(toggle(opts['requests']) + ' Предлагать замены в личке', 'wopt:requests')],
                  [(toggle(opts['owner_events']) + ' Сообщать мне о проблемах и итогах', 'wopt:owner_events')],
                  [('Дальше →', 'wpreview')], [('Назад', 'wreserves')], cancel])
@@ -441,7 +441,7 @@ class DutyBot:
             text += ('\n\nОтвечать на это сообщение не нужно. '
                      'Если не можешь отдежурить — нажми «Сегодня не могу».')
             return text, [[('❌ Сегодня не могу', f'decline:{did}')]]
-        if notification and day['date'] == clock().date().isoformat() and data['access']['role'] in ('owner','manager'):
+        if notification and day['date'] == clock().date().isoformat():
             rows = [[('Открыть дежурство', f'day:{did}')]]
             if day['status'] == 'no_duty':
                 return 'Сегодня дежурства нет.', rows
@@ -598,7 +598,7 @@ class DutyBot:
                     'Староста добавляет пары и запасных. Если бот нашёл всех участников и у всех выбрана его группа, '
                     'он подключит их сам и сообщит об этом. Иначе нужны приглашения и подтверждение заявок. '
                     'Кто не подключился, остаётся в списке — его дежурства староста отмечает вручную.\n\n'
-                    'В 08:00 бот пишет только дежурным и админу списка. В выходные сообщений нет. Время можно поменять в настройках. '
+                    'В 08:40 бот сообщает участникам, кто сегодня дежурит. Эти уведомления можно выключить в личных настройках. В выходные сообщений нет. '
                     'Если дежурный не ответил, он по-прежнему дежурит.\n\n'
                     'По кнопке «Сегодня не могу» бот ищет замену. Напарник и запасной должны согласиться оба. '
                     'Не договорились — дежурство пары переносится, бот спрашивает следующую пару. '
@@ -704,9 +704,8 @@ class DutyBot:
                 sid, key = int(args[0]), args[1]
                 opts = json.loads(self.store.view(sid, uid)['space']['settings'])
                 if key == 'audience':
-                    choices = ['assigned','off']
-                    opts[key] = 'assigned' if opts[key] == 'all' else opts[key]
-                    value = choices[(choices.index(opts[key])+1)%3]
+                    choices = ['all','assigned','off']
+                    value = choices[(choices.index(opts[key])+1)%len(choices)]
                 elif key == 'mode':
                     value = 'pair' if opts[key] == 'reserve' else 'reserve'
                 elif key in ('owner_daily','requests','owner_events'):
@@ -733,7 +732,7 @@ class DutyBot:
             elif action == 'input':
                 sid, key = int(args[0]), args[1]
                 self.options_panel(sid, uid)
-                prompts = {'time':'Во сколько сообщать о дежурных? Например 08:00. Если к этому времени поиск замен уже заканчивается, бот продлит его до получаса после рассылки.',
+                prompts = {'time':'Во сколько сообщать о дежурных? Например 08:40. Если к этому времени поиск замен уже заканчивается, бот продлит его до получаса после рассылки.',
                            'cutoff':'До скольки искать замену? Например 08:30. После этого договориться о подмене сможет только староста.',
                            'report':'Во сколько напомнить старосте отметить, кто отдежурил? Например 16:00.',
                            'wait_minutes':'Сколько минут ждать ответа на предложение? От 2 до 30.',
@@ -764,6 +763,12 @@ class DutyBot:
                 self.store.set_session(uid, action, {'sid': sid})
                 await self.show_roster_input(callback, uid)
                 return
+            elif action == 'daily':
+                sid = int(args[0])
+                if args[1] not in ('0', '1'):
+                    raise DutyError('Настройка не найдена.')
+                self.store.manage(sid, uid, 'daily_notifications', args[1] == '1')
+                panel = self.personal_panel(sid, uid)
             elif action in ('mute', 'silence'):
                 sid = int(args[0])
                 self.store.manage(sid, uid, action)
@@ -886,9 +891,8 @@ class DutyBot:
             key = args[0]
             opts = settings(data.get('options'))
             if key == 'audience':
-                values = ['assigned','off']
-                opts[key] = 'assigned' if opts[key] == 'all' else opts[key]
-                opts[key] = values[(values.index(opts[key])+1)%3]
+                values = ['all','assigned','off']
+                opts[key] = values[(values.index(opts[key])+1)%len(values)]
             elif key in ('owner_daily','requests','owner_events'):
                 opts[key] = not opts[key]
             else:
@@ -1061,7 +1065,8 @@ class DutyBot:
 
     def personal_panel(self, sid, uid):
         data = self.store.view(sid, uid)
-        rows = [[('Уведомления: ' + ('выключены' if data['access']['muted'] else 'включены'), f'mute:{sid}')],
+        rows = [[(toggle(not data['access']['daily_muted']) + ' Кто сегодня дежурит', f'daily:{sid}:{int(bool(data["access"]["daily_muted"]))}')],
+                [('Все уведомления: ' + ('выключены' if data['access']['muted'] else 'включены'), f'mute:{sid}')],
                 [('Пары и запасные', f'roster:{sid}:0')], [('Как это работает', 'help')]]
         if data['access']['role'] != 'owner':
             rows.append([('Выйти из дежурств', f'leaveask:{sid}')])
@@ -1089,7 +1094,7 @@ class DutyBot:
         opts = json.loads(data['space']['settings'])
         if category == 'notifications':
             title = 'Уведомления'
-            rows = [[(toggle(opts['audience'] != 'off') + ' Напоминать дежурным', f'opt:{sid}:audience')],
+            rows = [[('Кому: ' + {'all':'всем участникам','assigned':'только дежурным','off':'не отправлять'}[opts['audience']], f'opt:{sid}:audience')],
                     [(toggle(opts['owner_daily']) + ' Писать мне, кто дежурит', f'opt:{sid}:owner_daily')],
                     [(toggle(opts['owner_events']) + ' Отказы и итоги', f'opt:{sid}:owner_events')],
                     [('Мои уведомления', f'personal:{sid}')]]

@@ -18,7 +18,7 @@
     <div><p class="duty-eyebrow" id="dutyGroup">ККЭПик</p><h1>Дежурства</h1></div>
     <button type="button" id="dutyRefresh" class="duty-icon-button" aria-label="Обновить"><svg class="duty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M20 12a8 8 0 1 0-2.34 5.66"/></svg></button>
   </header>
-  <p id="dutyStatus" class="duty-status" role="status" aria-live="polite">Загружаем дежурства…</p>
+  <p id="dutyStatus" class="duty-status" role="status" aria-live="polite"></p>
   <div id="dutyLists" hidden></div>
   <nav id="dutyTabs" class="duty-tabs" aria-label="Разделы дежурств" hidden>
     <button type="button" data-tab="today" aria-current="page"><svg class="duty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3h8v4H8zM8 5H5v16h14V5h-3m-8 9 3 3 5-6"/></svg><span>Сегодня</span></button>
@@ -26,6 +26,19 @@
     <button type="button" data-tab="members"><svg class="duty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.87M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Zm3-3.87a4 4 0 0 1 0 7.75"/></svg><span>Участники</span></button>
     <button type="button" data-tab="settings"><svg class="duty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></svg><span>Настройки</span></button>
   </nav>
+  <div id="dutySkeleton" class="duty-skeleton" role="status" aria-label="Загружаем дежурства">
+    <div class="duty-skeleton-tabs" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+    <div class="duty-card duty-skeleton-card" aria-hidden="true">
+      <span class="duty-skeleton-shape duty-skeleton-icon"></span>
+      <span class="duty-skeleton-shape duty-skeleton-heading"></span>
+      <div class="duty-skeleton-lines"><span class="duty-skeleton-shape"></span><span class="duty-skeleton-shape"></span></div>
+      <span class="duty-skeleton-shape duty-skeleton-button"></span>
+    </div>
+    <div class="duty-card duty-skeleton-card" aria-hidden="true">
+      <span class="duty-skeleton-shape duty-skeleton-heading"></span>
+      <div class="duty-skeleton-lines"><span class="duty-skeleton-shape"></span><span class="duty-skeleton-shape"></span><span class="duty-skeleton-shape"></span></div>
+    </div>
+  </div>
   <div id="dutyContent" aria-busy="true"></div>
 </main>
 <dialog id="dutyDialog" class="duty-dialog" aria-labelledby="dutyDialogTitle">

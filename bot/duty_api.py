@@ -34,12 +34,12 @@ class Body(BaseModel):
 
 
 class Options(Body):
-    time: str = '08:00'
-    cutoff: str = '08:30'
+    time: str = '08:40'
+    cutoff: str = '09:10'
     report: str = '16:00'
     days: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4, 5], min_length=1, max_length=7)
     owner_daily: StrictBool = True
-    audience: Literal['assigned', 'off'] = 'assigned'
+    audience: Literal['all', 'assigned', 'off'] = 'all'
     requests: StrictBool = True
     owner_events: StrictBool = True
     mode: Literal['reserve', 'pair'] = 'reserve'
@@ -63,7 +63,7 @@ class Roster(Body):
 
 
 class Action(Body):
-    action: Literal['swap', 'rename', 'exempt', 'active', 'mute', 'leave', 'pause', 'resume', 'archive',
+    action: Literal['swap', 'rename', 'exempt', 'active', 'mute', 'daily_notifications', 'leave', 'pause', 'resume', 'archive',
                     'invite', 'manager', 'transfer', 'approve', 'reject', 'decline', 'reconsider',
                     'offer_yes', 'offer_no', 'done', 'finish', 'correct', 'cancel_day', 'manual_pair', 'manual_reserve']
     member: int | None = Field(default=None, gt=0)
@@ -71,7 +71,7 @@ class Action(Body):
     day: int | None = Field(default=None, gt=0)
     offer: int | None = Field(default=None, gt=0)
     claim: int | None = Field(default=None, gt=0)
-    value: str | bool | None = None
+    value: str | StrictBool | None = None
     outcome: Literal['done', 'missed', 'excused'] = 'done'
 
 
@@ -173,7 +173,8 @@ def detail(sid: int, uid: int = Depends(authenticated_id), store: Store = Depend
             value.update(role=roles.get(m['uid']))
         members.append(value)
     return dict(id=sid, group=data['space']['group_name'], status=data['space']['status'],
-                role=access['role'], muted=bool(access['muted']), first_date=data['space']['first_date'],
+                role=access['role'], muted=bool(access['muted']), daily_notifications=not bool(access['daily_muted']),
+                first_date=data['space']['first_date'],
                 options=settings(json.loads(data['space']['settings'])), members=members,
                 days=[web_day(day_payload(store, did, uid)) for did in old_days],
                 forecast=[web_day(d) for d in forecast(store, sid, uid, Path(config.DATA_DIR) / 'knowledge.db')],
@@ -224,8 +225,8 @@ def action(sid: int, body: Action, uid: int = Depends(authenticated_id), store: 
             store.swap_partners(body.member, body.other, uid)
         elif a in ('rename', 'exempt', 'active'):
             store.edit_member(body.member, uid, {'rename': 'name', 'exempt': 'exempt_until', 'active': 'active'}[a], body.value)
-        elif a in ('mute', 'leave', 'pause', 'resume', 'archive'):
-            store.manage(sid, uid, a)
+        elif a in ('mute', 'daily_notifications', 'leave', 'pause', 'resume', 'archive'):
+            store.manage(sid, uid, a, body.value)
         elif a == 'invite':
             return dict(url='https://t.me/kkepik_bot?start=duty_' + store.invite(sid, uid, body.member))
         elif a in ('manager', 'transfer'):

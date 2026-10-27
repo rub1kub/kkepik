@@ -68,11 +68,11 @@ class DutyApiTest(unittest.TestCase):
             db.executemany('INSERT INTO users VALUES(?,?,?,NULL)', [(uid,'Я студент','103-Д9-3ИНС') for uid in (99,11,12,13,14,15,16,100)])
         self.store = Store(self.root / 'duties.db')
         self.now = datetime(2026,10,19,8,0,tzinfo=MSK)
-        self.sid = self.store.create(99,'103-Д9-3ИНС',parse_people('Иван + Анна\nПётр + Мария'),parse_people('Ольга',reserves=True),now=self.now.replace(hour=7))
+        self.sid = self.store.create(99,'103-Д9-3ИНС',parse_people('Иван + Анна\nПётр + Мария'),parse_people('Ольга',reserves=True),dict(time='08:00',cutoff='08:30',audience='assigned'),now=self.now.replace(hour=7))
         with self.store.connect(True) as db:
             for uid,m in enumerate(db.execute('SELECT id FROM members ORDER BY id').fetchall(),11):
                 db.execute('UPDATE members SET uid=? WHERE id=?',(uid,m['id']))
-                db.execute("INSERT INTO access VALUES(?,?,'member',0)",(self.sid,uid))
+                db.execute("INSERT INTO access(space,uid,role,muted) VALUES(?,?,'member',0)",(self.sid,uid))
         for uid,name in [(11,'Иван'),(12,'Анна'),(13,'Пётр'),(14,'Мария'),(15,'Ольга'),(16,'Максим'),(99,'Староста'),(100,'Другой староста')]:
             self.store.observe(uid,name,'student_'+str(uid),'103-Д9-3ИНС',now=self.now)
         app = FastAPI();app.include_router(api.router)
@@ -135,10 +135,25 @@ class DutyApiTest(unittest.TestCase):
         self.assertEqual(self.store.view(other,100)['members'][0]['name'],'Чужой')
 
     def test_settings_and_action_values_are_validated(self):
-        for body in ({'audience':'all'},{'days':[]},{'days':[7]},{'time':'20:00'}, {'owner_daily':'false'}, {'owner':100}):
+        for body in ({'audience':'unknown'},{'days':[]},{'days':[7]},{'time':'20:00'}, {'owner_daily':'false'}, {'owner':100}):
             self.assertIn(self.client.put(f'/duties/{self.sid}/settings',json=body,headers=self.auth()).status_code,(400,422))
         for body in ({'action':'active','member':1,'value':'false'},{'action':'rename','member':1,'value':True},{'action':'archive','uid':99}):
             self.assertIn(self.action(body).status_code,(400,422))
+
+    def test_daily_preferences_are_personal_strict_and_persist_separately_from_other_messages(self):
+        self.assertTrue(self.client.get(f'/duties/{self.sid}',headers=self.auth(13)).json()['daily_notifications'])
+        self.assertEqual(self.action({'action':'daily_notifications','value':False},13).status_code,200)
+        mine = self.client.get(f'/duties/{self.sid}',headers=self.auth(13)).json()
+        other = self.client.get(f'/duties/{self.sid}',headers=self.auth(14)).json()
+        self.assertFalse(mine['daily_notifications']);self.assertFalse(mine['muted'])
+        self.assertTrue(other['daily_notifications'])
+        self.assertEqual(self.action({'action':'daily_notifications','value':False},13).status_code,200)
+        self.assertEqual(self.action({'action':'daily_notifications','value':True},13).status_code,200)
+        self.assertTrue(self.client.get(f'/duties/{self.sid}',headers=self.auth(13)).json()['daily_notifications'])
+        for value in ('false', None, 0):
+            self.assertIn(self.action({'action':'daily_notifications','value':value},13).status_code,(400,422))
+        self.assertEqual(self.action({'action':'daily_notifications','value':False},100).status_code,403)
+        self.assertEqual(self.client.put(f'/duties/{self.sid}/settings',json={'audience':'all'},headers=self.auth()).status_code,200)
 
     def test_person_can_decline_only_their_own_assignment(self):
         did=self.store.ensure_day(self.sid,self.now,'available')

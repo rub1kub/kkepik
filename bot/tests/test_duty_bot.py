@@ -93,7 +93,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
 
     def fixture(self, *, reserves='Максим', **options):
         sid = self.store.create(99,'116-КД9-3ССА',parse_people('Иван + Анна\nПётр + Мария'),
-            parse_people(reserves,reserves=True),options,now=NOW-timedelta(hours=1))
+            parse_people(reserves,reserves=True),{'time':'08:00','cutoff':'08:30','audience':'assigned',**options},now=NOW-timedelta(hours=1))
         with self.store.connect(True) as db:
             for uid,m in enumerate(db.execute('SELECT * FROM members WHERE space=? ORDER BY id',(sid,)).fetchall(),11):
                 db.execute('UPDATE members SET uid=? WHERE id=?',(uid,m['id']))
@@ -103,6 +103,29 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
     def row(self, sql, args=()):
         with self.store.connect() as db:
             return dict(db.execute(sql,args).fetchone())
+
+    async def test_daily_notification_button_changes_only_my_preference_and_settings_can_reenable(self):
+        sid = self.fixture()
+        await self.update(callback=f'du:daily:{sid}:0',uid=13)
+        self.assertEqual(self.store.view(sid,13)['access']['daily_muted'],1)
+        self.assertEqual(self.store.view(sid,13)['access']['muted'],0)
+        self.assertEqual(self.store.view(sid,14)['access']['daily_muted'],0)
+        await self.update(callback=f'du:daily:{sid}:0',uid=13)
+        self.assertEqual(self.store.view(sid,13)['access']['daily_muted'],1)
+        text, rows = self.app.personal_panel(sid,13)
+        self.assertIn(f'daily:{sid}:1',str(rows))
+        await self.update(callback=f'du:daily:{sid}:1',uid=13)
+        self.assertEqual(self.store.view(sid,13)['access']['daily_muted'],0)
+
+    async def test_ordinary_participant_morning_card_has_only_names_and_personal_opt_out(self):
+        sid = self.fixture(audience='all')
+        did = self.store.ensure_day(sid,NOW,'available')
+        with patch('commands.duty.clock',return_value=NOW):
+            text, rows = DutyWorker(self.app,self.bot).render(dict(kind='daily',uid=13,ref=did,space=sid))
+        self.assertEqual(text,'🧹 Сегодня дежурят:\n• Иван\n• Анна')
+        self.assertIn(f'daily:{sid}:0',str(rows))
+        for extra in ('Пар:','Подключены','08:40','116-КД9'):
+            self.assertNotIn(extra,text)
 
     async def test_real_dispatcher_three_step_setup_then_command_reopens_list(self):
         await self.update('/duty')
@@ -780,7 +803,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         message = self.session.calls[-1]
         self.assertEqual(int(message.chat_id), 99)
         self.assertEqual(message.text, '🧹 Сегодня дежурят:\n• Иван\n• Анна')
-        self.assertEqual(message.reply_markup, keyboard([[('Открыть дежурство', f'day:{did}')]]))
+        self.assertEqual(message.reply_markup, keyboard([[('Открыть дежурство', f'day:{did}')], [('🔕 Не присылать, кто дежурит', f'daily:{sid}:0')]]))
 
     async def test_owner_daily_setting_and_personal_mute_still_apply(self):
         sid = self.fixture(audience='off', owner_daily=False)

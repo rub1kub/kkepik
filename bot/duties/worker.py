@@ -138,6 +138,8 @@ class DutyWorker:
             text = 'Не удалось доставить уведомление' + (' участнику ' + h(member['name']) if member and member['name'] else '') + '.'
             return text, [[('Открыть дежурства', f'open:{job["space"]}')]]
         text, rows = self.app.day_panel(ref, uid, notification=kind in ('daily', 'update'))
+        if kind in ('daily', 'update') and not any('decline:' in callback for row in rows for _, callback in row):
+            rows.append([('🔕 Не присылать, кто дежурит', f'daily:{job["space"]}:0')])
         if kind == 'report':
             text = 'Пора отметить дежурство.\n\n' + text
         elif kind == 'accepted':

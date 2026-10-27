@@ -16,7 +16,7 @@ class DutyStoreTest(unittest.TestCase):
         self.now = datetime(2026, 10, 19, 7, 30, tzinfo=MSK)
         self.pairs = parse_people('Иван + Анна\nПётр + Мария')
         self.reserves = parse_people('Максим\nОльга', reserves=True)
-        self.sid = self.store.create(99, '116-КД9-3ССА', self.pairs, self.reserves, now=self.now)
+        self.sid = self.store.create(99, '116-КД9-3ССА', self.pairs, self.reserves, dict(time='08:00',cutoff='08:30',audience='assigned'), now=self.now)
         self.people = self.store.view(self.sid, 99)['members']
         self.ids = [m['id'] for m in self.people]
         with self.store.connect(True) as db:
@@ -149,11 +149,12 @@ class DutyStoreTest(unittest.TestCase):
         with self.store.connect(True) as db:
             db.execute('DROP INDEX member_telegram_target')
             db.execute('ALTER TABLE members DROP COLUMN telegram_id')
+            db.execute('ALTER TABLE access DROP COLUMN daily_muted')
             db.execute('PRAGMA user_version=1')
         upgraded = Store(self.path)
         self.assertEqual(len(upgraded.view(self.sid,99)['members']),6)
         self.assertEqual(upgraded.session(99)[0],'setup_pairs')
-        self.assertEqual(self.query('PRAGMA user_version')[0]['user_version'],3)
+        self.assertEqual(self.query('PRAGMA user_version')[0]['user_version'],4)
         Store(self.path)
         self.assertEqual(len(upgraded.view(self.sid,99)['members']),6)
 
@@ -463,7 +464,7 @@ class DutyStoreTest(unittest.TestCase):
 
     def test_settings_reject_inverted_deadlines(self):
         with self.assertRaises(DutyError):
-            settings({'time':'09:00'})
+            settings({'time':'10:00'})
         with self.assertRaises(DutyError):
             settings({'days':[]})
 
@@ -523,7 +524,7 @@ class DutyStoreTest(unittest.TestCase):
 
     def test_exemption_and_cross_list_double_booking_are_respected(self):
         did = self.day()
-        sid2 = self.store.create(200,'116-КД9-3ССА',parse_people('Другой Иван + Другая Анна'),[],now=self.now)
+        sid2 = self.store.create(200,'116-КД9-3ССА',parse_people('Другой Иван + Другая Анна'),[],dict(time='08:00',cutoff='08:30',audience='assigned'),now=self.now)
         with self.store.connect(True) as db:
             people = db.execute('SELECT * FROM members WHERE space=? ORDER BY id',(sid2,)).fetchall()
             for uid,m in zip((11,12),people):
@@ -544,23 +545,59 @@ class DutyStoreTest(unittest.TestCase):
             job = self.query('SELECT * FROM outbox WHERE ref=?', (did,))[0]
             self.assertIsNone(self.store.begin_delivery(job['id'], moment))
 
-    def test_legacy_all_audience_is_migrated_and_never_broadcasts_to_observers(self):
+    def test_existing_lists_migrate_once_to_0840_and_personal_notifications_default_on(self):
         with self.store.connect(True) as db:
-            opts = json_load(db.execute('SELECT settings FROM spaces WHERE id=?', (self.sid,)).fetchone()[0])
-            opts['audience'] = 'all'
-            import json
-            db.execute('UPDATE spaces SET settings=?', (json.dumps(opts),))
-            db.execute('PRAGMA user_version=2')
+            db.execute('PRAGMA user_version=3')
         Store(self.path)
-        self.assertEqual(json_load(self.store.view(self.sid, 99)['space']['settings'])['audience'], 'assigned')
-        did = self.day()
-        self.assertEqual({r['uid'] for r in self.query("SELECT uid FROM outbox WHERE kind='daily'")}, {99,11,12})
+        opts = json_load(self.store.view(self.sid, 99)['space']['settings'])
+        self.assertEqual((opts['time'], opts['cutoff'], opts['audience']), ('08:40','09:10','all'))
+        self.assertTrue(all(not r['daily_muted'] for r in self.query('SELECT daily_muted FROM access')))
+        self.store.manage(self.sid, 13, 'daily_notifications', False)
+        self.store.update_settings(self.sid,99,dict(time='08:45',cutoff='09:15'))
+        Store(self.path)
+        self.assertEqual(json_load(self.store.view(self.sid,99)['space']['settings'])['time'],'08:45')
+        self.assertEqual(self.store.view(self.sid,13)['access']['daily_muted'],1)
+        self.assertEqual(self.query("SELECT count(*) n FROM events WHERE action='notification_migration'")[0]['n'],1)
+
+    def test_default_daily_announcement_at_0840_moscow_includes_pairs_reserves_and_owner_once(self):
+        sid = self.store.create(200,'103-Д9-3ИНС',parse_people('А + Б'),parse_people('В',reserves=True),now=self.now)
         with self.store.connect(True) as db:
-            self.store._job(db, self.sid, 13, 'daily', did, 'legacy-observer')
-            db.execute("UPDATE outbox SET status='sent',message_id=55 WHERE dedup='legacy-observer:13'")
-            self.store._job(db, self.sid, 13, 'update', did, 'legacy-observer-update')
-        job = self.query("SELECT * FROM outbox WHERE dedup='legacy-observer-update:13'")[0]
-        self.assertIsNone(self.store.begin_delivery(job['id'], self.time()))
+            for uid,member in zip((201,202,203),db.execute('SELECT id FROM members WHERE space=? ORDER BY id',(sid,)).fetchall()):
+                db.execute('UPDATE members SET uid=? WHERE id=?',(uid,member['id']))
+                db.execute("INSERT INTO access(space,uid,role) VALUES(?,?,'member')",(sid,uid))
+        utc = __import__('datetime').timezone.utc
+        self.assertIsNone(self.store.ensure_day(sid,self.time(8,39).astimezone(utc),'available'))
+        did = self.store.ensure_day(sid,self.time(8,40).astimezone(utc),'available')
+        self.assertEqual({r['uid'] for r in self.query("SELECT uid FROM outbox WHERE ref=? AND kind='daily'",(did,))},{200,201,202,203})
+        self.store.ensure_day(sid,self.time(8,41),'available')
+        self.assertEqual(len(self.query("SELECT * FROM outbox WHERE ref=? AND kind='daily'",(did,))),4)
+
+    def test_daily_opt_out_blocks_queued_delivery_without_muting_replacement_requests(self):
+        self.store.update_settings(self.sid,99,dict(audience='all'))
+        did = self.day()
+        job = self.query("SELECT * FROM outbox WHERE kind='daily' AND uid=13")[0]
+        self.store.manage(self.sid,13,'daily_notifications',False)
+        self.assertEqual(self.store.view(self.sid,13)['access']['muted'],0)
+        self.assertIsNone(self.store.begin_delivery(job['id'],self.time()))
+        self.store.manage(self.sid,13,'daily_notifications',True)
+        self.store.manage(self.sid,15,'daily_notifications',False)
+        self.store.decline(did,11,self.time(8,2))
+        offer = self.offer(did)
+        self.assertEqual(offer['guest'],self.ids[4])
+        request = self.query("SELECT * FROM outbox WHERE kind='offer' AND uid=15")[0]
+        self.assertIsNotNone(self.store.begin_delivery(request['id'],self.time(8,2)))
+        with self.assertRaises(DutyError):
+            self.store.manage(self.sid,777,'daily_notifications',False)
+        with self.assertRaises(DutyError):
+            self.store.manage(self.sid,13,'daily_notifications','false')
+
+    def test_enabling_daily_notifications_later_does_not_send_a_fresh_afternoon_announcement(self):
+        self.store.update_settings(self.sid,99,dict(audience='all'))
+        self.store.manage(self.sid,13,'daily_notifications',False)
+        did = self.day()
+        self.store.manage(self.sid,13,'daily_notifications',True)
+        self.store.decline(did,11,self.time(8,2))
+        self.assertFalse(self.query("SELECT * FROM outbox WHERE uid=13 AND kind IN ('daily','update')"))
 
     def test_reserve_and_paired_member_can_exchange_places_in_both_directions(self):
         paired, reserve = self.ids[0], self.ids[4]

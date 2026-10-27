@@ -71,9 +71,9 @@
     clearTimeout(statusTimer); $('dutyStatus').textContent = text; $('dutyStatus').dataset.error = String(error);
     if (text === 'Сохранено' || text === 'Ссылка скопирована') statusTimer = setTimeout(() => { $('dutyStatus').textContent = ''; }, 2500);
   };
-  function defaults() { return { time: '08:00', cutoff: '08:30', report: '16:00', days: [0, 1, 2, 3, 4, 5], owner_daily: true,
-    audience: 'assigned', requests: true, owner_events: true, mode: 'reserve', place: '', tasks: '', wait_minutes: 10 }; }
-  function field(text, input, hint) { return el('label', { className: 'duty-label' }, [el('span', { className: 'duty-field-title', text }), input, hint ? el('span', { className: 'duty-help', text: hint }) : null]); }
+  function defaults() { return { time: '08:40', cutoff: '09:10', report: '16:00', days: [0, 1, 2, 3, 4, 5], owner_daily: true,
+    audience: 'all', requests: true, owner_events: true, mode: 'reserve', place: '', tasks: '', wait_minutes: 10 }; }
+  function field(text, input, hint) { if (!input.hasAttribute('aria-label')) input.setAttribute('aria-label', text); return el('label', { className: 'duty-label' }, [el('span', { className: 'duty-field-title', text }), input, hint ? el('span', { className: 'duty-help', text: hint }) : null]); }
   function details(title, ...children) {
     const arrow = icon('chevron'); arrow.classList.add('duty-chevron');
     return el('details', { className: 'duty-details' }, [el('summary', {}, [el('span', { text: title }), arrow]), el('div', { className: 'duty-details-body' }, children)]);
@@ -133,30 +133,41 @@
   async function load() {
     const version = ++generation;
     $('dutyContent').setAttribute('aria-busy', 'true');
-    const result = await request();
-    if (version !== generation) return;
-    $('dutyGroup').textContent = result.group;
-    const spaces = result.spaces;
-    if (!spaces.some(s => s.id === sid)) sid = spaces[0]?.id || null;
-    $('dutyLists').hidden = spaces.length < 2;
-    if (spaces.length > 1) {
-      const chooser = select(spaces.map(s => [s.id, s.group + (s.status === 'paused' ? ' · пауза' : '')]), sid);
-      chooser.setAttribute('aria-label', 'Выбрать дежурства');
-      chooser.addEventListener('change', async () => { sid = Number(chooser.value); await refresh(); });
-      $('dutyLists').replaceChildren(chooser);
-    }
-    if (sid) {
-      const data = await request('/' + sid);
+    $('dutySkeleton').hidden = Boolean(state);
+    try {
+      const result = await request();
       if (version !== generation) return;
-      state = data; $('dutyGroup').textContent = data.group;
-    } else state = null;
-    $('dutyTabs').hidden = !state;
-    render(); $('dutyContent').setAttribute('aria-busy', 'false');
+      $('dutyGroup').textContent = result.group;
+      const spaces = result.spaces;
+      if (!spaces.some(s => s.id === sid)) sid = spaces[0]?.id || null;
+      $('dutyLists').hidden = spaces.length < 2;
+      if (spaces.length > 1) {
+        const chooser = select(spaces.map(s => [s.id, s.group + (s.status === 'paused' ? ' · пауза' : '')]), sid);
+        chooser.setAttribute('aria-label', 'Выбрать дежурства');
+        chooser.addEventListener('change', async () => { sid = Number(chooser.value); await refresh(); });
+        $('dutyLists').replaceChildren(chooser);
+      }
+      if (sid) {
+        const data = await request('/' + sid);
+        if (version !== generation) return;
+        state = data; $('dutyGroup').textContent = data.group;
+      } else state = null;
+      $('dutyTabs').hidden = !state;
+      render();
+    } finally {
+      if (version === generation) {
+        $('dutySkeleton').hidden = true;
+        $('dutyContent').setAttribute('aria-busy', 'false');
+      }
+    }
   }
   async function refresh() {
     if (dirty && !window.confirm('Есть несохранённые изменения. Обновить страницу?')) return;
-    dirty = false; status('Обновляем…');
-    try { await load(); status(''); } catch (error) { status(error.message, true); $('dutyContent').setAttribute('aria-busy', 'false'); }
+    dirty = false; status(state ? 'Обновляем…' : '');
+    try { await load(); status(''); } catch (error) {
+      status(error.message, true);
+      if (!state) $('dutyContent').replaceChildren(card('Не удалось загрузить дежурства', button('Попробовать ещё раз', refresh, 'duty-primary duty-wide')));
+    }
   }
   function render() {
     document.querySelectorAll('[data-tab]').forEach(b => {
@@ -394,8 +405,10 @@
     const opts = structuredClone(values), form = el('form', { className: 'duty-form' });
     form.addEventListener('submit', event => event.preventDefault());
     const control = (key, type, props = {}) => input(opts[key], { type, ...props, oninput: event => { opts[key] = type === 'number' ? Number(event.target.value) : event.target.value; dirty = true; } });
+    const audience = select([['all', 'Всем участникам'], ['assigned', 'Только дежурным'], ['off', 'Не отправлять']], opts.audience);
+    audience.addEventListener('change', () => { opts.audience = audience.value; dirty = true; });
     const notify = card('Уведомления',
-      check('Напоминать дежурным', opts.audience !== 'off', value => { opts.audience = value ? 'assigned' : 'off'; dirty = true; }),
+      field('Кому сообщать о дежурных', audience),
       check('Писать мне, кто дежурит', opts.owner_daily, value => { opts.owner_daily = value; dirty = true; }),
       check('Спрашивать о подменах в личке', opts.requests, value => { opts.requests = value; dirty = true; }),
       check('Сообщать мне об отказах и итогах', opts.owner_events, value => { opts.owner_events = value; dirty = true; }));
@@ -418,7 +431,9 @@
     form.getOptions = () => opts; return form;
   }
   function renderSettings(content) {
-    content.append(card('Личные уведомления', check('Получать сообщения', !state.muted, () => mutate({ action: 'mute' }))));
+    const daily = check('Кто сегодня дежурит', state.daily_notifications, value => mutate({ action: 'daily_notifications', value }));
+    daily.querySelector('input').disabled = state.muted;
+    content.append(card('Личные уведомления', check('Получать сообщения', !state.muted, () => mutate({ action: 'mute' })), daily));
     if (!admin()) {
       content.append(details('Другие действия', button('Выйти из дежурств', () => confirmAction('Выйти из дежурств?', 'Личные уведомления прекратятся.', () => mutate({ action: 'leave' }), 'Выйти'), 'duty-danger duty-wide')));
       return;
@@ -488,6 +503,7 @@
     if (tg.BackButton) { tg.BackButton.show(); tg.BackButton.onClick(() => { if (!dirty || window.confirm('Выйти без сохранения изменений?')) location.href = '/'; }); }
   }
   if (!initData) {
+    $('dutySkeleton').hidden = true;
     status('');
     $('dutyContent').setAttribute('aria-busy', 'false');
     $('dutyContent').append(card('Дежурства в Telegram', p('Откройте раздел через бота.'),

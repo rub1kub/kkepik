@@ -112,3 +112,19 @@ html[data-theme="dark"] .duty-body { color-scheme:dark; }
 @media(min-width:640px) { .duty-page { padding-right:24px; padding-left:24px; } .duty-actions, .duty-fields { grid-template-columns:repeat(2,minmax(0,1fr)); } .duty-dialog { inset:0; width:560px; max-width:calc(100% - 48px); max-height:calc(100dvh - 48px); margin:auto; padding:24px; border:1px solid #80808026; border-radius:20px; } }
 @media(min-width:640px) { .duty-savebar { width:calc(100% - 48px); } }
 @media(prefers-reduced-motion:reduce) { .duty-body *, .duty-body *::after { transition:none !important; } }
+
+.duty-skeleton { display:flex; flex-direction:column; gap:16px; margin-top:16px; }
+.duty-skeleton-tabs { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; height:66px; padding:8px; border-radius:14px; background:var(--tg-theme-secondary-bg-color); }
+.duty-skeleton-card { gap:20px; }
+.duty-skeleton-shape, .duty-skeleton-tabs span { position:relative; display:block; overflow:hidden; border-radius:8px; background:var(--tg-theme-secondary-bg-color); }
+.duty-skeleton-tabs span { background:var(--tg-theme-bg-color); border-radius:10px; }
+.duty-skeleton-shape::after, .duty-skeleton-tabs span::after { position:absolute; inset:0; content:''; background:linear-gradient(100deg,transparent,color-mix(in srgb,var(--tg-theme-text-color) 5%,transparent),transparent); transform:translateX(-100%); animation:duty-shimmer 1.6s ease-in-out infinite; }
+.duty-skeleton-icon { width:40px; height:40px; border-radius:12px; }
+.duty-skeleton-heading { width:65%; max-width:260px; height:24px; }
+.duty-skeleton-lines { display:flex; flex-direction:column; gap:12px; }
+.duty-skeleton-lines span { height:18px; width:78%; }
+.duty-skeleton-lines span:nth-child(2) { width:58%; }
+.duty-skeleton-lines span:nth-child(3) { width:68%; }
+.duty-skeleton-button { width:100%; height:48px; border-radius:12px; }
+@keyframes duty-shimmer { to { transform:translateX(100%); } }
+@media(prefers-reduced-motion:reduce) { .duty-skeleton-shape::after, .duty-skeleton-tabs span::after { animation:none; } }
