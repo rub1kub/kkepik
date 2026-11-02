@@ -1,3 +1,4 @@
+from college_calendar import is_holiday
 from flask import Flask, render_template, request, jsonify, abort, redirect, url_for, send_file
 import os
 import hmac
@@ -22,6 +23,9 @@ from flask_swagger_ui import get_swaggerui_blueprint
 from schedule_api import schedule_bp, error_response
 from knowledge_public import knowledge_public_bp
 from telegram_auth import authenticated_telegram_user
+from campaign_banner import campaign_banner_bp, banner_context
+from activity_audit import init_activity
+from download_audit import init_download_audit
 from config import API_URL as SCHEDULE_API_URL
 from config import STATIC_VERSION
 from game_security import (
@@ -245,6 +249,10 @@ swaggerui_blueprint = get_swaggerui_blueprint(
 app.register_blueprint(swaggerui_blueprint, url_prefix=SWAGGER_URL)
 app.register_blueprint(schedule_bp)
 app.register_blueprint(knowledge_public_bp)
+app.register_blueprint(campaign_banner_bp)
+app.context_processor(banner_context)
+init_activity(app)
+init_download_audit(app)
 
 def get_db():
     db = getattr(g, '_database', None)
@@ -420,6 +428,13 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(user_id) REFERENCES users(id),
             UNIQUE(user_id, date, reaction)
+        );
+        CREATE TABLE IF NOT EXISTS schedule_reaction_adjustments (
+            campaign TEXT PRIMARY KEY,
+            date TEXT NOT NULL,
+            reaction TEXT NOT NULL,
+            quantity INTEGER NOT NULL CHECK (quantity > 0),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS reviews (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -885,7 +900,7 @@ def _fetch_bootstrap_schedule(user_id, schedule_date):
 
 def _adjacent_study_date(schedule_date, direction):
     candidate = schedule_date + timedelta(days=direction)
-    while candidate.weekday() == 6:
+    while candidate.weekday() == 6 or is_holiday(candidate):
         candidate += timedelta(days=direction)
     return candidate
 
@@ -980,11 +995,7 @@ def api_bootstrap():
             favorites = [dict(row) for row in favorite_rows]
 
             reaction_date = parsed_date.strftime('%Y-%m-%d')
-            reaction_rows = db.execute(
-                'SELECT reaction, COUNT(*) AS count FROM schedule_reactions '
-                'WHERE date = ? GROUP BY reaction',
-                (reaction_date,),
-            ).fetchall()
+            reaction_rows = schedule_reaction_counts(db, reaction_date)
             reactions = [
                 {'reaction': row['reaction'], 'count': row['count']}
                 for row in reaction_rows
@@ -1243,9 +1254,9 @@ def api_congratulate_data():
                         user_id = str(user_obj.get('id'))
                         app.logger.info(f"Extracted user_id: {user_id}")
                     else:
-                        app.logger.warning(f"No user ID in parsed data: {user_obj}")
+                        app.logger.warning("No user ID in parsed Telegram data")
                 else:
-                    app.logger.warning(f"check_init_data failed for initData: {init_data[:50]}...")
+                    app.logger.warning("check_init_data failed")
             except Exception as e:
                 app.logger.warning(f"Exception parsing initData: {e}")
         else:
@@ -3669,6 +3680,19 @@ def get_battleship_games():
     })
 
 # API для работы с реакциями на расписание
+def schedule_reaction_counts(db, date):
+    """Combine real reactions with explicit server-side count adjustments."""
+    return db.execute("""
+        SELECT reaction, SUM(count) AS count FROM (
+            SELECT reaction, COUNT(*) AS count FROM schedule_reactions
+            WHERE date = ? GROUP BY reaction
+            UNION ALL
+            SELECT reaction, quantity AS count FROM schedule_reaction_adjustments
+            WHERE date = ?
+        ) GROUP BY reaction ORDER BY reaction
+    """, (date, date)).fetchall()
+
+
 @app.route('/api/schedule/reactions', methods=['GET'])
 def get_schedule_reactions():
     init_data = request.args.get('tgWebAppData')
@@ -3694,12 +3718,7 @@ def get_schedule_reactions():
         user_id = get_or_create_user(tg_id, user_data.get('username'), user_data.get('first_name'))
         
         # Получаем все реакции на расписание за указанную дату
-        reactions = db.execute('''
-            SELECT reaction, COUNT(*) as count 
-            FROM schedule_reactions 
-            WHERE date = ? 
-            GROUP BY reaction
-        ''', (date,)).fetchall()
+        reactions = schedule_reaction_counts(db, date)
         
         # Получаем реакции текущего пользователя
         user_reactions = db.execute('''
@@ -3779,12 +3798,7 @@ def toggle_schedule_reaction():
         db.commit()
         
         # Получаем обновленные данные о реакциях
-        reactions = db.execute('''
-            SELECT reaction, COUNT(*) as count 
-            FROM schedule_reactions 
-            WHERE date = ? 
-            GROUP BY reaction
-        ''', (date,)).fetchall()
+        reactions = schedule_reaction_counts(db, date)
         
         # Получаем реакции текущего пользователя
         user_reactions = db.execute('''

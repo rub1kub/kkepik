@@ -15,6 +15,7 @@ import json
 import re
 import secrets
 import sqlite3
+from college_calendar import is_holiday
 
 MSK = ZoneInfo("Europe/Moscow")
 DEFAULTS = dict(time="08:40", cutoff="09:10", report="16:00", days=[0, 1, 2, 3, 4, 5],
@@ -693,7 +694,7 @@ class Store:
             existing = db.execute('SELECT id FROM days WHERE space=? AND date=?', (sid, day)).fetchone()
             if existing:
                 return existing['id']
-            inactive = now.weekday() not in opts['days'] or source_state == 'no_lessons'
+            inactive = is_holiday(now.date()) or now.weekday() not in opts['days'] or source_state == 'no_lessons'
             did = db.execute('INSERT INTO days(space,date,status,source_state,source_revision,cutoff,report_at) VALUES(?,?,?,?,?,?,?)',
                 (sid, day, 'no_duty' if inactive else 'searching', source_state, source_revision,
                  at(day, opts['cutoff']).timestamp(), at(day, opts['report']).timestamp())).lastrowid

@@ -316,6 +316,11 @@ def _day(value):
         result['lessons'] = _lessons(value['lessons'])
     if 'source' in value:
         result['source'] = _source(value['source'])
+    if 'calendar' in value:
+        rule = value['calendar']
+        if not isinstance(rule, dict) or rule.get('kind') not in ('holiday', 'saturday_hours'):
+            raise PublicKnowledgeError(502)
+        result['calendar'] = {'kind': rule['kind'], 'note': _text(rule.get('note'), 2000)}
     for key in ('warning', 'note'):
         if key in value:
             result[key] = _text(value[key], 2000)

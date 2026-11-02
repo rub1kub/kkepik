@@ -135,7 +135,7 @@ async def _answer_group_schedule(
         preferences=preferences,
         subject_aliases=personal_subject_aliases(get_user_role(config.get_db_path(), message.from_user.id), group_name),
     )
-    schedule_keyboard = create_schedule_keyboard(schedule_date, "groups")
+    schedule_keyboard = create_schedule_keyboard(schedule_date, "groups", user_id=message.from_user.id, entity_type="group", entity_id=group_name)
     await send_personal_schedule(message.bot, message.chat.id, msg_text, img_bytes, schedule_keyboard, preferences)
     return True
 
@@ -233,7 +233,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
             if lines_raw:
                 preferences = get_preferences(user_id)
                 msg_text = render_schedule_message(lines_raw, typed_name, schedule_date, preferences=preferences, teacher=True)
-                schedule_keyboard = create_schedule_keyboard(schedule_date, "groups")
+                schedule_keyboard = create_schedule_keyboard(schedule_date, "groups", user_id=user_id, entity_type="teacher", entity_id=typed_name)
                 await send_personal_schedule(message.bot, message.chat.id, msg_text, None, schedule_keyboard, preferences)
             else:
                 await message.answer(

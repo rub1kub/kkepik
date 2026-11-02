@@ -12,12 +12,15 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, Teleg
 
 from duties.store import clock, DutyError
 from commands.duty import keyboard
+from college_calendar import is_holiday
 
 log = logging.getLogger(__name__)
 
 
 def schedule_state(path, group, day):
     """Read only published structured data; missing source is never a day off."""
+    if is_holiday(day):
+        return 'no_lessons', None
     if not path.exists():
         return 'unknown', None
     try:

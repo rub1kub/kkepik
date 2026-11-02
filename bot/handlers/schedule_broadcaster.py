@@ -105,7 +105,7 @@ async def _send_tracked_group_schedule_impl(
     preferences=None,
 ) -> bool:
     lines = group_schedule.get_schedule_for_group(df, group_name.upper())
-    keyboard = create_schedule_keyboard(schedule_date, "groups")
+    keyboard = create_schedule_keyboard(schedule_date, "groups", user_id=uid, entity_type="group", entity_id=group_name)
     if lines is None:
         logging.warning(
             "[broadcast] Группа %s отсутствует в файле; отправка uid=%s пропущена",
@@ -579,7 +579,7 @@ async def process_and_broadcast(
                             entity=namegrp,
                         ):
                             await send_personal_schedule(bot, uid, msg_text, None,
-                                create_schedule_keyboard(schedule_date, "groups"), preferences)
+                                create_schedule_keyboard(schedule_date, "groups", user_id=uid, entity_type="teacher", entity_id=namegrp), preferences)
                         success_count += 1
                         notified_user_ids.add(uid)
                     except Exception as e:
@@ -611,7 +611,7 @@ async def process_and_broadcast(
                         msg_text = "‼️ РАСПИСАНИЕ ИЗМЕНИЛОСЬ\n\n" + msg_text
                     msg_text = append_broadcast_schedule_notice(msg_text, role, schedule_date)
                     try:
-                        schedule_keyboard = create_schedule_keyboard(schedule_date, "teachers")
+                        schedule_keyboard = create_schedule_keyboard(schedule_date, "teachers", user_id=uid, entity_type="teacher", entity_id=namegrp)
                         with message_tracking_context(
                             message_kind="schedule",
                             schedule_date=schedule_date,

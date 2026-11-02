@@ -233,7 +233,7 @@ function isHoliday(date) {
         String(date.getMonth() + 1).padStart(2, '0'),
         String(date.getDate()).padStart(2, '0')
     ].join('-');
-    return holidays.includes(dateString);
+    return window.kkepikCalendar.isHoliday(date) || holidays.includes(dateString);
 }
 
 function updateProgressBar(forceRest = false) {
@@ -242,7 +242,7 @@ function updateProgressBar(forceRest = false) {
     const currentSeconds = now.getSeconds();
     // Проверка на сокращённый день (11 июня 2025)
     const isSpecialShortDay = now.getFullYear() === 2025 && now.getMonth() === 5 && now.getDate() === 11;
-    const isSaturday = now.getDay() === 6 || isSpecialShortDay;
+    const isSaturday = window.kkepikCalendar.isSaturday(now) || isSpecialShortDay;
     const isSunday = now.getDay() === 0;
     const isHolidayToday = isHoliday(now);
     const schedule = isSaturday ? SATURDAY_SCHEDULE : WEEKDAY_SCHEDULE;
@@ -354,7 +354,7 @@ function getUpdateInterval() {
     const currentSeconds = now.getSeconds();
     // Проверка на сокращённый день (11 июня 2025)
     const isSpecialShortDay = now.getFullYear() === 2025 && now.getMonth() === 5 && now.getDate() === 11;
-    const isSaturday = now.getDay() === 6 || isSpecialShortDay;
+    const isSaturday = window.kkepikCalendar.isSaturday(now) || isSpecialShortDay;
     const schedule = isSaturday ? SATURDAY_SCHEDULE : WEEKDAY_SCHEDULE;
 
     for (const pair of schedule) {

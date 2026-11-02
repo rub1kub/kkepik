@@ -47,6 +47,7 @@
         toggle.setAttribute('aria-expanded',String(menuOpen));
     }
     function selectEntity(entity) {
+        window.kkepikActivity?.selected(entity, favorites.some(e=>same(e,entity)));
         currentEntity=entity;remember(entity);renderEntitySwitcher();closeDropdown();
         tg?.HapticFeedback?.impactOccurred?.('soft');window.updateScheduleForEntity?.(entity);
     }
@@ -86,6 +87,7 @@
     }
     function openDropdown(keyboard=false) {
         if(tracked().length<2)return;
+        window.kkepikActivity?.track('favorites.open');
         renderMenu();menuOpen=true;menu.hidden=false;toggle.setAttribute('aria-expanded','true');positionMenu();
         if(keyboard)menu.querySelector('[role="menuitem"]')?.focus({preventScroll:true});
     }
@@ -187,6 +189,7 @@
     function openAddModal() {
         if(saving)return;closeDropdown();
         if(!sheet)createAddModal();
+        window.kkepikActivity?.track('favorites.dialog');
         $('entitySelectorStatus')?.remove();input.value='';error.textContent='';selected=null;entityType='group';catalogFailed=false;
         updateType();oldOverflow=document.body.style.overflow;document.body.style.overflow='hidden';
         if(!sheet.open)sheet.showModal();tg?.BackButton?.onClick?.(closeAddModal);tg?.BackButton?.show?.();resizeSheet();input.focus({preventScroll:true});onAddInputChange();

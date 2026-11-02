@@ -37,6 +37,8 @@ def build_openapi():
     day = {'type': 'object', 'required': ['date', 'status'], 'properties': {
         'date': iso_date, 'status': {'type': 'string', 'enum': ['available', 'no_lessons', 'missing', 'invalid_source', 'entity_not_found']},
         'lessons': {'type': 'array', 'items': ref('Lesson')}, 'source': ref('Source'),
+        'calendar': {'type': 'object', 'required': ['kind', 'note'], 'properties': {
+            'kind': {'type': 'string', 'enum': ['holiday', 'saturday_hours']}, 'note': {'type': 'string'}}},
         'warning': {'type': 'string'}, 'note': {'type': 'string'}}}
     catalog = {'type': 'object', 'required': ['college', 'timezone', 'groups', 'teachers', 'audiences', 'dates'],
                'properties': {'college': ref('College'), 'timezone': {'const': 'Europe/Moscow'},

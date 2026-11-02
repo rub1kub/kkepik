@@ -10,6 +10,8 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v={{ STATIC_VERSION }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/duties.css') }}?v={{ STATIC_VERSION }}">
   <script defer src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
+    <script defer src="{{ url_for('static', filename='js/college_calendar.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script defer src="{{ url_for('static', filename='js/activity.js') }}?v={{ STATIC_VERSION|default('20261102-activity-1') }}"></script>
   <script defer src="{{ url_for('static', filename='js/duties.js') }}?v={{ STATIC_VERSION }}"></script>
 </head>
 <body class="duty-body">

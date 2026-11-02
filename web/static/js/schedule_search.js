@@ -782,6 +782,11 @@
 
             const lessons = parseSchedule(data.schedule, state.activeType);
             if (lessons.length === 0) {
+                if (requestId !== state.requestId) return;
+                if (window.kkepikCalendar.isHoliday(state.selectedDate)) {
+                    showStatus(window.kkepikCalendar.rules[toLocalIso(state.selectedDate)].note);
+                    return;
+                }
                 throw new Error('На выбранную дату расписания нет.');
             }
 
@@ -1005,9 +1010,15 @@
 
         elements.scheduleContent.appendChild(fragment);
         updateDownloadAction(config.downloadType, date);
+        elements.download.dataset.downloadEntityType = type;
+        elements.download.dataset.downloadEntityId = resolvedValue;
+        if (config.downloadType) window.kkepikDownloads?.prepare(elements.download);
         hideStatus();
         elements.results.hidden = false;
         document.body.classList.add('search-results-visible');
+        const viewed = { [type]: resolvedValue, date: formatDateForApi(date) };
+        window.kkepikActivity?.note(viewed, 'network');
+        window.kkepikActivity?.shown(viewed, date);
 
         window.setTimeout(() => {
             elements.results.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1091,7 +1102,7 @@
     }
 
     function getPairTime(pairNumber, date) {
-        const schedule = date.getDay() === 6 ? SATURDAY_TIMES : WEEKDAY_TIMES;
+        const schedule = window.kkepikCalendar.isSaturday(date) ? SATURDAY_TIMES : WEEKDAY_TIMES;
         return schedule[pairNumber] || 'Время уточняется';
     }
 

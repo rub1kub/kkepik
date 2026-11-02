@@ -16,7 +16,7 @@
 
     function initialScheduleDate() {
         const date = new Date();
-        if (date.getDay() === 0) date.setDate(date.getDate() + 1);
+        while (date.getDay() === 0 || window.kkepikCalendar.isHoliday(date)) date.setDate(date.getDate() + 1);
         return date;
     }
 

@@ -19,6 +19,11 @@ class ScheduleReactionsApiTest(unittest.TestCase):
             'reaction TEXT NOT NULL)'
         )
 
+        self.db.execute(
+            'CREATE TABLE schedule_reaction_adjustments ('
+            'campaign TEXT PRIMARY KEY, date TEXT, reaction TEXT, quantity INTEGER)'
+        )
+
     def tearDown(self):
         self.db.close()
 
@@ -49,6 +54,29 @@ class ScheduleReactionsApiTest(unittest.TestCase):
         self.assertEqual(removed.get_json()['action'], 'removed')
         self.assertEqual(removed.get_json()['reactions'], [])
         self.assertEqual(removed.get_json()['user_reactions'], [])
+
+    def test_adjustment_survives_personal_toggle_and_is_date_scoped(self):
+        self.db.execute('INSERT INTO schedule_reaction_adjustments VALUES(?,?,?,?)',
+                        ('approved-joke', '2026-10-29', '🤮', 50))
+        body = dict(tgWebAppData='signed-test-data', date='2026-10-29', reaction='🤮')
+        with (
+            patch.object(app_module, 'check_init_data', return_value=True),
+            patch.object(app_module, 'parse_init_data_params', return_value={'user': '{"id": 42}'}),
+            patch.object(app_module, 'get_db', return_value=self.db),
+            patch.object(app_module, 'get_or_create_user', return_value=1),
+        ):
+            initial = self.client.get('/api/schedule/reactions', query_string={
+                'tgWebAppData': 'signed-test-data', 'date': '2026-10-29'}).get_json()
+            added = self.client.post('/api/schedule/reactions/toggle', json=body).get_json()
+            removed = self.client.post('/api/schedule/reactions/toggle', json=body).get_json()
+        self.assertEqual(initial['reactions'], [{'reaction': '🤮', 'count': 50}])
+        self.assertEqual(initial['user_reactions'], [])
+        self.assertEqual(added['reactions'], [{'reaction': '🤮', 'count': 51}])
+        self.assertEqual(added['user_reactions'], ['🤮'])
+        self.assertEqual(removed['reactions'], [{'reaction': '🤮', 'count': 50}])
+        self.assertEqual(removed['user_reactions'], [])
+        self.assertEqual(app_module.schedule_reaction_counts(self.db, '2026-10-28'), [])
+        self.assertEqual(self.db.execute('SELECT COUNT(*) FROM schedule_reactions').fetchone()[0], 0)
 
     def test_toggle_rejects_unsigned_request_without_writing(self):
         with patch.object(app_module, 'check_init_data', return_value=False):

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 import json
 from schedules.schedule_dates import current_college_date, is_current_schedule
 from schedules.schedule_catalog import extract_catalog_entries, get_catalog_values
+from college_calendar import calendar_date, day_rule, is_holiday
 
 app = FastAPI(title="KKEPIK Bot API")
 from message_settings_api import router as message_settings_router
@@ -229,9 +230,23 @@ async def get_user(user_id: int):
         conn.close()
 
 
+def holiday_schedule(entity_type, entity, date):
+    if not is_holiday(date):
+        return None
+    kind = {"group": "groups", "teacher": "teachers", "audience": "audiences"}[entity_type]
+    if not any(value.strip().casefold() == entity.strip().casefold() for value in get_catalog_values(kind)):
+        raise HTTPException(status_code=404, detail="Название не найдено в каталоге")
+    return {entity_type: entity, "date": calendar_date(date).strftime("%d.%m.%Y"),
+            "schedule": [], "status": "no_lessons", "note": day_rule(date)["note"],
+            "calendar": day_rule(date)}
+
+
 @app.post("/schedule/group")
 async def get_group_schedule(request: GroupScheduleRequest):
     """Получение расписания группы"""
+    holiday = holiday_schedule("group", request.group, request.date)
+    if holiday is not None:
+        return holiday
     df = None
     schedule_date = None
 
@@ -282,6 +297,9 @@ async def get_group_schedule(request: GroupScheduleRequest):
 @app.post("/schedule/teacher")
 async def get_teacher_schedule(request: TeacherScheduleRequest):
     """Получение расписания преподавателя"""
+    holiday = holiday_schedule("teacher", request.teacher, request.date)
+    if holiday is not None:
+        return holiday
     df = None
     schedule_date = None
 
@@ -351,6 +369,9 @@ async def get_teacher_schedule(request: TeacherScheduleRequest):
 @app.post("/schedule/audience")
 async def get_audience_schedule(request: AudienceScheduleRequest):
     """Получение расписания аудитории"""
+    holiday = holiday_schedule("audience", request.audience, request.date)
+    if holiday is not None:
+        return holiday
     df = None
     schedule_date = None
 

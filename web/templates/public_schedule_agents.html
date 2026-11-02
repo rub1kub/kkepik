@@ -26,7 +26,7 @@
   <section class="docs-section"><h2>Remote MCP</h2><div class="code-example"><code>https://kkepik.rub1kub.ru/mcp</code></div><p>Streamable HTTP, только чтение расписания и источников. Подключение зависит от вашего клиента.</p><p>В браузерах с поддержкой WebMCP доступны инструменты чтения.</p></section>
   <section class="docs-section"><h2>Статусы данных</h2><ul>
     <li><code>available</code>: занятия есть в опубликованном расписании.</li>
-    <li><code>no_lessons</code>: для выбранного названия занятия не указаны в действительном источнике.</li>
+    <li><code>no_lessons</code>: в действительном источнике нет занятий либо колледж подтвердил выходной. Во втором случае <code>calendar.kind</code> равно <code>holiday</code>, пояснение — в <code>note</code>, а <code>source</code> может быть null.</li>
     <li><code>missing</code>: данных на дату нет. Это не означает, что пар не было.</li>
     <li><code>entity_not_found</code>: название не найдено именно в источнике на этот день.</li>
     <li><code>invalid_source</code>: источник получен, но не обработан корректно.</li>

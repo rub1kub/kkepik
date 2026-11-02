@@ -1,0 +1,10 @@
+[Unit]
+Description=Expire KKEPIK operational activity records after 30 days
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/kkepik_bot
+ExecStart=/root/kkepik_bot/venv/bin/python /root/kkepik_bot/scripts/activity_report.py --prune
+UMask=0007
+NoNewPrivileges=true
+TimeoutStartSec=60

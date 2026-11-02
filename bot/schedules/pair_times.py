@@ -4,7 +4,7 @@
 """
 
 import re
-import datetime
+from college_calendar import is_holiday, uses_saturday_hours
 
 # Расписание звонков: будние дни (пн–пт)
 WEEKDAY_TIMES = {
@@ -28,16 +28,14 @@ SATURDAY_TIMES = {
 
 
 def is_saturday(date_str: str) -> bool:
-    """Проверяет, является ли дата субботой. Формат: dd.mm.yyyy."""
-    try:
-        dt = datetime.datetime.strptime(date_str, "%d.%m.%Y")
-        return dt.weekday() == 5  # 5 = суббота
-    except (ValueError, TypeError):
-        return False
+    """Используются ли субботние звонки, включая объявленные исключения."""
+    return uses_saturday_hours(date_str)
 
 
 def get_pair_time(pair_num: int, date_str: str) -> str:
     """Возвращает строку времени для номера пары с учётом дня недели."""
+    if is_holiday(date_str):
+        return ""
     times = SATURDAY_TIMES if is_saturday(date_str) else WEEKDAY_TIMES
     return times.get(pair_num, "")
 

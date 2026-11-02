@@ -32,6 +32,7 @@ from commands.groups import (
 )
 from handlers.inline_mode import inline_schedule
 from handlers.upload_schedule import handle_document
+from handlers.schedule_download import download_schedule
 from message_registry import TrackedBot, init_registry
 
 from global_schedules import (
@@ -69,6 +70,13 @@ async def main():
     
     dp = Dispatcher(storage=MemoryStorage())
 
+    from activity_logging import BotActivityMiddleware
+    dp.update.outer_middleware(BotActivityMiddleware(config.get_db_path()))
+
+    from admin_post_capture import AdminPostCapture
+    post_capture = AdminPostCapture(os.path.join(config.DATA_DIR, 'admin_campaigns', 'ad-20261029'))
+    dp.message.outer_middleware(post_capture)
+
     # Private self-service rosters. Register their invitation /start handler
     # before ordinary registration. Same-group enrolment happens only when
     # the creator saves a verified roster, never at startup.
@@ -90,6 +98,7 @@ async def main():
     dp.message.register(cmd_app, Command(commands=["app"]))
     dp.message.register(cmd_settings, Command(commands=["settings"]))
     dp.callback_query.register(process_settings_callback, F.data.startswith("settings:"))
+    dp.callback_query.register(download_schedule, F.data.startswith("schedule_pdf:"))
 
     # Регистрируем callback для выбора роли
     dp.callback_query.register(process_role_callback, lambda c: c.data in ["role_student", "role_teacher"])
@@ -111,6 +120,7 @@ async def main():
     dp.inline_query.register(inline_schedule)
 
     async def on_startup():
+        await post_capture.resume(bot)
         bot_info = await bot.get_me()
         await bot.set_my_commands(
             [

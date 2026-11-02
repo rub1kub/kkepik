@@ -72,6 +72,10 @@ class BootstrapApiTest(unittest.TestCase):
         self.assertEqual(previous_date.strftime('%d.%m.%Y'), '28.08.2026')
         self.assertEqual(next_date.strftime('%d.%m.%Y'), '31.08.2026')
 
+    def test_adjacent_dates_skip_confirmed_november_holiday(self):
+        self.assertEqual(app_module._adjacent_study_date(datetime(2026, 11, 3), 1), datetime(2026, 11, 5))
+        self.assertEqual(app_module._adjacent_study_date(datetime(2026, 11, 5), -1), datetime(2026, 11, 3))
+
     def test_only_real_lessons_enable_navigation(self):
         empty_schedule = {'schedule': [f'▪️{i} пара – Нет' for i in range(1, 5)]}
         real_schedule = {'schedule': ['▪️1 пара – Математика – Иванов – 10']}

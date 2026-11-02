@@ -173,7 +173,7 @@ async def cmd_find(message: types.Message):
                     subject_aliases=personal_subject_aliases(get_user_role(config.get_db_path(), message.from_user.id), search_name))
                 image = global_schedules.last_groups_crop_cache.get(search_name) if search_date == global_schedules.last_groups_date else None
                 await send_personal_schedule(message.bot, message.chat.id, msg_text, image,
-                    create_schedule_keyboard(search_date, "groups"), preferences)
+                    create_schedule_keyboard(search_date, "groups", user_id=message.from_user.id, entity_type="group", entity_id=search_name), preferences)
             else:
                 await message.answer(f"❌ Не найдено расписание для группы {search_name} на {search_date}.")
         else:
@@ -182,7 +182,7 @@ async def cmd_find(message: types.Message):
                 preferences = get_preferences(message.from_user.id)
                 msg_text = render_schedule_message(lines, search_name, search_date, preferences=preferences, teacher=True)
                 await send_personal_schedule(message.bot, message.chat.id, msg_text, None,
-                    create_schedule_keyboard(search_date, "teachers"), preferences)
+                    create_schedule_keyboard(search_date, "teachers", user_id=message.from_user.id, entity_type="teacher", entity_id=search_name), preferences)
             else:
                 await message.answer(f"❌ Не найдено расписание для преподавателя {search_name} на {search_date}.")
 

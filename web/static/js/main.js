@@ -281,7 +281,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             String(date.getMonth() + 1).padStart(2, '0'),
             String(date.getDate()).padStart(2, '0')
         ].join('-');
-        return holidays.includes(dateString);
+        return window.kkepikCalendar.isHoliday(date) || holidays.includes(dateString);
     }
 
     function getAdjacentStudyDate(date, direction) {
@@ -408,7 +408,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
         if (window.scheduleState.scheduleCache.has(dateString)) {
             console.log('Используем кэшированное расписание для:', dateString);
-            return window.scheduleState.scheduleCache.get(dateString);
+            return window.kkepikActivity?.note(window.scheduleState.scheduleCache.get(dateString), 'cache') ?? window.scheduleState.scheduleCache.get(dateString);
         }
 
         if (window.kkepikApp && dateString === window.kkepikApp.requestedDate) {
@@ -416,6 +416,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                 const bootstrap = await window.kkepikApp.ready;
                 if (bootstrap.schedule_status === 200 && bootstrap.schedule) {
                     window.scheduleState.scheduleCache.set(dateString, bootstrap.schedule);
+                    window.kkepikActivity?.note(bootstrap.schedule, bootstrap.from_cache ? 'cache' : 'network');
                     return bootstrap.schedule;
                 }
                 if (bootstrap.schedule_status && bootstrap.schedule_status < 500) {
@@ -451,7 +452,8 @@ document.addEventListener('DOMContentLoaded', async function() {
                     const response = await fetch(url, {
                         method: 'POST',
                         headers: {
-                            'Content-Type': 'application/json'
+                            'Content-Type': 'application/json',
+                            'X-Telegram-Init-Data': tg.initData
                         },
                         body: JSON.stringify(body)
                     });
@@ -464,6 +466,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                     const data = await response.json();
                     if (response.ok) {
                         console.log('Успешно получено расписание для:', dateString);
+                        window.kkepikActivity?.note(data, 'network');
                         window.scheduleState.scheduleCache.set(dateString, data);
                         if (window.kkepikApp) window.kkepikApp.cacheSchedule(dateString, data);
                         return data;
@@ -490,15 +493,18 @@ document.addEventListener('DOMContentLoaded', async function() {
             const data = await response.json();
             if (response.ok) {
                 console.log('Успешно получено расписание для:', dateString);
+                window.kkepikActivity?.note(data, 'network');
                 window.scheduleState.scheduleCache.set(dateString, data);
                 if (window.kkepikApp) window.kkepikApp.cacheSchedule(dateString, data);
                 return data;
             }
             console.log('Не удалось получить расписание для:', dateString);
             window.scheduleState.scheduleCache.set(dateString, cachedSchedule);
+            window.kkepikActivity?.note(cachedSchedule, 'cache');
             return cachedSchedule;
         } catch (error) {
             console.error('Ошибка при получении расписания для', dateString + ':', error);
+            window.kkepikActivity?.note(cachedSchedule, 'cache');
             return cachedSchedule;
         }
     }
@@ -534,7 +540,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                 }
             }
             if (lastUserPairNumber === 0) return false;
-            const isSaturday = date.getDay() === 6;
+            const isSaturday = window.kkepikCalendar.isSaturday(date);
             const schedule = isSaturday ? SATURDAY_SCHEDULE : WEEKDAY_SCHEDULE;
             if (lastUserPairNumber > schedule.length) {
                 lastUserPairNumber = schedule.length;
@@ -583,7 +589,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         console.log('[updateScheduleDisplay] START, currentDate:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
         // Проверка на сокращённый день (11 июня 2025)
         const isSpecialShortDay = currentDate.getFullYear() === 2025 && currentDate.getMonth() === 5 && currentDate.getDate() === 11;
-        const isSaturday = currentDate.getDay() === 6 || isSpecialShortDay;
+        const isSaturday = window.kkepikCalendar.isSaturday(currentDate) || isSpecialShortDay;
         const schedule = isSaturday ? SATURDAY_SCHEDULE : WEEKDAY_SCHEDULE;
 
         const scheduleTitle = document.querySelector('.schedule-title');
@@ -1031,7 +1037,7 @@ function getSchedulePresentation(item, date, isTeacher) {
     const subject = item.subject_name || 'Занятие';
     const teacher = item.teacher_name || '';
     const room = item.classroom || '';
-    const timeEmphasis = date.getDay() === 6 || (!isTeacher && course === 1 && date.getMonth() === 8);
+    const timeEmphasis = window.kkepikCalendar.isSaturday(date) || (!isTeacher && course === 1 && date.getMonth() === 8);
 
     if (isTeacher) {
         return {
@@ -1074,7 +1080,7 @@ function renderEmptyPairRow(scheduleTime) {
 }
 
 function displayScheduleItems(items, container, date) {
-    const isSaturday = date.getDay() === 6;
+    const isSaturday = window.kkepikCalendar.isSaturday(date);
     const schedule = isSaturday ? SATURDAY_SCHEDULE : WEEKDAY_SCHEDULE;
     const isTeacher = window.scheduleState.currentEntity && window.scheduleState.currentEntity.entity_type === 'teacher';
 
@@ -2032,11 +2038,12 @@ window.updateScheduleForEntity = async function(entity) {
     try {
         const resp = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData },
             body: JSON.stringify(body)
         });
         const data = await resp.json();
         if (resp.ok && data && data.schedule) {
+            window.kkepikActivity?.note(data, 'network');
             window.scheduleState.currentScheduleData = data;
         } else if (resp.status >= 500) {
             window.scheduleState.currentScheduleData = { error500: true };

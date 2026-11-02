@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 from zoneinfo import ZoneInfo
+from college_calendar import is_holiday
 
 
 # ККЭП находится в Краснодаре: относительные даты всегда считаются по МСК,
@@ -29,4 +30,4 @@ def is_current_schedule(
 
     current_date = today or current_college_date()
     days_ahead = (schedule_date - current_date).days
-    return schedule_date.weekday() != 6 and 0 <= days_ahead <= 2
+    return schedule_date.weekday() != 6 and not is_holiday(schedule_date) and 0 <= days_ahead <= 2

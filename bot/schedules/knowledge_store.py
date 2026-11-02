@@ -5,6 +5,7 @@ Each source file and each parsed revision is immutable. Missing dates are not
 treated as holidays, and published lessons are not evidence of attendance.
 """
 from __future__ import annotations
+from college_calendar import day_rule, is_holiday
 
 import datetime as dt
 import copy
@@ -169,7 +170,7 @@ def extract_lessons(df: pd.DataFrame, date: str) -> tuple[list[str], list[dict]]
                 # Honor explicit source times (including exceptional opening days).
                 explicit = _cell(df.iat[row, 2]) if col >= 4 else ""
                 match = re.fullmatch(r"(\d{1,2})[.:](\d{2})\s*[-–—]\s*(\d{1,2})[.:](\d{2})", explicit)
-                if match and int(match[1]) < 24 and int(match[3]) < 24 and int(match[2]) < 60 and int(match[4]) < 60:
+                if match and not day_rule(date) and int(match[1]) < 24 and int(match[3]) < 24 and int(match[2]) < 60 and int(match[4]) < 60:
                     start_time, end_time = f"{int(match[1]):02d}:{match[2]}", f"{int(match[3]):02d}:{match[4]}"
                 if start_time:
                     start_time = start_time.zfill(5)
@@ -438,6 +439,15 @@ class KnowledgeStore:
              entity_type: str | None, entity: str | None) -> dict:
         revisions = self._revisions(connection, date)
         day = {"date": date, "status": "missing", "lessons": [], "source": None}
+        rule = day_rule(date)
+        if rule:
+            day["calendar"] = rule
+        if is_holiday(date):
+            known = entity_type is None or any(
+                _key(value, entity_type) == _key(entity, entity_type)
+                for value in self._catalog(connection)[{"group": "groups", "teacher": "teachers", "audience": "audiences"}[entity_type]])
+            day.update(status="no_lessons" if known else "entity_not_found", note=rule["note"])
+            return day
         if not revisions:
             return day
         parsed = [r for r in revisions if r["status"] == "parsed"]
@@ -453,6 +463,11 @@ class KnowledgeStore:
             return day
         groups = json.loads(row["groups_json"])
         day["lessons"] = self._lessons(connection, row["id"], entity_type, entity)
+        if rule and rule["kind"] == "saturday_hours":
+            for lesson in day["lessons"]:
+                value = get_pair_time(lesson["pair_number"], date)
+                if "–" in value:
+                    lesson["start_time"], lesson["end_time"] = (part.zfill(5) for part in value.split("–"))
         if day["lessons"]:
             day["status"] = "available"
         elif entity_type == "group":

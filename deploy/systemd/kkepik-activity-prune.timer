@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily expiry of KKEPIK operational activity records
+
+[Timer]
+OnCalendar=*-*-* 02:25:00 UTC
+AccuracySec=1min
+Persistent=true
+Unit=kkepik-activity-prune.service
+
+[Install]
+WantedBy=timers.target

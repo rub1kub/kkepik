@@ -187,7 +187,7 @@
     const projected = state.forecast.find(d => d.date === today());
     const active = day?.people.filter(m => ['assigned', 'reported', 'done'].includes(m.state)) || [];
     const mine = day?.people.find(m => m.mine);
-    const off = day?.status === 'no_duty' || projected?.status === 'no_duty' || (!day && !state.options.days.includes((new Date(today() + 'T12:00:00+03:00').getUTCDay() + 6) % 7));
+    const off = window.kkepikCalendar.isHoliday(today()) || day?.status === 'no_duty' || projected?.status === 'no_duty' || (!day && !state.options.days.includes((new Date(today() + 'T12:00:00+03:00').getUTCDay() + 6) % 7));
     let title, message, symbol = 'clipboard';
     if (state.status === 'paused') { title = 'Дежурства на паузе'; symbol = 'pause'; }
     else if (off) { title = 'Сегодня без дежурства'; symbol = 'coffee'; }

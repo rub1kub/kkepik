@@ -3446,3 +3446,31 @@ body.pixel-banned .pixel-bottom-controls { display: none; }
         width: min(448px, 100%);
     }
 }
+
+/* Short-lived sponsored card: one tap target, Telegram-safe external link. */
+.championship-banner { width:100%; margin:0 0 18px; }
+.championship-banner-link { position:relative; display:block; overflow:hidden; padding:17px 18px 16px; border:1px solid #4b3437; border-radius:20px; background:#19171c; color:#faf8f7; text-align:left; text-decoration:none; isolation:isolate; -webkit-tap-highlight-color:transparent; }
+.championship-banner-top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.championship-banner-brand { color:#faf8f7; font-size:13px; font-weight:800; letter-spacing:-.035em; line-height:1.2; }
+.championship-banner-brand > span { color:#ff7869; letter-spacing:-.12em; }
+.championship-banner-label { flex:none; padding:3px 6px; border:1px solid #ffffff2b; border-radius:5px; color:#c6c0c4; font-size:10px; font-weight:500; line-height:1.2; }
+.championship-banner-event { position:relative; margin:5px 0 12px; color:#c6c0c4; font-size:11px; font-weight:500; line-height:1.35; }
+.championship-banner-art { position:absolute; z-index:-1; top:44px; right:-18px; width:128px; height:128px; fill:none; stroke:#ff7869; stroke-width:1.3; opacity:.18; }
+.championship-banner-title { margin:0; color:#faf8f7; font-size:clamp(20px,5.6vw,25px); font-weight:750; letter-spacing:-.04em; line-height:1.12; }
+.championship-banner-title > span { color:#ff9384; }
+.championship-banner-description { margin:10px 0 0; color:#d4cdd1; font-size:11px; font-weight:500; line-height:1.4; }
+.championship-banner-partners { margin:3px 0 0; color:#faf8f7; font-size:12px; font-weight:650; line-height:1.4; }
+.championship-banner-partners > span { padding:0 4px; color:#8a7e85; }
+.championship-banner-bottom { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:14px; }
+.championship-banner-action { display:inline-flex; align-items:center; justify-content:center; gap:15px; min-height:44px; padding:11px 16px; border-radius:11px; background:#ff8273; color:#241817; font-size:12px; font-weight:750; line-height:1.3; }
+.championship-banner-action > svg { flex:none; width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.championship-banner-deadline { color:#c6c0c4; font-size:10px; font-weight:500; line-height:1.45; text-align:right; }
+.championship-banner-link:focus-visible { outline:3px solid var(--tg-theme-button-color); outline-offset:3px; }
+.championship-banner-link:active .championship-banner-action { background:#ff9a8e; }
+@media (min-width:600px) { .championship-banner-link { padding:18px 22px; } .championship-banner-art { right:18px; width:165px; height:165px; } }
+
+@media (max-width:359px) {
+    .championship-banner-bottom { gap:8px; }
+    .championship-banner-action { gap:8px; padding:11px 12px; font-size:11px; }
+    .championship-banner-deadline { font-size:9px; white-space:nowrap; }
+}

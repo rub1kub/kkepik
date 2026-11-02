@@ -1,5 +1,6 @@
 """Telegram-only guided setup and everyday duty controls."""
 from __future__ import annotations
+from college_calendar import is_holiday
 
 from datetime import datetime, timedelta
 from copy import deepcopy
@@ -360,7 +361,7 @@ class DutyBot:
                     rows.append([('Ответить на предложение', f'offer:{offer["id"]}')])
         else:
             opts = json.loads(space['settings'])
-            text = 'Сегодня дежурства нет.' if clock().weekday() not in opts['days'] else 'Сегодня дежурные ещё не назначены.'
+            text = 'Сегодня дежурства нет.' if is_holiday(clock().date()) or clock().weekday() not in opts['days'] else 'Сегодня дежурные ещё не назначены.'
             if space['first_date'] > clock().date().isoformat():
                 text = 'Дежурства начнутся ' + date_label(space['first_date']) + '.'
         rows.append([('Открыть мини-апп', 'web:/duties')])
