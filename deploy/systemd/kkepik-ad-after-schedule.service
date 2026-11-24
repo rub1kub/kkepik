@@ -1,0 +1,20 @@
+[Unit]
+Description=KKEPIK advertising after the active primary schedule distribution
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/kkepik_bot
+ExecStart=/root/kkepik_bot/venv/bin/python -u /root/kkepik_bot/scripts/send_ad_after_schedule.py --send
+UMask=0077
+NoNewPrivileges=true
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGINT
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

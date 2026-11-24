@@ -17,3 +17,12 @@ body.pixel-replaying .pixel-bottom-row { justify-content: flex-end; }
 body.pixel-replaying #pixelCanvas { cursor: grab; }
 body.pixel-banned .pixel-replay-panel { display: none; }
 @media (max-height: 520px) { .pixel-replay-panel { left: auto; width: min(280px, 43vw); bottom: calc(var(--pixel-edge-bottom) + 60px); } .pixel-replay-panel input[type="range"] { height: 28px; } .pixel-replay-details { margin-bottom: 2px; } .pixel-tools .pixel-replay-presets button { min-height: 32px; } }
+
+.archive-pixel { position:relative; display:block; width:44px; height:44px; margin:0 auto; background:transparent; border:0; cursor:pointer; }
+.archive-pixel::before { content:''; position:absolute; inset:17px; background:var(--tg-theme-hint-color,#888); }
+.archive-pixel img { display:none; position:absolute; bottom:0; left:50%; width:64px; height:64px; transform:translateX(-50%); image-rendering:pixelated; border-radius:4px; }
+.archive-pixel[aria-expanded=true] img { display:block; }
+@media (prefers-reduced-motion:no-preference) {
+    .archive-pixel[aria-expanded=true] img { animation:archive-tile .3s steps(5,end); transform-origin:50% 85%; }
+    @keyframes archive-tile { from { transform:translateX(-50%) scale(.16); } }
+}

@@ -1,0 +1,27 @@
+{% set slides = [('gym', 'Тренажёрный зал', 'в зал'), ('pool', 'Бассейн', 'в бассейн')] %}
+<aside class="champion-preview-carousel" data-slide="gym" aria-label="Реклама. Спортивный комплекс «Стань чемпионом»">
+    <a class="champion-preview" href="{{ destination }}" target="_blank" rel="noopener noreferrer"
+       aria-labelledby="champion-preview-title champion-preview-action" aria-describedby="champion-preview-offer champion-preview-price champion-preview-distance">
+        {% for slide, label, headline in slides %}
+        <img class="champion-preview-photo" data-slide="{{ slide }}" src="data:image/webp;base64,{{ photos[slide] }}" alt="">
+        {% endfor %}
+        <span class="champion-preview-label">Реклама</span>
+        <div class="champion-preview-content">
+            <p class="champion-preview-brand">Стань чемпионом</p>
+            <h2 class="champion-preview-title" id="champion-preview-title">После пар —
+                {% for slide, label, headline in slides %}
+                <span data-slide="{{ slide }}"{% if not loop.first %} hidden{% endif %}>{{ headline }}</span>
+                {% endfor %}
+            </h2>
+            <p class="champion-preview-offer" id="champion-preview-offer">Карта «Студент 12» · 18+</p>
+            <p class="champion-preview-price" id="champion-preview-price"><strong>19 100 ₽</strong> за год</p>
+            <span class="champion-preview-action" id="champion-preview-action">Подробнее <span aria-hidden="true">↗</span></span>
+        </div>
+        <span class="champion-preview-distance" id="champion-preview-distance"><strong>13 минут</strong> пешком от ККЭП</span>
+    </a>
+    <div class="champion-preview-controls" role="group" aria-label="Слайды баннера">
+        {% for slide, label, headline in slides %}
+        <button type="button" class="champion-preview-dot" data-slide-choice="{{ slide }}" aria-label="{{ label }}" aria-pressed="{{ 'true' if loop.first else 'false' }}"></button>
+        {% endfor %}
+    </div>
+</aside>

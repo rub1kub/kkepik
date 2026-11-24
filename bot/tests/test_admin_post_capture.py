@@ -27,6 +27,60 @@ def message(**changes):
 
 
 class SavedPostTest(unittest.IsolatedAsyncioTestCase):
+    async def test_manual_draft_saves_photo_and_preview_without_scheduling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            write_private_json(base / 'active.json', {'id': 'ad-20261119'})
+            capture = AdminPostCapture.active(base)
+            write_private_json(capture.campaign_path, dict(id='ad-20261119', owner=OWNER,
+                phase='awaiting_post', capture_armed_at='2026-01-01T00:00:00+00:00',
+                trigger={'type': 'manual'}))
+            bot = AsyncMock()
+            bot.send_photo.return_value = message(message_id=30)
+            original = message()
+            handler = AsyncMock()
+            await capture(handler, original, {'bot': bot})
+            await capture.task
+            campaign = capture.campaign()
+            self.assertEqual(campaign['phase'], 'ready')
+            self.assertEqual(campaign['trigger'], {'type': 'manual'})
+            self.assertNotIn('send_at', campaign)
+            self.assertEqual(bot.send_photo.await_args.kwargs['caption'], original.caption)
+            self.assertEqual(bot.send_photo.await_args.kwargs['caption_entities'], original.caption_entities)
+            self.assertEqual(bot.send_photo.await_args.kwargs['chat_id'], OWNER)
+            self.assertIn('Время рассылки пока не назначено.', bot.send_message.await_args.kwargs['text'])
+            handler.assert_not_awaited()
+            await capture(handler, message(message_id=21), {'bot': bot})
+            handler.assert_awaited_once()
+            self.assertEqual(capture.campaign()['source_message_ids'], [20])
+
+    async def test_active_campaign_captures_plain_text_without_reply_and_previews_exactly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            write_private_json(base / 'active.json', {'id':'ad-20261103'})
+            capture = AdminPostCapture.active(base)
+            write_private_json(capture.campaign_path, dict(id='ad-20261103', owner=OWNER,
+                phase='awaiting_post',
+                capture_armed_at='2026-01-01T00:00:00+00:00',
+                trigger={'type':'schedule_complete','schedule_date':'05.11.2026'}))
+            original = message(photo=[], caption=None, text='Новый рекламный пост')
+            bot = AsyncMock()
+            bot.send_message.return_value = original.model_copy(update={'message_id':30})
+            handler = AsyncMock()
+            await capture(handler, original, {'bot':bot})
+            await capture.task
+            self.assertEqual(capture.campaign()['phase'], 'ready')
+            self.assertEqual(bot.send_message.await_args_list[0].kwargs['text'], original.text)
+            self.assertIn('05.11.2026', bot.send_message.await_args_list[1].kwargs['text'])
+            self.assertNotIn('29 октября', bot.send_message.await_args_list[1].kwargs['text'])
+            handler.assert_not_awaited()
+
+    def test_active_campaign_rejects_directory_traversal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            write_private_json(Path(directory) / 'active.json', {'id':'../../other'})
+            with self.assertRaises(ValueError):
+                AdminPostCapture.active(directory)
+
     async def test_photo_preserves_entities_caption_and_markup(self):
         bot = AsyncMock()
         original = message(reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[

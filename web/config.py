@@ -1,2 +1,2 @@
 API_URL = "http://127.0.0.1:8000"
-STATIC_VERSION = "20261102-download-2"
+STATIC_VERSION = "20261124-miniapp-v2-29"

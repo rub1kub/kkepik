@@ -162,6 +162,7 @@
     </div>
 
     <noscript>Для поиска расписания необходимо включить JavaScript.</noscript>
+    <script src="{{ url_for('static', filename='js/effects.js') }}?v={{ STATIC_VERSION }}"></script>
     <script src="{{ url_for('static', filename='js/schedule_search.js') }}?v={{ STATIC_VERSION }}"></script>
 </body>
 </html>

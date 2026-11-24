@@ -276,6 +276,7 @@ async def _process_schedule_bytes(
     source_chat_id: int | str,
     source_message_id: int | str,
 ) -> bool:
+    import config
     from max_bot.client import get_telegram_bot
 
     if not _has_valid_signature(data, file_name):
@@ -292,6 +293,19 @@ async def _process_schedule_bytes(
             file_name,
             message_kind="schedule_rejected",
         )
+        return True
+
+    # History can contain the same file already uploaded through Telegram.
+    # An identical source should not trigger another notification pass.
+    try:
+        with open(os.path.join(config.DATA_DIR, file_name), "rb") as published:
+            matches_published = published.read(len(data) + 1) == data
+    except FileNotFoundError:
+        matches_published = False
+    if matches_published:
+        _record_schedule_source(source_chat_id, source_message_id, file_name,
+                                message_kind="schedule_duplicate")
+        print(f"[MAX] Файл уже опубликован: {file_name}")
         return True
 
     bot = get_telegram_bot()

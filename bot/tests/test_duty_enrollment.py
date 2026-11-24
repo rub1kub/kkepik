@@ -117,9 +117,12 @@ class EnrollmentTest(unittest.TestCase):
 
     def test_append_does_not_reenrol_departed_members(self):
         sid = self.store.create(99, self.group, parse_people('11 + 12'), [], auto_link=True)
+        mid = self.store.view(sid,99)['members'][0]['id']
+        self.store.edit_member(mid,99,'active',False)
         self.store.manage(sid, 11, 'leave')
         self.store.append_roster(sid, 99, reserves=parse_people('99', reserves=True), auto_link=True)
-        self.assertIsNone(next(m for m in self.store.view(sid, 99)['members'] if m['telegram_id'] == 11)['uid'])
+        with self.store.connect() as db:
+            self.assertIsNone(self.store._member(db, mid)['uid'])
         self.assertEqual(self.store.lists(11), [])
         self.assertEqual(self.store.view(sid, 99)['access']['role'], 'owner')
 
@@ -128,6 +131,8 @@ class EnrollmentTest(unittest.TestCase):
             with self.subTest(action=action):
                 sid = self.store.create(99, self.group, parse_people('11 + 12'), [], auto_link=True)
                 job = next(j for j in self.store.pending_jobs() if j['space'] == sid and j['uid'] == 11)
+                if action == 'leave':
+                    self.store.edit_member(job['ref'],99,'active',False)
                 self.store.manage(sid, 99 if action in ('pause', 'archive') else 11, action)
                 self.assertEqual(bool(self.store.begin_delivery(job['id'])), action == 'pause')
                 self.store.manage(sid, 99, 'archive')

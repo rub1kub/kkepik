@@ -11,6 +11,7 @@ import os
 import shutil
 import logging
 from collections import Counter
+from functools import cache
 from html import escape
 import pandas as pd
 from aiogram import types
@@ -33,7 +34,7 @@ from schedules.schedule_formatter import (
 )
 from schedules.schedule_keyboard import create_schedule_keyboard
 from schedules.schedule_dates import is_current_schedule
-from schedules.schedule_notices import append_broadcast_schedule_notice, get_broadcast_schedule_notice
+from schedules.schedule_notices import append_broadcast_schedule_notice, get_broadcast_schedule_notice, take_next_schedule_notice
 from schedules.pdf_crop import crop_group_screenshots
 from tracked_groups import get_all_tracked_groups
 from message_registry import message_tracking_context
@@ -68,6 +69,7 @@ async def _send_tracked_group_schedule(
     always_show_group: bool,
     recipient_role: str | None = None,
     preferences=None,
+    extra_notice=None,
 ) -> bool:
     with message_tracking_context(
         message_kind="schedule",
@@ -87,6 +89,7 @@ async def _send_tracked_group_schedule(
             always_show_group=always_show_group,
             recipient_role=recipient_role,
             preferences=preferences,
+            extra_notice=extra_notice,
         )
 
 
@@ -103,6 +106,7 @@ async def _send_tracked_group_schedule_impl(
     always_show_group: bool,
     recipient_role: str | None = None,
     preferences=None,
+    extra_notice=None,
 ) -> bool:
     lines = group_schedule.get_schedule_for_group(df, group_name.upper())
     keyboard = create_schedule_keyboard(schedule_date, "groups", user_id=uid, entity_type="group", entity_id=group_name)
@@ -131,9 +135,9 @@ async def _send_tracked_group_schedule_impl(
     )
     if is_update:
         message = "‼️ РАСПИСАНИЕ ИЗМЕНИЛОСЬ\n\n" + message
-    message = append_broadcast_schedule_notice(message, recipient_role, schedule_date)
+    message = append_broadcast_schedule_notice(message, recipient_role, schedule_date, extra_notice=extra_notice)
     await send_personal_schedule(bot, uid, message, image, keyboard, preferences,
-                                 notice=get_broadcast_schedule_notice(schedule_date, recipient_role))
+                                 notice=get_broadcast_schedule_notice(schedule_date, recipient_role, extra_notice=extra_notice))
     return True
 
 
@@ -524,6 +528,10 @@ async def process_and_broadcast(
 
 
     # 8. Рассылка
+    @cache
+    def batch_notice():
+        return take_next_schedule_notice(config.DATA_DIR, schedule_date, schedule_type, is_update=is_update)
+
     success_count = 0
     notified_user_ids: set[int] = set()
 
@@ -554,6 +562,7 @@ async def process_and_broadcast(
                         always_show_group=role == config.ROLE_TEACHER,
                         recipient_role=role,
                         preferences=preferences,
+                        extra_notice=batch_notice(),
                     )
                     if sent:
                         success_count += 1
@@ -570,7 +579,7 @@ async def process_and_broadcast(
                     msg_text = render_schedule_message(lines_raw, namegrp, schedule_date, preferences=preferences, teacher=True)
                     if is_update:
                         msg_text = "‼️ РАСПИСАНИЕ ИЗМЕНИЛОСЬ\n\n" + msg_text
-                    msg_text = append_broadcast_schedule_notice(msg_text, role, schedule_date)
+                    msg_text = append_broadcast_schedule_notice(msg_text, role, schedule_date, extra_notice=batch_notice())
                     try:
                         with message_tracking_context(
                             message_kind="schedule",
@@ -609,7 +618,7 @@ async def process_and_broadcast(
                     msg_text = render_schedule_message(lines_raw, namegrp, schedule_date, preferences=preferences, teacher=True)
                     if is_update:
                         msg_text = "‼️ РАСПИСАНИЕ ИЗМЕНИЛОСЬ\n\n" + msg_text
-                    msg_text = append_broadcast_schedule_notice(msg_text, role, schedule_date)
+                    msg_text = append_broadcast_schedule_notice(msg_text, role, schedule_date, extra_notice=batch_notice())
                     try:
                         schedule_keyboard = create_schedule_keyboard(schedule_date, "teachers", user_id=uid, entity_type="teacher", entity_id=namegrp)
                         with message_tracking_context(
@@ -630,4 +639,9 @@ async def process_and_broadcast(
         result_msg = f"Новое расписание разослано {len(notified_user_ids)} пользователям ({success_count} сообщений)."
 
     await _log(result_msg)
+    try:
+        from ad_after_schedule import schedule_broadcast_completed
+        schedule_broadcast_completed(schedule_date, schedule_type, is_update, len(notified_user_ids))
+    except Exception as error:
+        logging.warning('[broadcast] Advertising completion receipt failed (%s)', type(error).__name__)
     return True, result_msg

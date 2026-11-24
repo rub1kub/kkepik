@@ -101,9 +101,9 @@ class MessageSettingsProxyTest(unittest.TestCase):
             self.assertNotIn('sensitive', response.get_data(as_text=True))
             fake.close.assert_called_once()
 
-    def test_main_entry_is_a_small_footer_link_not_a_schedule_card(self):
+    def test_classic_entry_is_a_small_footer_link_not_a_schedule_card(self):
         import app as app_module
-        response = app_module.app.test_client().get('/')
+        response = app_module.app.test_client().get('/mini/classic')
         self.assertEqual(response.status_code, 200)
         text = response.get_data(as_text=True)
         self.assertIn('id="messageSettingsLink" class="feedback-link message-settings-link"', text)
@@ -116,8 +116,10 @@ class MessageSettingsProxyTest(unittest.TestCase):
         response = app_module.app.test_client().get('/service-worker.js')
         worker = response.get_data(as_text=True)
         self.assertIn('kkepik-shell-' + STATIC_VERSION, worker)
-        for asset in ('css/main.css', 'css/message_settings.css', 'js/message_settings.js', 'js/kepik-entry.js'):
+        for asset in ('miniapp/main.css', 'miniapp/main.js', 'js/kepik-entry.js'):
             self.assertIn('/static/' + asset + '?v=' + STATIC_VERSION, worker)
+        self.assertNotIn('js/message_settings.js', worker)
+        self.assertNotIn('js/pixel_canvas.js', worker)
         self.assertIn('no-store', response.headers['Cache-Control'])
         response.close()
 

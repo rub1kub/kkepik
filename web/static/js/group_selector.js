@@ -49,7 +49,7 @@
     function selectEntity(entity) {
         window.kkepikActivity?.selected(entity, favorites.some(e=>same(e,entity)));
         currentEntity=entity;remember(entity);renderEntitySwitcher();closeDropdown();
-        tg?.HapticFeedback?.impactOccurred?.('soft');window.updateScheduleForEntity?.(entity);
+        window.kkepikHaptics?.play('soft');window.updateScheduleForEntity?.(entity);
     }
     function bootstrap(data) {
         if (Array.isArray(data?.favorites)) favorites=data.favorites.filter(e=>key(e));
@@ -194,7 +194,10 @@
         updateType();oldOverflow=document.body.style.overflow;document.body.style.overflow='hidden';
         if(!sheet.open)sheet.showModal();tg?.BackButton?.onClick?.(closeAddModal);tg?.BackButton?.show?.();resizeSheet();input.focus({preventScroll:true});onAddInputChange();
     }
-    function closeAddModal() {if(sheet?.open)sheet.close();}
+    function closeAddModal() {
+        if (window.kkepikSlideClose) window.kkepikSlideClose(sheet);
+        else if (sheet?.open) sheet.close();
+    }
     document.addEventListener('visibilitychange',()=>{if(!document.hidden&&sheet?.open)tg?.BackButton?.show?.();});
     function setSaving() {
         if(!sheet)return;
@@ -229,6 +232,7 @@
             else if(event.key==='Enter'){event.preventDefault();if(activeOption>=0)options[activeOption]?.click();else if(selected)addFavorite();}
         });
         sheet.addEventListener('click',event=>{if(event.target!==sheet)return;const rect=sheet.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeAddModal();});
+        sheet.addEventListener('cancel', event => { event.preventDefault(); closeAddModal(); });
         sheet.addEventListener('close',()=>{tg?.BackButton?.offClick?.(closeAddModal);tg?.BackButton?.hide?.();searchVersion++;document.body.style.overflow=oldOverflow;input.removeAttribute('aria-activedescendant');manage.focus({preventScroll:true});});
     }
     function normalizeSearch(value) {return value.normalize('NFKC').toLocaleLowerCase('ru').replace(/ё/g,'е').replace(/[\s.\-‐‑‒–—−]/g,'');}

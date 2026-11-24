@@ -93,6 +93,7 @@ desktop.ini
 #  Сборки / дистрибутивы
 # ──────────────────────────────────────────────
 build/
+node_modules/
 dist/
 *.egg-info/
 .eggs/

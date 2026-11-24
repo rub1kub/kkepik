@@ -63,15 +63,20 @@ class Roster(Body):
 
 
 class Action(Body):
-    action: Literal['swap', 'rename', 'exempt', 'active', 'mute', 'daily_notifications', 'leave', 'pause', 'resume', 'archive',
+    action: Literal['swap', 'move_to_reserve', 'join_pair', 'pair_reserves',
+                    'rename', 'exempt', 'active', 'mute', 'daily_notifications', 'leave', 'pause', 'resume', 'archive',
                     'invite', 'manager', 'transfer', 'approve', 'reject', 'decline', 'reconsider',
-                    'offer_yes', 'offer_no', 'done', 'finish', 'correct', 'cancel_day', 'manual_pair', 'manual_reserve']
+                    'approve_decline', 'reject_decline', 'offer_yes', 'offer_no', 'done', 'finish', 'correct',
+                    'record_results', 'cancel_day', 'manual_pair', 'manual_reserve']
     member: int | None = Field(default=None, gt=0)
     other: int | None = Field(default=None, gt=0)
     day: int | None = Field(default=None, gt=0)
     offer: int | None = Field(default=None, gt=0)
     claim: int | None = Field(default=None, gt=0)
+    revision: int | None = Field(default=None, ge=0)
+    deputy: int | None = Field(default=None, gt=0)
     value: str | StrictBool | None = None
+    reason: str | None = None
     outcome: Literal['done', 'missed', 'excused'] = 'done'
 
 
@@ -103,7 +108,7 @@ def web_name(value):
 
 
 def web_day(data):
-    for person in data.get('people', []):
+    for person in data.get('people', []) + data.get('requests', []) + data.get('offer_declines', []):
         person['name'] = web_name(person['name'])
     for offer in data.get('offers', []):
         offer['host'], offer['guest'] = web_name(offer['host']), web_name(offer['guest'])
@@ -117,7 +122,11 @@ def roster_plan(body, uid, store, *, sid=None):
 @router.get('')
 def lists(uid: int = Depends(authenticated_id), store: Store = Depends(get_store)):
     spaces = store.lists(uid)
-    return dict(group=group_for(uid), spaces=[dict(id=s['id'], group=s['group_name'], role=s['role'], status=s['status']) for s in spaces])
+    group = spaces[0]['group_name'] if spaces else group_for(uid)
+    with store.connect() as db:
+        existing = db.execute("SELECT 1 FROM spaces WHERE group_name=? COLLATE NOCASE AND status!='archived'", (group,)).fetchone()
+    return dict(group=group, can_create=not existing and not spaces,
+                spaces=[dict(id=s['id'], group=s['group_name'], role=s['role'], status=s['status']) for s in spaces])
 
 
 @router.post('/people')
@@ -157,6 +166,10 @@ def detail(sid: int, uid: int = Depends(authenticated_id), store: Store = Depend
     members = []
     with store.connect() as db:
         roles = {r['uid']: r['role'] for r in db.execute('SELECT uid,role FROM access WHERE space=?', (sid,))}
+        deputies = [dict(id=row['id'], name=web_name(row['name'])) for row in db.execute(
+            "SELECT a.rowid id,coalesce(m.name,i.name,'Заместитель') name FROM access a "
+            "LEFT JOIN members m ON m.space=a.space AND m.uid=a.uid LEFT JOIN identities i ON i.uid=a.uid "
+            "WHERE a.space=? AND a.role='manager' ORDER BY name,a.rowid", (sid,))] if access['role'] == 'owner' else []
         # Include inactive entries for managers so they can restore them.
         if admin:
             inactive = [dict(r) for r in db.execute('SELECT m.*,NULL rank, '
@@ -170,12 +183,13 @@ def detail(sid: int, uid: int = Depends(authenticated_id), store: Store = Depend
         value = dict(id=m['id'], name=web_name(m['name']), pair=m['pair'], rank=m['rank'], mine=m['uid'] == uid,
                      linked=bool(m['uid']), completed=m['completed'], exempt_until=m['exempt_until'], active=bool(m['active']))
         if admin:
-            value.update(role=roles.get(m['uid']))
+            value.update(role=roles.get(m['uid']), credit=m['credit'])
         members.append(value)
     return dict(id=sid, group=data['space']['group_name'], status=data['space']['status'],
                 role=access['role'], muted=bool(access['muted']), daily_notifications=not bool(access['daily_muted']),
                 first_date=data['space']['first_date'],
                 options=settings(json.loads(data['space']['settings'])), members=members,
+                deputies=deputies,
                 days=[web_day(day_payload(store, did, uid)) for did in old_days],
                 forecast=[web_day(d) for d in forecast(store, sid, uid, Path(config.DATA_DIR) / 'knowledge.db')],
                 claims=[dict(id=c['id'], name=c['profile_name'] or c['name'], member=c['member']) for c in data['claims']],
@@ -205,8 +219,10 @@ def append(sid: int, body: Roster, uid: int = Depends(authenticated_id), store: 
 
 @router.post('/{sid}/actions')
 def action(sid: int, body: Action, uid: int = Depends(authenticated_id), store: Store = Depends(get_store)):
-    authorized(store, sid, uid)
     a = body.action
+    authorized(store, sid, uid, manage=a not in {
+        'mute', 'daily_notifications', 'leave', 'decline', 'reconsider', 'offer_yes', 'offer_no', 'done',
+    })
     try:
         if a == 'active' and type(body.value) is not bool:
             raise DutyError('Укажите, участвует ли человек в дежурствах')
@@ -223,6 +239,10 @@ def action(sid: int, body: Action, uid: int = Depends(authenticated_id), store: 
                 raise DutyError('Предложение не найдено в этом списке')
         if a == 'swap':
             store.swap_partners(body.member, body.other, uid)
+        elif a == 'move_to_reserve':
+            store.move_to_reserve(body.member, uid)
+        elif a in ('join_pair', 'pair_reserves'):
+            store.pair_reserve(body.member, body.other, uid, new_pair=a == 'pair_reserves')
         elif a in ('rename', 'exempt', 'active'):
             store.edit_member(body.member, uid, {'rename': 'name', 'exempt': 'exempt_until', 'active': 'active'}[a], body.value)
         elif a in ('mute', 'daily_notifications', 'leave', 'pause', 'resume', 'archive'):
@@ -231,22 +251,34 @@ def action(sid: int, body: Action, uid: int = Depends(authenticated_id), store: 
             return dict(url='https://t.me/kkepik_bot?start=duty_' + store.invite(sid, uid, body.member))
         elif a in ('manager', 'transfer'):
             with store.connect() as db:
-                target = store._member(db, body.member)
-            store.manage(sid, uid, a, target['uid'])
+                if a == 'manager' and body.value is False and body.deputy and body.member is None:
+                    target = db.execute("SELECT uid FROM access WHERE rowid=? AND space=? AND role!='owner'",
+                                        (body.deputy, sid)).fetchone()
+                    if not target:
+                        raise DutyError('Заместитель не найден.')
+                else:
+                    target = store._member(db, body.member)
+            if a == 'manager' and type(body.value) is not bool:
+                raise DutyError('Обновите страницу и выберите, назначить или снять заместителя.')
+            store.manage(sid, uid, a, target['uid'], enabled=body.value if a == 'manager' else None)
         elif a in ('approve', 'reject'):
             store.resolve_claim(body.claim, uid, body.member if a == 'approve' else None)
         elif a == 'decline':
-            store.decline(body.day, uid)
+            store.decline(body.day, uid, reason=body.reason)
         elif a == 'reconsider':
             store.reconsider(body.day, uid)
+        elif a in ('approve_decline', 'reject_decline'):
+            store.resolve_decline(body.day, body.member, uid, a == 'approve_decline')
         elif a in ('offer_yes', 'offer_no'):
-            store.reply_offer(body.offer, uid, a == 'offer_yes')
+            store.reply_offer(body.offer, uid, a == 'offer_yes', reason=body.reason)
         elif a == 'done':
             store.report_done(body.day, uid)
         elif a == 'finish':
             store.finish(body.day, uid, body.member, body.outcome)
         elif a == 'correct':
             store.correct_result(body.day, body.member, uid, body.outcome)
+        elif a == 'record_results':
+            store.record_results(body.day, uid, body.member, body.other, body.revision)
         elif a == 'cancel_day':
             store.cancel_day(body.day, uid)
         elif a == 'manual_pair':

@@ -108,6 +108,20 @@ class BootstrapApiTest(unittest.TestCase):
         self.assertFalse(payload['adjacent']['next']['available'])
         self.assertIsNone(payload['adjacent']['next']['schedule'])
 
+    def test_first_screen_skips_optional_neighbor_requests(self):
+        with (
+            patch.object(app_module, 'authenticated_telegram_user', return_value={'id': 42}),
+            patch.object(app_module, '_fetch_bootstrap_user', return_value=(200, {'role': 'student'})),
+            patch.object(app_module, '_fetch_bootstrap_schedule', return_value=(200, {'schedule': ['Математика']})) as schedule,
+            patch.object(app_module, 'get_db', return_value=FakeDatabase()),
+            patch.object(app_module, 'get_or_create_user', return_value=7),
+        ):
+            response = self.client.get('/api/bootstrap?date=25.08.2026&adjacent=0')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['adjacent'], {})
+        self.assertEqual(response.json['schedule']['schedule'], ['Математика'])
+        schedule.assert_called_once_with(42, '25.08.2026')
+
     def test_upstream_profile_uses_schedule_service_url(self):
         upstream_response = Mock()
         upstream_response.status_code = 200
@@ -155,6 +169,15 @@ class BootstrapApiTest(unittest.TestCase):
         self.assertIn('<script defer', html)
         self.assertNotIn('loader.gif', html)
         self.assertNotIn('id="loader"', html)
+        self.assertIn('id="miniapp-root"', html)
+        self.assertIn(f'/static/miniapp/main.js?v={app_module.STATIC_VERSION}', html)
+        self.assertIn(f'/static/miniapp/main.css?v={app_module.STATIC_VERSION}', html)
+        self.assertIn('/api/bootstrap?date=', html)
+        response.close()
+
+        response = self.client.get('/mini/classic')
+        html = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
         self.assertIn('id="schedule-loader"', html)
         self.assertIn('aria-label="Расписание загружается"', html)
         self.assertIn('id="pairs_block" aria-busy="true"', html)

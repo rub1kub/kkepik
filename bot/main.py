@@ -74,7 +74,7 @@ async def main():
     dp.update.outer_middleware(BotActivityMiddleware(config.get_db_path()))
 
     from admin_post_capture import AdminPostCapture
-    post_capture = AdminPostCapture(os.path.join(config.DATA_DIR, 'admin_campaigns', 'ad-20261029'))
+    post_capture = AdminPostCapture.active(os.path.join(config.DATA_DIR, 'admin_campaigns'))
     dp.message.outer_middleware(post_capture)
 
     # Private self-service rosters. Register their invitation /start handler

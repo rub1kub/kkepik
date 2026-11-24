@@ -1,5 +1,8 @@
 import datetime as dt
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
 import config
@@ -7,10 +10,40 @@ from handlers.schedule_broadcaster import _send_tracked_group_schedule
 from schedules.schedule_notices import (
     PIXEL_BATTLE_NOTICE,
     append_student_schedule_notice,
+    take_next_schedule_notice,
 )
+from schedule_preferences import SchedulePreferences
 
 
 class ScheduleNoticeTest(unittest.IsolatedAsyncioTestCase):
+    def test_only_one_new_broadcast_can_claim_a_pending_notice(self):
+        with TemporaryDirectory() as folder:
+            (Path(folder) / 'next_schedule_notice.html').write_text('Новинка!', encoding='utf-8')
+            self.assertIsNone(take_next_schedule_notice(folder, '25.11.2026', 'groups', is_update=True))
+            with ThreadPoolExecutor(2) as pool:
+                results = list(pool.map(lambda kind: take_next_schedule_notice(folder, '26.11.2026', kind, is_update=False),
+                                        ('groups', 'teachers')))
+            self.assertCountEqual(results, ['Новинка!', None])
+            self.assertIsNone(take_next_schedule_notice(folder, '27.11.2026', 'groups', is_update=False))
+
+    async def test_one_time_footer_in_every_group_delivery_mode(self):
+        notice = '🔮 <b>Новинка!</b> Текст с модерации.'
+        for mode in ('photo_text', 'photo', 'text'):
+            for role in (config.ROLE_STUDENT, config.ROLE_TEACHER):
+                bot = AsyncMock()
+                with patch('handlers.schedule_broadcaster.group_schedule.get_schedule_for_group',
+                           return_value=['▪️1 пара – История – Иванова – 35']):
+                    await _send_tracked_group_schedule(bot, 42, object(), '103-Д9', '26.11.2026',
+                        {'103-Д9': b'image'}, is_update=False, tracked_count=1, always_show_group=False,
+                        preferences=SchedulePreferences(delivery_mode=mode), recipient_role=role, extra_notice=notice)
+                call = bot.send_message.await_args or bot.send_photo.await_args
+                text = call.kwargs.get('text', call.kwargs.get('caption'))
+                self.assertEqual(text.count(notice), 1)
+                if mode == 'photo':
+                    self.assertEqual(text, notice)
+                else:
+                    self.assertTrue(text.endswith('\n\n' + notice))
+
     def test_notice_requires_exact_role_send_date_and_schedule_date(self):
         for today in (dt.date(2026, 9, 29), dt.date(2026, 9, 30), dt.date(2026, 10, 1), dt.date(2027, 9, 30)):
             for role in (config.ROLE_STUDENT, config.ROLE_TEACHER, None):

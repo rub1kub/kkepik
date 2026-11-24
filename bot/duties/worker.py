@@ -107,6 +107,16 @@ class DutyWorker:
             return text, rows
         if kind == 'claim':
             return self.app.claim_panel(ref, uid)
+        if kind in ('decline_request', 'decline_result'):
+            with self.store.connect() as db:
+                request = db.execute('SELECT * FROM decline_requests WHERE id=?', (ref,)).fetchone()
+            if not request:
+                raise DutyError('Запрос уже закрыт.')
+            if kind == 'decline_request':
+                return self.app.decline_request_panel(request['day'], request['member'], uid)
+            text = ('Староста одобрил перенос дежурства.' if request['status'] == 'approved'
+                    else 'Староста отклонил перенос. Дежурство остаётся за тобой.')
+            return text, [[('Открыть дежурство', f'day:{request["day"]}')]]
         if kind == 'added':
             data = self.store.view(job['space'], uid)
             space = data['space']
@@ -142,6 +152,9 @@ class DutyWorker:
             return text, [[('Открыть дежурства', f'open:{job["space"]}')]]
         text, rows = self.app.day_panel(ref, uid, notification=kind in ('daily', 'update'))
         if kind in ('daily', 'update') and not any('decline:' in callback for row in rows for _, callback in row):
+            if any(a['uid'] == uid and a['state'] in ('assigned', 'reported', 'done')
+                   for a in self.store.day_view(ref, uid)['assignments']):
+                return text, rows
             rows.append([('🔕 Не присылать, кто дежурит', f'daily:{job["space"]}:0')])
         if kind == 'report':
             text = 'Пора отметить дежурство.\n\n' + text

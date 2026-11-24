@@ -97,9 +97,11 @@ async def deliver(bot, uid, post, record, retry_at=0):
         except TelegramUnauthorizedError:
             return dict(user_id=uid, status='unauthorized', stop=True)
         except TelegramBadRequest as exc:
-            missing = any(s in exc.message.lower() for s in
-                          ('chat not found', 'user not found', 'user is deactivated'))
-            return dict(user_id=uid, status='unreachable' if missing else 'payload_error', stop=not missing)
+            unreachable = any(s in exc.message.lower() for s in
+                              ('chat not found', 'user not found', 'user is deactivated', 'user_is_blocked'))
+            if unreachable:
+                return dict(user_id=uid, status='unreachable')
+            return dict(user_id=uid, status='payload_error', error=exc.message[:240], stop=True)
         except (TelegramNetworkError, TelegramAPIError):
             # Telegram provides no idempotency key. Never retry an uncertain send.
             return dict(user_id=uid, status='unknown_outcome')

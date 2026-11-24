@@ -66,6 +66,7 @@ class PdfBlockSegment:
     y_start: float
     y_end: float
     continuation: bool = False
+    split_pair: bool = False
 
 
 def _group_blocks(groups: List[Dict]) -> list:
@@ -85,6 +86,31 @@ def _pair_column_x(chars: list, groups: list) -> Optional[float]:
     return min(candidates) if candidates else None
 
 
+def _pair_content(chars, group_x, pair_top, y_end):
+    return [char for char in chars if char["x0"] >= group_x - 10
+            and pair_top - 2 <= char["top"] <= y_end and char["text"].strip()]
+
+
+def _teacher_line(char, pair_top):
+    return 7 < char["top"] - pair_top < 14
+
+
+def _carry_at_page_end(page, groups, chars, pairs, pair_x, y_end):
+    last = pairs[-1] if pairs else None
+    if groups[0]["y"] < page.height - 45 and (not last or last["top"] < page.height - 45):
+        return None
+    content = _pair_content(chars, groups[0]["x"], last["top"], y_end) if last else []
+    return {"groups": groups, "last_pair": int(last["num"]) if last else 0,
+            "pair_x": pair_x, "width": page.width,
+            "split_candidate": bool(content) and all(
+                -2 <= char["top"] - last["top"] <= 7 for char in content)}
+
+
+def _ambiguous_continuation(page_number):
+    return ValueError("Найдено неоднозначное продолжение таблицы PDF на странице "
+                      f"{page_number}; обработка остановлена, чтобы не смешать группы.")
+
+
 def _iter_pdf_block_segments(pdf):
     """Keep an unfinished bottom block across page breaks without guessing names.
 
@@ -92,6 +118,8 @@ def _iter_pdf_block_segments(pdf):
     its remaining rows at the top of the next. A continuation is accepted only
     for a block reaching the previous page's bottom, a sequential left-hand
     pair column, compatible page width and a small, verified horizontal shift.
+    Excel can repeat the last pair number when it prints the teacher line on
+    the next page. Accept it only when the two halves contain complementary rows.
     """
     carry = None
     for page in pdf.pages:
@@ -121,7 +149,18 @@ def _iter_pdf_block_segments(pdf):
                                      and char["text"].strip() == pairs[0]["num"])
                     shift = observed_x - pair_x if pair_x is not None else 0
                     numbers = [int(pair["num"]) for pair in pairs]
+                    shifted_groups = [dict(group, x=group["x"] + shift)
+                                      for group in previous["groups"]]
+                    first_top = pairs[0]["top"]
+                    first_end = pairs[1]["top"] - 1 if len(pairs) > 1 else prefix_end
+                    split_pair = False
                     expected = previous["last_pair"] + 1
+                    if (numbers[0] == previous["last_pair"] and previous["split_candidate"]
+                            and pair_x is not None and first_top <= 18):
+                        tail = _pair_content(prefix, shifted_groups[0]["x"], first_top, first_end)
+                        split_pair = bool(tail) and all(_teacher_line(char, first_top) for char in tail)
+                        if split_pair:
+                            expected -= 1
                     valid = (numbers == list(range(expected, expected + len(numbers)))
                              and all(1 <= number <= 9 for number in numbers)
                              and abs(page.width - previous["width"]) <= 1)
@@ -129,20 +168,15 @@ def _iter_pdf_block_segments(pdf):
                         next_groups = sorted(blocks[0][1], key=lambda group: group["x"])
                         valid = valid and abs(next_groups[0]["x"]
                                               - previous["groups"][0]["x"] - shift) <= 2
-                    shifted_groups = [dict(group, x=group["x"] + shift)
-                                      for group in previous["groups"]]
                     has_content = any(char["x0"] >= shifted_groups[0]["x"] - 10
                                       and any(letter.isalpha() for letter in char["text"])
                                       for char in prefix)
                     if not valid or not has_content:
-                        raise ValueError(
-                            "Найдено неоднозначное продолжение таблицы PDF на странице "
-                            f"{page.page_number}; обработка остановлена, чтобы не смешать группы."
-                        )
-                    yield PdfBlockSegment(page, shifted_groups, 0, prefix_end, True)
+                        raise _ambiguous_continuation(page.page_number)
+                    yield PdfBlockSegment(page, shifted_groups, 0, prefix_end, True, split_pair)
                     if not blocks and pairs[-1]["top"] >= page.height - 45:
-                        carry = {"groups": shifted_groups, "last_pair": numbers[-1],
-                                 "pair_x": observed_x, "width": page.width}
+                        carry = _carry_at_page_end(page, shifted_groups, prefix, pairs,
+                                                   observed_x, prefix_end)
             for index, (header_y, groups) in enumerate(blocks):
                 groups = sorted(groups, key=lambda group: group["x"])
                 y_end = blocks[index + 1][0] - 3 if index + 1 < len(blocks) else page.height - 5
@@ -150,12 +184,8 @@ def _iter_pdf_block_segments(pdf):
                 if index + 1 == len(blocks):
                     block_chars = [char for char in chars if header_y + 3 <= char["top"] <= y_end]
                     pairs = _find_pair_numbers(block_chars, groups[0]["x"] - 8)
-                    reaches_bottom = (header_y >= page.height - 45
-                                      or bool(pairs and pairs[-1]["top"] >= page.height - 45))
-                    pair_x = _pair_column_x(chars, groups)
-                    if reaches_bottom:
-                        carry = {"groups": groups, "last_pair": int(pairs[-1]["num"]) if pairs else 0,
-                                 "pair_x": pair_x, "width": page.width}
+                    carry = _carry_at_page_end(page, groups, block_chars, pairs,
+                                               _pair_column_x(chars, groups), y_end)
         finally:
             # pdfplumber otherwise retains every page's character cache until EOF.
             close = getattr(page, "close", None)
@@ -576,7 +606,20 @@ def pdf_to_dataframe(file_path: str) -> Optional[pd.DataFrame]:
                     header[2 + index * 4] = group["name"]
                 all_rows.append(header)
             if rows:
-                all_rows.extend(rows[1:])
+                if segment.split_pair:
+                    # The previous segment has only the subject and room for
+                    # this pair. Attach the teacher row without adding a pair.
+                    if (len(rows) < 3 or len(all_rows) < 2
+                            or rows[1][0] != all_rows[-2][0]
+                            or any(rows[1][2:]) or any(all_rows[-1][2:])
+                            or not any(rows[2][2:])
+                            or any(teacher and not subject
+                                   for teacher, subject in zip(rows[2][2:], all_rows[-2][2:]))):
+                        raise _ambiguous_continuation(segment.page.page_number)
+                    all_rows[-1] = rows[2]
+                    all_rows.extend(rows[3:])
+                else:
+                    all_rows.extend(rows[1:])
 
     if not all_rows or not any(row[0] is not None for row in all_rows):
         logger.warning(f"pdf_to_df: all_rows пуст — ни одна группа не распознана в {file_path}")

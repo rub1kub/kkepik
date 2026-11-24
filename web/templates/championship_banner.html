@@ -1,18 +1,17 @@
 {% if championship_banner %}
-<aside id="championshipBanner" class="championship-banner" data-campaign-id="{{ championship_banner.id }}" aria-label="Реклама чемпионата Changellenge" hidden>
-    <a class="championship-banner-link" href="{{ championship_banner.url }}" target="_blank" rel="noopener noreferrer" aria-labelledby="championshipBannerTitle championshipBannerAction">
+<aside id="championshipBanner" class="championship-banner" data-campaign-id="{{ championship_banner.id }}" aria-label="Реклама. Опрос Changellenge Best Company Award" hidden>
+    <a class="championship-banner-link" href="{{ championship_banner.url }}" target="_blank" rel="noopener noreferrer" aria-labelledby="championshipBannerTitle championshipBannerAction" aria-describedby="championshipBannerDescription championshipBannerPrize">
         <div class="championship-banner-top">
             <span class="championship-banner-brand">Changellenge <span aria-hidden="true">&gt;&gt;</span></span>
             <span class="championship-banner-label">Реклама</span>
         </div>
-        <p class="championship-banner-event">Cup Moscow 2026 · онлайн</p>
-        <svg class="championship-banner-art" viewBox="0 0 100 100" aria-hidden="true"><path d="m14 17 33 33-33 33M49 17l33 33-33 33" /></svg>
-        <h2 id="championshipBannerTitle" class="championship-banner-title">Кейс в портфолио.<br><span>Шанс на оффер.</span></h2>
-        <p class="championship-banner-description">Чемпионат для студентов колледжей</p>
-        <p class="championship-banner-partners">ВТБ <span>·</span> Альфа-Банк <span>·</span> X5</p>
+        <div class="championship-banner-heading">
+            <h2 id="championshipBannerTitle" class="championship-banner-title">Какой должна быть работа, на которую хочется идти?</h2>
+        </div>
+        <p id="championshipBannerDescription" class="championship-banner-description">10 минут · бонусы за участие</p>
         <div class="championship-banner-bottom">
-            <span id="championshipBannerAction" class="championship-banner-action">Участвовать <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg></span>
-            <span class="championship-banner-deadline">До 9 ноября</span>
+            <span id="championshipBannerAction" class="championship-banner-action">Пройти опрос <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg></span>
+            <span id="championshipBannerPrize" class="championship-banner-prize">В розыгрыше<br><strong>iPhone 17 Pro</strong></span>
         </div>
     </a>
 </aside>

@@ -27,6 +27,15 @@ class DutyError(ValueError):
     pass
 
 
+def validate_decline_reason(value):
+    reason = value.strip() if isinstance(value, str) else ''
+    if not reason:
+        raise DutyError('Напишите причину отказа.')
+    if len(reason) > 500:
+        raise DutyError('Сократите причину до 500 символов.')
+    return reason
+
+
 class AmbiguousPerson(DutyError):
     """An unresolved roster entry, with its position and the resolved draft."""
     def __init__(self, name, path, pairs, reserves):
@@ -213,6 +222,11 @@ class Store:
                     state TEXT NOT NULL DEFAULT 'pending', expires REAL NOT NULL,
                     reminded INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL);
                 CREATE UNIQUE INDEX IF NOT EXISTS one_pending_offer ON offers(day) WHERE state='pending';
+                CREATE TABLE IF NOT EXISTS decline_requests(
+                    id INTEGER PRIMARY KEY, day INTEGER NOT NULL REFERENCES days(id),
+                    member INTEGER NOT NULL REFERENCES members(id), uid INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending', created REAL NOT NULL,
+                    UNIQUE(day,member));
                 CREATE TABLE IF NOT EXISTS outbox(
                     id INTEGER PRIMARY KEY, space INTEGER NOT NULL REFERENCES spaces(id), uid INTEGER NOT NULL,
                     kind TEXT NOT NULL, ref INTEGER NOT NULL, dedup TEXT NOT NULL UNIQUE,
@@ -231,6 +245,19 @@ class Store:
                 db.execute('ALTER TABLE members ADD COLUMN telegram_id INTEGER')
             if 'daily_muted' not in {r['name'] for r in db.execute('PRAGMA table_info(access)')}:
                 db.execute('ALTER TABLE access ADD COLUMN daily_muted INTEGER NOT NULL DEFAULT 0')
+            if 'credit_after' not in {r['name'] for r in db.execute('PRAGMA table_info(members)')}:
+                db.execute("ALTER TABLE members ADD COLUMN credit_after TEXT NOT NULL DEFAULT ''")
+            if 'reserve_order' not in {r['name'] for r in db.execute('PRAGMA table_info(members)')}:
+                db.execute('ALTER TABLE members ADD COLUMN reserve_order INTEGER')
+            if 'rounds_offset' not in {r['name'] for r in db.execute('PRAGMA table_info(pairs)')}:
+                db.execute('ALTER TABLE pairs ADD COLUMN rounds_offset INTEGER NOT NULL DEFAULT 0')
+            if 'reason' not in {r['name'] for r in db.execute('PRAGMA table_info(decline_requests)')}:
+                db.execute("ALTER TABLE decline_requests ADD COLUMN reason TEXT NOT NULL DEFAULT ''")
+            offer_columns = {r['name'] for r in db.execute('PRAGMA table_info(offers)')}
+            if 'declined_by' not in offer_columns:
+                db.execute('ALTER TABLE offers ADD COLUMN declined_by INTEGER REFERENCES members(id)')
+            if 'decline_reason' not in offer_columns:
+                db.execute("ALTER TABLE offers ADD COLUMN decline_reason TEXT NOT NULL DEFAULT ''")
             db.execute('CREATE UNIQUE INDEX IF NOT EXISTS member_telegram_target ON members(space,telegram_id) WHERE telegram_id IS NOT NULL')
             if db.execute('PRAGMA user_version').fetchone()[0] < 3:
                 db.execute("UPDATE outbox SET status='cancelled' WHERE status='pending' AND kind IN ('daily','update','source_change') "
@@ -364,6 +391,8 @@ class Store:
         with self.connect(True) as db:
             if db.execute("SELECT 1 FROM spaces WHERE owner=? AND status!='archived'", (uid,)).fetchone():
                 raise DutyError("Дежурства у вас уже настроены. Откройте /duty, чтобы изменить пары или настройки.")
+            if db.execute("SELECT 1 FROM spaces WHERE group_name=? COLLATE NOCASE AND status!='archived'", (group,)).fetchone():
+                raise DutyError('У этой группы уже есть список дежурств. За доступом обратитесь к старосте.')
             sid = db.execute('INSERT INTO spaces(owner,group_name,settings,first_date,created) VALUES(?,?,?,?,?)',
                              (uid, group, json.dumps(opts, ensure_ascii=False), first.isoformat(), now.timestamp())).lastrowid
             db.execute("INSERT INTO access(space,uid,role) VALUES(?,?,'owner')", (sid, uid))
@@ -375,17 +404,30 @@ class Store:
         return sid
 
     @staticmethod
-    def _add_people(db, sid, pairs, reserves):
-        added = []
+    def _pair_position(db, sid):
         rank = db.execute('SELECT coalesce(max(rank),0) FROM pairs WHERE space=?', (sid,)).fetchone()[0]
-        for offset, pair in enumerate(pairs, 1):
-            pid = db.execute('INSERT INTO pairs(space,rank) VALUES(?,?)', (sid, rank + offset)).lastrowid
+        rounds = db.execute('SELECT coalesce(min(p.rounds),0) FROM pairs p WHERE p.space=? AND '
+                            '2=(SELECT count(*) FROM members m WHERE m.pair=p.id AND m.active=1)', (sid,)).fetchone()[0]
+        return rank + 1, rounds
+
+    @staticmethod
+    def _next_reserve(db, sid):
+        return db.execute('SELECT coalesce(max(coalesce(reserve_order,id)),0)+1 FROM members WHERE space=? AND pair IS NULL',
+                          (sid,)).fetchone()[0]
+
+    def _add_people(self, db, sid, pairs, reserves):
+        added = []
+        rank, rounds = self._pair_position(db, sid)
+        for offset, pair in enumerate(pairs):
+            pid = db.execute('INSERT INTO pairs(space,rank,rounds,rounds_offset) VALUES(?,?,?,?)',
+                             (sid, rank + offset, rounds, rounds)).lastrowid
             for item in pair:
                 added.append(db.execute('INSERT INTO members(space,pair,name,username,telegram_id) VALUES(?,?,?,?,?)',
                            (sid, pid, item['name'], item.get('username'), item.get('telegram_id'))).lastrowid)
-        for item in reserves:
-            added.append(db.execute('INSERT INTO members(space,name,username,telegram_id) VALUES(?,?,?,?)',
-                       (sid, item['name'], item.get('username'), item.get('telegram_id'))).lastrowid)
+        reserve_order = self._next_reserve(db, sid)
+        for offset, item in enumerate(reserves):
+            added.append(db.execute('INSERT INTO members(space,name,username,telegram_id,reserve_order) VALUES(?,?,?,?,?)',
+                       (sid, item['name'], item.get('username'), item.get('telegram_id'), reserve_order + offset)).lastrowid)
         return added
 
     def _link_added(self, db, sid, actor, added):
@@ -416,7 +458,7 @@ class Store:
             members = [dict(row) for row in db.execute('SELECT m.*,p.rank,'
                 "(SELECT count(*) FROM assignments a WHERE a.member=m.id AND a.state='done') completed "
                 'FROM members m LEFT JOIN pairs p ON p.id=m.pair WHERE m.space=? AND m.active=1 '
-                'ORDER BY m.pair IS NULL,p.rank,m.id', (sid,))]
+                'ORDER BY m.pair IS NULL,p.rank,CASE WHEN m.pair IS NULL THEN coalesce(m.reserve_order,m.id) ELSE m.id END,m.id', (sid,))]
             days = [dict(row) for row in db.execute("SELECT * FROM days WHERE space=? AND (id IN "
                 "(SELECT id FROM days WHERE space=? ORDER BY date DESC LIMIT 14) OR id IN "
                 "(SELECT day FROM assignments WHERE state IN ('assigned','waiting','reported'))) ORDER BY date DESC", (sid, sid))]
@@ -545,10 +587,10 @@ class Store:
             targets.update(row[0] for row in db.execute("SELECT DISTINCT a.uid FROM access a JOIN members m "
                 "ON m.space=a.space AND m.uid=a.uid WHERE a.space=? AND a.muted=0 AND a.daily_muted=0 "
                 "AND m.active=1", (day['space'],)))
-        elif opts['audience'] == 'assigned':
+        if opts['audience'] != 'off':
             targets.update(row[0] for row in db.execute("SELECT DISTINCT m.uid FROM assignments x JOIN members m ON m.id=x.member "
-                "JOIN access a ON a.space=m.space AND a.uid=m.uid WHERE x.day=? AND a.muted=0 AND a.daily_muted=0 "
-                "AND x.state IN ('assigned','waiting','reported','done') AND m.active=1", (day['id'],)))
+                "JOIN access a ON a.space=m.space AND a.uid=m.uid WHERE x.day=? AND a.muted=0 "
+                "AND x.state IN ('assigned','reported','done') AND m.active=1", (day['id'],)))
         if opts['owner_daily']:
             targets.update(row[0] for row in db.execute("SELECT uid FROM access WHERE space=? AND role IN ('owner','manager') AND muted=0 AND daily_muted=0", (day['space'],)))
         return targets - {None}
@@ -556,6 +598,9 @@ class Store:
     def _changed(self, db, did, *, initial=False):
         db.execute('UPDATE days SET revision=revision+1 WHERE id=?', (did,))
         day = self._day(db, did)
+        db.execute("UPDATE decline_requests SET status='withdrawn' WHERE day=? AND status='pending' AND "
+                   "NOT EXISTS(SELECT 1 FROM assignments a WHERE a.day=? AND a.member=decline_requests.member AND a.state IN ('assigned','waiting'))",
+                   (did, did))
         if day['status'] == 'no_duty':
             return
         # Update previous morning cards too, including somebody whose assignment
@@ -624,16 +669,19 @@ class Store:
         used = {row[0] for row in db.execute('SELECT guest FROM offers WHERE day=?', (did,))}
         reserves = [dict(r) for r in db.execute("SELECT m.* FROM members m WHERE m.space=? AND m.pair IS NULL "
             "AND m.active=1 AND m.uid IS NOT NULL ORDER BY (SELECT count(*) FROM assignments a WHERE a.member=m.id "
-            "AND a.state='done'),m.id", (day['space'],))]
+            "AND a.state='done'),coalesce(m.reserve_order,m.id),m.id", (day['space'],))]
         for candidate in reserves:
             if candidate['id'] not in used and self._available(db, candidate, day):
                 self._offer(db, day, 'reserve', host, candidate, now)
                 return
         self._skip_pair(db, did, now)
 
-    def _choose_pair(self, db, did, now, *, promoted=False):
+    def _choose_pair(self, db, did, now, *, timeout_fallback=False):
         day = self._day(db, did)
-        if now.timestamp() >= day['cutoff']:
+        can_offer = now.timestamp() < day['cutoff']
+        # A reserve window can expire at the cutoff. The worker may close it
+        # just after the cutoff, while there is still time to alert a full pair.
+        if not can_offer and not (timeout_fallback and now.timestamp() < day['cutoff'] + 30):
             self._unfilled(db, did, now)
             return
         attempted = set(json.loads(day['attempted']))
@@ -650,16 +698,11 @@ class Store:
                 continue
             due = [m for m in people if m['credit'] == 0 and self._available(db, m, day)]
             if len(due) == 2:
-                if promoted:
-                    if not all(m['uid'] for m in due):
-                        continue
-                    self._offer(db, self._day(db, did), 'pair', due[0], due[1], now)
-                else:
-                    for m in due:
-                        self._assign(db, did, m['id'], 'assigned')
-                    db.execute("UPDATE days SET status='assigned' WHERE id=?", (did,))
+                for m in due:
+                    self._assign(db, did, m['id'], 'assigned')
+                db.execute("UPDATE days SET status='assigned' WHERE id=?", (did,))
                 return
-            if len(due) == 1:
+            if len(due) == 1 and can_offer:
                 # Previously completed partner keeps their credit. Only the
                 # outstanding person is offered a voluntary reserve pairing.
                 self._assign(db, did, due[0]['id'], 'waiting')
@@ -675,13 +718,13 @@ class Store:
         self._managers_job(db, day['space'], 'alert', did, f"unfilled:{did}")
         self.event(db, day['space'], None, 'unfilled', did, now)
 
-    def _skip_pair(self, db, did, now):
+    def _skip_pair(self, db, did, now, *, timeout_fallback=False):
         day = self._day(db, did)
         db.execute("UPDATE offers SET state='cancelled' WHERE day=? AND state='pending'", (did,))
         for row in db.execute("SELECT member FROM assignments WHERE day=? AND state IN ('assigned','waiting')", (did,)).fetchall():
             db.execute('UPDATE members SET pending_since=coalesce(pending_since,?) WHERE id=?', (day['date'], row['member']))
         db.execute("UPDATE assignments SET state='released' WHERE day=? AND state IN ('assigned','waiting')", (did,))
-        self._choose_pair(db, did, now, promoted=True)
+        self._choose_pair(db, did, now, timeout_fallback=timeout_fallback)
 
     def ensure_day(self, sid, now=None, source_state='unknown', source_revision=None):
         now = now or clock()
@@ -704,37 +747,65 @@ class Store:
             self.event(db, sid, None, 'day_created', did, now)
             return did
 
-    def decline(self, did, uid, now=None):
+    def _decline_member(self, db, did, uid, now):
+        day = self._day(db, did)
+        self.permission(db, day['space'], uid)
+        if day['date'] != now.date().isoformat() or now.timestamp() >= day['cutoff']:
+            raise DutyError('Время для запроса прошло. Если не можете дежурить, напишите старосте.')
+        member = db.execute("SELECT m.id FROM members m JOIN assignments a ON a.member=m.id "
+                            "WHERE m.uid=? AND m.active=1 AND a.day=? AND a.state='assigned'", (uid, did)).fetchone()
+        if not member or self.space(db, day['space'])['status'] != 'active':
+            raise DutyError('У вас сейчас нет назначения, которое можно перенести.')
+        mid = member['id']
+        if db.execute('SELECT 1 FROM decline_requests WHERE day=? AND member=?', (did, mid)).fetchone():
+            raise DutyError('Запрос на сегодня уже был отправлен.')
+        return day['space'], mid
+
+    def check_decline(self, did, uid):
+        with self.connect() as db:
+            self._decline_member(db, did, uid, clock())
+
+    def decline(self, did, uid, now=None, *, reason=None):
+        now = now or clock()
+        with self.connect(True) as db:
+            sid, mid = self._decline_member(db, did, uid, now)
+            reason = validate_decline_reason(reason)
+            request_id = db.execute('INSERT INTO decline_requests(day,member,uid,created,reason) VALUES(?,?,?,?,?)',
+                                    (did, mid, uid, now.timestamp(), reason)).lastrowid
+            self._managers_job(db, sid, 'decline_request', request_id, f'request:{request_id}')
+            self.event(db, sid, uid, 'decline_requested', mid, now)
+
+    def resolve_decline(self, did, mid, actor, approve, now=None):
         now = now or clock()
         with self.connect(True) as db:
             day = self._day(db, did)
-            self.permission(db, day['space'], uid)
-            if day['date'] != now.date().isoformat():
-                raise DutyError("Эта кнопка относится к другому дню. Откройте /duty.")
-            member = db.execute('SELECT * FROM members WHERE space=? AND uid=? AND active=1', (day['space'], uid)).fetchone()
-            assignment = db.execute('SELECT * FROM assignments WHERE day=? AND member=?', (did, member['id'])).fetchone() if member else None
-            if not assignment or assignment['state'] not in ('assigned', 'waiting'):
-                raise DutyError("Сегодня вы не назначены или ваш ответ уже учтён.")
-            mid = member['id']
-            excluded = set(json.loads(day['excluded'])) | {mid}
-            db.execute('UPDATE days SET excluded=? WHERE id=?', (json.dumps(sorted(excluded)), did))
-            db.execute("UPDATE assignments SET state='declined' WHERE id=?", (assignment['id'],))
-            db.execute('UPDATE members SET pending_since=coalesce(pending_since,?) WHERE id=?', (day['date'], mid))
-            db.execute("UPDATE offers SET state='cancelled' WHERE day=? AND state='pending'", (did,))
-            remaining = db.execute("SELECT member FROM assignments WHERE day=? AND state IN ('assigned','waiting')", (did,)).fetchall()
-            if now.timestamp() >= day['cutoff']:
-                # Do not retroactively release the partner who may already be
-                # working. Their assignment remains available for completion.
-                self._unfilled(db, did, now)
-            elif len(remaining) == 1:
-                self._replacement(db, did, remaining[0]['member'], now)
-            else:
-                self._skip_pair(db, did, now)
-            self._changed(db, did)
-            self._managers_job(db, day['space'], 'change', did, f"decline:{did}:{mid}")
-            self.event(db, day['space'], uid, 'declined', mid, now)
+            self.permission(db, day['space'], actor, manage=True)
+            request = db.execute("SELECT r.* FROM decline_requests r JOIN assignments a ON a.day=r.day AND a.member=r.member "
+                                 "WHERE r.day=? AND r.member=? AND r.status='pending' AND a.state IN ('assigned','waiting')", (did, mid)).fetchone()
+            if (not request or day['date'] != now.date().isoformat() or now.timestamp() >= day['cutoff']
+                    or self.space(db, day['space'])['status'] != 'active'):
+                raise DutyError('Запрос уже закрыт. Откройте сегодняшнее дежурство.')
+            if approve and request['uid'] == actor:
+                raise DutyError('Свой запрос может одобрить другой администратор списка.')
+            outcome = 'approved' if approve else 'rejected'
+            db.execute('UPDATE decline_requests SET status=? WHERE id=?', (outcome, request['id']))
+            if approve:
+                excluded = set(json.loads(day['excluded'])) | {mid}
+                db.execute('UPDATE days SET excluded=? WHERE id=?', (json.dumps(sorted(excluded)), did))
+                self._assign(db, did, mid, 'declined')
+                db.execute('UPDATE members SET pending_since=coalesce(pending_since,?) WHERE id=?', (day['date'], mid))
+                db.execute("UPDATE offers SET state='cancelled' WHERE day=? AND state='pending'", (did,))
+                remaining = db.execute("SELECT member FROM assignments WHERE day=? AND state IN ('assigned','waiting')", (did,)).fetchall()
+                if len(remaining) == 1:
+                    self._replacement(db, did, remaining[0]['member'], now)
+                else:
+                    self._skip_pair(db, did, now)
+                self._changed(db, did)
+            if json.loads(self.space(db, day['space'])['settings'])['requests']:
+                self._job(db, day['space'], request['uid'], 'decline_result', request['id'], f'request_result:{request["id"]}')
+            self.event(db, day['space'], actor, 'decline_' + outcome, mid, now)
 
-    def reply_offer(self, oid, uid, accept, now=None):
+    def reply_offer(self, oid, uid, accept, now=None, *, reason=None):
         now = now or clock()
         with self.connect(True) as db:
             offer = db.execute('SELECT * FROM offers WHERE id=?', (oid,)).fetchone()
@@ -749,14 +820,18 @@ class Store:
             if offer['state'] != 'pending' or now.timestamp() >= offer['expires'] or day['date'] != now.date().isoformat():
                 raise DutyError("Предложение уже закрыто. Актуальное дежурство — в /duty.")
             member = host if side == 'host' else guest
+            changed = False
             if not accept:
-                db.execute("UPDATE offers SET state='declined' WHERE id=?", (oid,))
+                reason = validate_decline_reason(reason)
+                db.execute("UPDATE offers SET state='declined',declined_by=?,decline_reason=? WHERE id=?",
+                           (member['id'], reason, oid))
                 excluded = set(json.loads(day['excluded'])) | {member['id']}
                 db.execute('UPDATE days SET excluded=? WHERE id=?', (json.dumps(sorted(excluded)), day['id']))
                 if offer['kind'] == 'reserve' and side == 'guest':
                     self._replacement(db, day['id'], host['id'], now)
                 else:
                     self._skip_pair(db, day['id'], now)
+                changed = True
             else:
                 db.execute(f'UPDATE offers SET {side}_yes=1 WHERE id=?', (oid,))
                 latest = db.execute('SELECT * FROM offers WHERE id=?', (oid,)).fetchone()
@@ -769,25 +844,33 @@ class Store:
                         db.execute("UPDATE offers SET state='accepted' WHERE id=?", (oid,))
                         for m in (host, guest):
                             self._assign(db, day['id'], m['id'], 'assigned')
-                            self._job(db, day['space'], m['uid'], 'accepted', day['id'], f'accepted:{oid}')
                         db.execute("UPDATE days SET status='assigned' WHERE id=?", (day['id'],))
+                        daily = self._daily_targets(db, self._day(db, day['id']))
+                        for m in (host, guest):
+                            if m['uid'] not in daily:
+                                self._job(db, day['space'], m['uid'], 'accepted', day['id'], f'accepted:{oid}')
                         self._managers_job(db, day['space'], 'change', day['id'], f'accepted_owner:{oid}')
+                    changed = True
             self.event(db, day['space'], uid, 'offer_yes' if accept else 'offer_no', oid, now)
-            self._changed(db, day['id'])
+            if changed:
+                self._changed(db, day['id'])
 
     def tick(self, now=None):
         now = now or clock()
         with self.connect(True) as db:
+            db.execute("UPDATE decline_requests SET status='expired' WHERE status='pending' AND "
+                       "day IN (SELECT id FROM days WHERE cutoff<=?)", (now.timestamp(),))
             pending = db.execute("SELECT o.* FROM offers o JOIN days d ON d.id=o.day JOIN spaces s ON s.id=d.space "
                                  "WHERE o.state='pending' AND s.status='active'").fetchall()
             for offer in pending:
                 day = self._day(db, offer['day'])
                 if now.timestamp() >= offer['expires']:
                     db.execute("UPDATE offers SET state='expired' WHERE id=?", (offer['id'],))
-                    if offer['kind'] == 'reserve' and offer['host_yes'] and now.date().isoformat() == day['date']:
+                    if (offer['kind'] == 'reserve' and offer['host_yes'] and now.timestamp() < day['cutoff']
+                            and now.date().isoformat() == day['date']):
                         self._replacement(db, day['id'], offer['host'], now)
                     else:
-                        self._skip_pair(db, day['id'], now)
+                        self._skip_pair(db, day['id'], now, timeout_fallback=now.date().isoformat() == day['date'])
                     self._changed(db, day['id'])
                 elif not offer['reminded'] and now.timestamp() >= (offer['created'] + offer['expires']) / 2:
                     db.execute('UPDATE offers SET reminded=1 WHERE id=?', (offer['id'],))
@@ -800,7 +883,7 @@ class Store:
             for day in db.execute("SELECT d.* FROM days d JOIN spaces s ON s.id=d.space WHERE s.status='active' "
                 "AND d.reported=0 AND d.report_at<=?", (now.timestamp(),)).fetchall():
                 db.execute('UPDATE days SET reported=1 WHERE id=?', (day['id'],))
-                if day['status'] != 'no_duty':
+                if db.execute("SELECT 1 FROM assignments WHERE day=? AND state IN ('assigned','reported')", (day['id'],)).fetchone():
                     self._managers_job(db, day['space'], 'report', day['id'], f"report:{day['id']}")
 
     def report_done(self, did, uid, now=None):
@@ -808,8 +891,8 @@ class Store:
         with self.connect(True) as db:
             day = self._day(db, did)
             self.permission(db, day['space'], uid)
-            if now.timestamp() < day['cutoff']:
-                raise DutyError("Сообщить о выполнении можно после окончания подбора дежурных.")
+            if now.timestamp() < day['report_at']:
+                raise DutyError('Сообщить о выполнении можно после времени подведения итогов.')
             row = db.execute("SELECT a.id FROM assignments a JOIN members m ON m.id=a.member WHERE a.day=? "
                              "AND m.uid=? AND a.state='assigned'", (did, uid)).fetchone()
             if not row:
@@ -834,10 +917,7 @@ class Store:
                 raise DutyError("Отмечать больше некого: результаты уже сохранены или дежурных не назначали.")
             for row in rows:
                 db.execute('UPDATE assignments SET state=? WHERE id=?', (outcome, row['id']))
-                if outcome == 'done':
-                    db.execute('UPDATE members SET pending_since=NULL WHERE id=?', (row['member'],))
-                elif outcome == 'missed':
-                    db.execute('UPDATE members SET pending_since=coalesce(pending_since,?) WHERE id=?', (day['date'], row['member']))
+                self._refresh_pending(db, row['member'])
                 self.event(db, day['space'], actor, outcome, row['member'], now)
             self._recalculate(db, day['space'])
             if not db.execute("SELECT 1 FROM assignments WHERE day=? AND state IN ('assigned','waiting','reported')", (did,)).fetchone():
@@ -854,16 +934,30 @@ class Store:
             offers = [dict(r) for r in db.execute("SELECT o.*,h.name host_name,g.name guest_name,h.uid host_uid,g.uid guest_uid "
                 "FROM offers o JOIN members h ON h.id=o.host JOIN members g ON g.id=o.guest "
                 "WHERE o.day=? AND o.state='pending'", (did,))]
-        return dict(day=day, access=access, space=space, assignments=assignments, offers=offers)
+            requests = [dict(r) for r in db.execute('SELECT r.*,m.name FROM decline_requests r JOIN members m ON r.member=m.id '
+                "WHERE r.day=? AND (r.uid=? OR (? AND r.status='pending')) ORDER BY r.id", (did, uid, access['role'] != 'member'))]
+            offer_declines = [dict(r) for r in db.execute(
+                'SELECT m.name,o.decline_reason reason FROM offers o JOIN members m ON m.id=o.declined_by '
+                "WHERE o.day=? AND o.state='declined' ORDER BY o.id", (did,))] if access['role'] != 'member' else []
+        return dict(day=day, access=access, space=space, assignments=assignments, offers=offers,
+                    requests=requests, offer_declines=offer_declines)
+
+    @staticmethod
+    def _refresh_pending(db, mid):
+        db.execute("UPDATE members SET pending_since=(SELECT min(d.date) FROM assignments a JOIN days d ON d.id=a.day "
+                   "WHERE a.member=? AND a.state IN ('declined','missed','released') AND d.date>coalesce("
+                   "(SELECT max(f.date) FROM assignments z JOIN days f ON f.id=z.day WHERE z.member=? AND z.state='done'),"
+                   "members.credit_after) AND d.date>members.credit_after) WHERE id=?", (mid, mid, mid))
 
     @staticmethod
     def _recalculate(db, sid):
-        for pair in db.execute('SELECT id FROM pairs WHERE space=?', (sid,)).fetchall():
-            members = db.execute("SELECT m.id,(SELECT count(*) FROM assignments a WHERE a.member=m.id AND a.state='done') n "
+        for pair in db.execute('SELECT id,rounds_offset FROM pairs WHERE space=?', (sid,)).fetchall():
+            members = db.execute("SELECT m.id,(SELECT count(*) FROM assignments a JOIN days d ON d.id=a.day "
+                                 "WHERE a.member=m.id AND a.state='done' AND d.date>m.credit_after) n "
                                  'FROM members m WHERE m.pair=?', (pair['id'],)).fetchall()
             if len(members) == 2:
                 rounds = min(m['n'] for m in members)
-                db.execute('UPDATE pairs SET rounds=? WHERE id=?', (rounds, pair['id']))
+                db.execute('UPDATE pairs SET rounds=? WHERE id=?', (pair['rounds_offset'] + rounds, pair['id']))
                 for m in members:
                     db.execute('UPDATE members SET credit=? WHERE id=?', (m['n'] - rounds, m['id']))
 
@@ -877,17 +971,46 @@ class Store:
             if not row:
                 raise DutyError("Для этой записи ещё нет результата.")
             db.execute('UPDATE assignments SET state=? WHERE id=?', (outcome, row['id']))
-            if outcome == 'done':
-                db.execute('UPDATE members SET pending_since=NULL WHERE id=?', (mid,))
-            elif outcome == 'missed':
-                db.execute('UPDATE members SET pending_since=coalesce(pending_since,?) WHERE id=?', (day['date'], mid))
+            self._refresh_pending(db, mid)
             self._recalculate(db, day['space'])
+            self._changed(db, did)
             self.event(db, day['space'], actor, 'result_corrected', f'{mid}:{row["state"]}->{outcome}', now)
 
-    def manage(self, sid, uid, action, value=None):
+    def record_results(self, did, actor, first, second, revision=None, now=None):
+        now = now or clock()
+        with self.connect(True) as db:
+            day = self._day(db, did)
+            sid = day['space']
+            self.permission(db, sid, actor, manage=True)
+            if day['status'] == 'no_duty' or now.timestamp() < day['cutoff']:
+                raise DutyError('Итоги можно записать после окончания поиска замен в учебный день.')
+            if revision is not None and revision != day['revision']:
+                raise DutyError('За это время дежурство изменилось. Обновите его и проверьте состав.')
+            people = [self._member(db, mid) for mid in (first, second)]
+            if first == second or any(m['space'] != sid for m in people):
+                raise DutyError('Выберите двух разных участников этого списка.')
+            for m in people:
+                if m['uid'] and db.execute("SELECT 1 FROM assignments a JOIN members m ON m.id=a.member "
+                        "JOIN days d ON d.id=a.day WHERE m.uid=? AND d.date=? AND d.id!=? "
+                        "AND a.state IN ('assigned','reported','done')", (m['uid'], day['date'], did)).fetchone():
+                    raise DutyError('Один из участников уже дежурил в другом списке в этот день.')
+            previous = [r['member'] for r in db.execute("SELECT member FROM assignments WHERE day=? AND state='done'", (did,))]
+            db.execute("UPDATE offers SET state='cancelled' WHERE day=? AND state='pending'", (did,))
+            db.execute("UPDATE assignments SET state='cancelled' WHERE day=? AND member NOT IN (?,?) AND "
+                       "state IN ('assigned','waiting','reported','done')", (did, first, second))
+            for mid in (first, second):
+                self._assign(db, did, mid, 'done')
+            for mid in {*previous, first, second}:
+                self._refresh_pending(db, mid)
+            db.execute("UPDATE days SET status='closed' WHERE id=?", (did,))
+            self._recalculate(db, sid)
+            self._changed(db, did)
+            self.event(db, sid, actor, 'results_recorded', f'{did}: {previous} -> {first},{second}', now)
+
+    def manage(self, sid, uid, action, value=None, *, enabled=None):
         with self.connect(True) as db:
             access = self.permission(db, sid, uid, manage=action not in ('mute', 'silence', 'leave', 'daily_notifications'),
-                                     owner=action in ('transfer', 'manager'))
+                                     owner=action in ('transfer', 'manager', 'archive'))
             if action == 'mute':
                 db.execute('UPDATE access SET muted=1-muted WHERE space=? AND uid=?', (sid, uid))
             elif action == 'silence':
@@ -900,6 +1023,8 @@ class Store:
                 if access['role'] == 'owner':
                     raise DutyError("Сначала передайте управление или архивируйте список.")
                 member = db.execute('SELECT id FROM members WHERE space=? AND uid=?', (sid, uid)).fetchone()
+                if member and db.execute('SELECT 1 FROM members WHERE id=? AND active=1', (member['id'],)).fetchone():
+                    raise DutyError('Попросите старосту убрать вас из очереди. Уведомления можно отключить отдельно.')
                 if member:
                     offers = db.execute("SELECT * FROM offers WHERE state='pending' AND (host=? OR guest=?)",
                                         (member['id'], member['id'])).fetchall()
@@ -918,8 +1043,13 @@ class Store:
                     if db.execute("SELECT 1 FROM spaces WHERE owner=? AND status!='archived' AND id!=?",
                                   (space['owner'], sid)).fetchone():
                         raise DutyError('У создателя уже есть другой список дежурств. Сначала нужно архивировать его.')
+                    if db.execute("SELECT 1 FROM spaces WHERE group_name=? COLLATE NOCASE AND status!='archived' AND id!=?",
+                                  (space['group_name'], sid)).fetchone():
+                        raise DutyError('У этой группы уже есть другой список дежурств.')
                 db.execute('UPDATE spaces SET status=? WHERE id=?', (status, sid))
                 if action != 'resume':
+                    db.execute("UPDATE decline_requests SET status='withdrawn' WHERE status='pending' "
+                               "AND day IN (SELECT id FROM days WHERE space=?)", (sid,))
                     db.execute("UPDATE offers SET state='cancelled' WHERE state='pending' AND day IN (SELECT id FROM days WHERE space=?)", (sid,))
                     db.execute("UPDATE assignments SET state='released' WHERE state='waiting' AND day IN (SELECT id FROM days WHERE space=?)", (sid,))
                     db.execute("UPDATE days SET status='unfilled' WHERE space=? AND status='searching'", (sid,))
@@ -937,8 +1067,14 @@ class Store:
                     db.execute("UPDATE access SET role='owner' WHERE space=? AND uid=?", (sid, value))
                     db.execute('UPDATE spaces SET owner=? WHERE id=?', (value, sid))
                 else:
-                    db.execute('UPDATE access SET role=? WHERE space=? AND uid=?',
-                               ('member' if target['role'] == 'manager' else 'manager', sid, value))
+                    promote = target['role'] != 'manager' if enabled is None else enabled
+                    if promote and not db.execute('SELECT 1 FROM members WHERE space=? AND uid=?',
+                                                  (sid, value)).fetchone():
+                        raise DutyError('Назначить заместителем можно подключённого участника из состава.')
+                    role = 'manager' if promote else 'member'
+                    if target['role'] == role:
+                        return
+                    db.execute('UPDATE access SET role=? WHERE space=? AND uid=?', (role, sid, value))
             else:
                 raise DutyError("Неизвестное действие.")
             self.event(db, sid, uid, action, value or '')
@@ -960,10 +1096,15 @@ class Store:
                     value = date.fromisoformat(value).isoformat()
                 except ValueError:
                     raise DutyError("Укажите дату в формате ДД.ММ.ГГГГ.") from None
+                if value < clock().date().isoformat():
+                    raise DutyError('Укажите сегодняшнюю или будущую дату. Проверьте год.')
             if field == 'uid':
                 if value is not None:
                     raise DutyError("Чтобы подключить человека, отправьте ему приглашение и подтвердите его заявку.")
                 if member['uid']:
+                    if db.execute("SELECT 1 FROM access WHERE space=? AND uid=? AND role!='member'",
+                                  (member['space'], member['uid'])).fetchone():
+                        raise DutyError('Сначала снимите права управления с этого аккаунта.')
                     db.execute("DELETE FROM access WHERE space=? AND uid=? AND role='member'", (member['space'], member['uid']))
             db.execute(f'UPDATE members SET {field}=? WHERE id=?', (value, mid))
             self.event(db, member['space'], actor, 'member_' + field, mid)
@@ -987,10 +1128,10 @@ class Store:
         with self.connect(True) as db:
             day = self._day(db, did)
             self.permission(db, day['space'], actor, manage=True)
-            if day['date'] != now.date().isoformat():
+            if day['date'] != now.date().isoformat() or day['status'] == 'no_duty':
                 raise DutyError("Вручную назначить пару можно только на сегодня.")
-            if db.execute("SELECT 1 FROM assignments WHERE day=? AND state IN ('done','reported')", (did,)).fetchone():
-                raise DutyError("Кто-то уже отметил дежурство. Проверьте результаты кнопкой «Отметить каждого отдельно».")
+            if db.execute("SELECT 1 FROM assignments WHERE day=? AND state IN ('done','reported','missed','excused')", (did,)).fetchone():
+                raise DutyError('По этому дню уже есть результаты. Чтобы исправить состав, укажите, кто дежурил фактически.')
             people = [dict(r) for r in db.execute('SELECT * FROM members WHERE pair=? AND space=? AND active=1', (pid, day['space']))]
             if len(people) != 2 or not all(self._available(db, p, day) for p in people):
                 raise DutyError("Кто-то из пары отказался, освобождён или занят другим дежурством. Проверьте участников и отметки за прошлые дни.")
@@ -1000,7 +1141,8 @@ class Store:
             db.execute("UPDATE assignments SET state='released' WHERE day=? AND state IN ('assigned','waiting')", (did,))
             for p in people:
                 self._assign(db, did, p['id'], 'assigned')
-            db.execute("UPDATE days SET pair=?,status='assigned' WHERE id=?", (pid, did))
+            attempted = sorted(set(json.loads(day['attempted'])) | {pid})
+            db.execute("UPDATE days SET pair=?,status='assigned',attempted=? WHERE id=?", (pid, json.dumps(attempted), did))
             self._changed(db, did)
             self.event(db, day['space'], actor, 'manual_pair_confirmed', pid, now)
 
@@ -1015,22 +1157,10 @@ class Store:
         with self.connect(True) as db:
             day = self._day(db, did)
             self.permission(db, day['space'], uid)
-            member = db.execute('SELECT * FROM members WHERE space=? AND uid=? AND active=1', (day['space'], uid)).fetchone()
-            excluded = set(json.loads(day['excluded']))
-            if day['date'] != now.date().isoformat() or not member or member['id'] not in excluded:
-                raise DutyError("Для сегодняшнего дня нет отказа, который можно изменить.")
-            excluded.remove(member['id'])
-            db.execute('UPDATE days SET excluded=? WHERE id=?', (json.dumps(sorted(excluded)), did))
-            db.execute("UPDATE assignments SET state='released' WHERE day=? AND member=? AND state='declined'", (did, member['id']))
-            # Do not undo a confirmed replacement. If no team was found yet,
-            # the original pair can be offered again with fresh consent.
-            if day['status'] == 'unfilled' and now.timestamp() < day['cutoff'] and member['pair']:
-                attempted = set(json.loads(day['attempted'])) - {member['pair']}
-                db.execute('UPDATE days SET attempted=? WHERE id=?', (json.dumps(sorted(attempted)), did))
-                self._choose_pair(db, did, now, promoted=True)
-            self._managers_job(db, day['space'], 'change', did, f'reconsider:{did}:{member["id"]}')
-            self._changed(db, did)
-            self.event(db, day['space'], uid, 'reconsidered', member['id'], now)
+            if now.timestamp() >= day['cutoff'] or not db.execute(
+                    "UPDATE decline_requests SET status='withdrawn' WHERE day=? AND uid=? AND status='pending'", (did, uid)).rowcount:
+                raise DutyError('Открытого запроса на перенос уже нет.')
+            self.event(db, day['space'], uid, 'decline_withdrawn', did, now)
 
     def cancel_day(self, did, actor, now=None):
         with self.connect(True) as db:
@@ -1050,22 +1180,85 @@ class Store:
             day = self._day(db, did)
             self.permission(db, day['space'], actor, manage=True)
             people = [self._member(db, mid) for mid in (host_id, guest_id)]
-            if day['date'] != now.date().isoformat() or any(p['space'] != day['space'] for p in people):
+            if day['date'] != now.date().isoformat() or day['status'] == 'no_duty' or any(p['space'] != day['space'] for p in people):
                 raise DutyError("Выберите участников этого списка для сегодняшнего дня.")
             if not people[0]['pair'] or people[1]['pair'] or people[0]['credit']:
                 raise DutyError("Выберите ещё не отработавшего участника пары и запасного.")
             if not all(self._available(db, p, day) for p in people):
                 raise DutyError("Кто-то отказался, освобождён или занят другим дежурством. Проверьте участников и отметки за прошлые дни.")
-            if db.execute("SELECT 1 FROM assignments WHERE day=? AND (state='reported' OR (state='done' AND member IN (?,?)))",
-                          (did, host_id, guest_id)).fetchone():
-                raise DutyError("Проверьте результаты: нельзя повторно назначить уже отдежурившего человека.")
+            if db.execute("SELECT 1 FROM assignments WHERE day=? AND state IN ('done','reported','missed','excused')", (did,)).fetchone():
+                raise DutyError('По этому дню уже есть результаты. Укажите, кто дежурил фактически.')
             db.execute("UPDATE offers SET state='cancelled' WHERE day=? AND state='pending'", (did,))
             db.execute("UPDATE assignments SET state='released' WHERE day=? AND state IN ('assigned','waiting')", (did,))
             for p in people:
                 self._assign(db, did, p['id'], 'assigned')
-            db.execute("UPDATE days SET pair=?,status='assigned' WHERE id=?", (people[0]['pair'], did))
+            pid = people[0]['pair']
+            attempted = sorted(set(json.loads(day['attempted'])) | {pid})
+            db.execute("UPDATE days SET pair=?,status='assigned',attempted=? WHERE id=?", (pid, json.dumps(attempted), did))
             self._changed(db, did)
             self.event(db, day['space'], actor, 'manual_reserve_confirmed', f'{host_id},{guest_id}', now)
+
+    @staticmethod
+    def _check_pair_change(db, a, b=None):
+        other = b or {'id': None, 'pair': None}
+        involved = db.execute('SELECT m.id,m.credit,EXISTS(SELECT 1 FROM assignments x WHERE x.member=m.id '
+                              "AND x.state IN ('assigned','waiting','reported')) busy,EXISTS("
+                              "SELECT 1 FROM offers o WHERE o.state='pending' AND (o.host=m.id OR o.guest=m.id)) offered "
+                              'FROM members m WHERE m.id IN (?,?) OR m.pair IN (?,?)',
+                              (a['id'], other['id'], a['pair'], other['pair'])).fetchall()
+        if any(m['busy'] or m['offered'] for m in involved):
+            raise DutyError('Сначала закройте дежурства и предложения о подмене у этих участников.')
+        if any(m['credit'] for m in involved):
+            raise DutyError('Один из напарников уже отдежурил за эту очередь. Сначала закройте очередь пары.')
+
+    def _restart_pair_credit(self, db, sid, first, second=None, first_pair=None, second_pair=None):
+        db.execute('UPDATE pairs SET rounds_offset=rounds WHERE id IN (?,?)', (first_pair, second_pair))
+        last_result = db.execute('SELECT max(d.date) FROM days d JOIN assignments x ON x.day=d.id '
+                                 "WHERE d.space=? AND x.state IN ('done','missed','excused')", (sid,)).fetchone()[0]
+        db.execute("UPDATE members SET credit_after=?,credit=0,pending_since=NULL WHERE id IN (?,?) OR pair IN (?,?)",
+                   (last_result or '', first, second, first_pair, second_pair))
+        self._recalculate(db, sid)
+
+    def move_to_reserve(self, mid, actor):
+        with self.connect(True) as db:
+            member = self._member(db, mid)
+            sid, pid = member['space'], member['pair']
+            self.permission(db, sid, actor, manage=True)
+            if not member['active'] or pid is None:
+                raise DutyError('Выберите действующего участника пары.')
+            self._check_pair_change(db, member)
+            db.execute('UPDATE members SET pair=NULL,reserve_order=? WHERE id=?', (self._next_reserve(db, sid), mid))
+            self._restart_pair_credit(db, sid, mid, first_pair=pid)
+            self.event(db, sid, actor, 'moved_to_reserve', mid)
+
+    def pair_reserve(self, first, second, actor, *, new_pair=False):
+        with self.connect(True) as db:
+            reserve, other = self._member(db, first), self._member(db, second)
+            sid, pid = reserve['space'], other['pair']
+            self.permission(db, sid, actor, manage=True)
+            if first == second or other['space'] != sid or not reserve['active'] or not other['active'] or reserve['pair'] is not None:
+                raise DutyError('Выберите запасного и другого участника этого списка.')
+            if new_pair and pid is not None:
+                raise DutyError('У выбранного участника уже есть место в паре.')
+            inactive_partner = None
+            if not new_pair:
+                partners = db.execute('SELECT id,active FROM members WHERE pair=? AND id!=?', (pid, second)).fetchall()
+                if pid is None or len(partners) > 1 or any(p['active'] for p in partners):
+                    raise DutyError('В паре больше нет свободного места. Обновите состав.')
+                if partners:
+                    inactive_partner = partners[0]['id']
+            self._check_pair_change(db, reserve, other)
+            if new_pair:
+                rank, rounds = self._pair_position(db, sid)
+                pid = db.execute('INSERT INTO pairs(space,rank,rounds,rounds_offset) VALUES(?,?,?,?)',
+                                 (sid, rank, rounds, rounds)).lastrowid
+            if inactive_partner is not None:
+                db.execute('UPDATE members SET pair=NULL,reserve_order=? WHERE id=?',
+                           (self._next_reserve(db, sid), inactive_partner))
+                self.event(db, sid, actor, 'inactive_partner_detached', inactive_partner)
+            db.execute('UPDATE members SET pair=?,reserve_order=NULL WHERE id IN (?,?)', (pid, first, second))
+            self._restart_pair_credit(db, sid, first, second, pid)
+            self.event(db, sid, actor, 'reserve_paired', f'{first},{second}')
 
     def swap_partners(self, first, second, actor):
         with self.connect(True) as db:
@@ -1073,15 +1266,11 @@ class Store:
             self.permission(db, a['space'], actor, manage=True)
             if a['space'] != b['space'] or not a['active'] or not b['active'] or a['pair'] == b['pair']:
                 raise DutyError("Выберите участника другой пары или запасного из этого списка.")
-            involved = db.execute('SELECT * FROM members WHERE id IN (?,?) OR pair IN (?,?)',
-                                  (first, second, a['pair'], b['pair'])).fetchall()
-            for m in involved:
-                if m['credit'] or db.execute("SELECT 1 FROM assignments WHERE member=? AND state IN ('assigned','waiting','reported')", (m['id'],)).fetchone():
-                    raise DutyError("Сначала отметьте незакрытые дежурства этих участников. Если один напарник уже отдежурил за пару, дождитесь второго — так очередь останется справедливой.")
-            db.execute('UPDATE members SET pair=? WHERE id=?', (b['pair'], a['id']))
-            db.execute('UPDATE members SET pair=? WHERE id=?', (a['pair'], b['id']))
-            db.execute('UPDATE members SET credit=0 WHERE id IN (?,?) AND pair IS NULL', (first, second))
-            self._recalculate(db, a['space'])
+            self._check_pair_change(db, a, b)
+            for current, other in ((a, b), (b, a)):
+                order = (other['reserve_order'] or other['id']) if other['pair'] is None else None
+                db.execute('UPDATE members SET pair=?,reserve_order=? WHERE id=?', (other['pair'], order, current['id']))
+            self._restart_pair_credit(db, a['space'], first, second, a['pair'], b['pair'])
             self.event(db, a['space'], actor, 'partners_changed', f'{first},{second}')
 
     def active_spaces(self):
@@ -1114,7 +1303,8 @@ class Store:
                                    (job['ref'], sid, uid)).fetchone())
         if kind in ('offer', 'offer_reminder'):
             offer = db.execute("SELECT * FROM offers WHERE id=? AND state='pending' AND expires>?", (job['ref'], now.timestamp())).fetchone()
-            return bool(opts['requests'] and offer and uid in (self._member(db, offer['host'])['uid'], self._member(db, offer['guest'])['uid']))
+            return bool(opts['requests'] and offer and any(
+                self._member(db, offer[side])['uid'] == uid and not offer[side + '_yes'] for side in ('host', 'guest')))
         if kind == 'accepted':
             return opts['requests'] and bool(db.execute("SELECT 1 FROM assignments a JOIN members m ON m.id=a.member "
                 "WHERE a.day=? AND m.uid=? AND a.state='assigned'", (job['ref'], uid)).fetchone())
@@ -1122,13 +1312,25 @@ class Store:
             return opts['owner_events'] and access['role'] in ('owner', 'manager') and bool(db.execute("SELECT 1 FROM claims WHERE id=? AND status='pending'", (job['ref'],)).fetchone())
         if kind == 'delivery_issue':
             return access['role'] in ('owner', 'manager') and opts['owner_events']
+        if kind in ('decline_request', 'decline_result'):
+            req = db.execute('SELECT r.*,d.cutoff FROM decline_requests r JOIN days d ON d.id=r.day '
+                             'WHERE r.id=? AND d.space=?', (job['ref'], sid)).fetchone()
+            if not req:
+                return False
+            if kind == 'decline_request':
+                return (opts['owner_events'] and access['role'] in ('owner', 'manager') and req['uid'] != uid
+                        and req['status'] == 'pending' and now.timestamp() < req['cutoff'])
+            return opts['requests'] and req['uid'] == uid and req['status'] in ('approved', 'rejected')
         if kind in ('report', 'alert', 'change', 'source_change'):
             day = self._day(db, job['ref'])
+            if kind == 'report' and not db.execute(
+                    "SELECT 1 FROM assignments WHERE day=? AND state IN ('assigned','reported')", (day['id'],)).fetchone():
+                return False
+            if kind == 'alert' and day['status'] != 'unfilled':
+                return False
             return day['status'] != 'no_duty' and access['role'] in ('owner', 'manager') and opts['owner_events']
         day = self._day(db, job['ref'])
         if day['status'] == 'no_duty' or day['date'] != now.date().isoformat():
-            return False
-        if access['daily_muted']:
             return False
         if uid in self._daily_targets(db, day):
             return True

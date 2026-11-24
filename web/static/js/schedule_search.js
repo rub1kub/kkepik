@@ -189,6 +189,7 @@
     function configureTelegram() {
         if (!telegram) return;
 
+        if (telegram.initData && telegram.isVersionAtLeast?.('7.7')) telegram.disableVerticalSwipes?.();
         telegram.expand?.();
         telegram.ready?.();
 
@@ -1251,7 +1252,7 @@
 
     function haptic(style) {
         try {
-            telegram?.HapticFeedback?.impactOccurred(style);
+            window.kkepikHaptics?.play(style);
         } catch (error) {
             // Haptics are optional and must not affect the search flow.
         }
@@ -1259,7 +1260,7 @@
 
     function hapticSuccess() {
         try {
-            telegram?.HapticFeedback?.notificationOccurred('success');
+            window.kkepikHaptics?.play('success');
         } catch (error) {
             // Haptics are optional and must not affect the search flow.
         }
@@ -1267,7 +1268,7 @@
 
     function hapticError() {
         try {
-            telegram?.HapticFeedback?.notificationOccurred('error');
+            window.kkepikHaptics?.play('error');
         } catch (error) {
             // Haptics are optional and must not affect the search flow.
         }

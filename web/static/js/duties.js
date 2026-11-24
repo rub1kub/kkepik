@@ -5,8 +5,20 @@
   const initData = (tg && tg.initData) || new URLSearchParams(location.search).get('tgWebAppData') || '';
   const labels = { assigned: 'дежурит', waiting: 'ждём ответа', reported: 'ждёт подтверждения', done: 'отдежурил(а)',
     missed: 'не отдежурил(а)', excused: 'освобождён(а)', declined: 'сегодня не может', released: 'перенесено', cancelled: 'отменено' };
-  let state = null, sid = null, tab = 'today', busy = false, dirty = false, generation = 0;
+  const params = new URLSearchParams(location.search);
+  const initialTab = params.get('view');
+  let state = null, sid = Number(params.get('space')) || null;
+  let tab = ['members', 'settings'].includes(initialTab) ? initialTab : 'assignments';
+  let canCreate = true, busy = false, dirty = false, generation = 0;
   let draft = { pairs: [['', '']], reserves: [], options: null }, preview = null, setupStep = 1;
+
+  const feedback = kind => window.kkepikHaptics?.play(kind);
+  function setDirty(value) {
+    if (dirty === value) return;
+    dirty = value;
+    if (!initData || !tg?.isVersionAtLeast?.('6.2')) return;
+    if (value) tg.enableClosingConfirmation?.(); else tg.disableClosingConfirmation?.();
+  }
 
   function el(tag, props = {}, children = []) {
     const node = document.createElement(tag);
@@ -88,10 +100,15 @@
       el('strong', { text: label }), hint ? el('small', { text: hint }) : null]), input('', { type: 'checkbox', checked, onchange: event => onChange(event.target.checked) })]);
   }
   function dialog(title, ...children) {
+    feedback('soft');
     $('dutyDialogTitle').textContent = title; $('dutyDialogBody').replaceChildren(...children.filter(child => child != null));
     if (!$('dutyDialog').open) $('dutyDialog').showModal();
   }
-  function closeDialog() { $('dutyDialog').close(); }
+  function closeDialog() {
+    const element = $('dutyDialog');
+    if (window.kkepikSlideClose) window.kkepikSlideClose(element);
+    else if (element.open) element.close();
+  }
   function confirmAction(title, text, run, label = 'Подтвердить') {
     dialog(title, p(text), actions(button('Отмена', closeDialog), button(label, run, 'duty-danger')));
   }
@@ -112,8 +129,9 @@
     const controls = [...document.querySelectorAll('.duty-page button,.duty-dialog button,.duty-page input,.duty-page select,.duty-page textarea,.duty-dialog input,.duty-dialog select,.duty-dialog textarea')].map(node => [node, node.disabled]);
     busy = true; controls.forEach(([node]) => { node.disabled = true; });
     status(working);
-    try { await run(); status(success); }
+    try { await run(); status(success); if (success) feedback('success'); }
     catch (error) {
+      feedback('error');
       if ($('dutyDialog').open) {
         status('');
         $('dutyDialogBody').querySelector('.duty-error')?.remove();
@@ -127,7 +145,7 @@
     if (dirty && !window.confirm('Есть несохранённые настройки. Продолжить без сохранения?')) return;
     await perform(async () => {
       await request('/' + sid + '/actions', 'POST', payload);
-      closeDialog(); dirty = false; await load();
+      closeDialog(); setDirty(false); await load();
     });
   }
   async function load() {
@@ -139,12 +157,24 @@
       if (version !== generation) return;
       $('dutyGroup').textContent = result.group;
       const spaces = result.spaces;
+      canCreate = result.can_create !== false;
       if (!spaces.some(s => s.id === sid)) sid = spaces[0]?.id || null;
       $('dutyLists').hidden = spaces.length < 2;
       if (spaces.length > 1) {
         const chooser = select(spaces.map(s => [s.id, s.group + (s.status === 'paused' ? ' · пауза' : '')]), sid);
         chooser.setAttribute('aria-label', 'Выбрать дежурства');
-        chooser.addEventListener('change', async () => { sid = Number(chooser.value); await refresh(); });
+        chooser.addEventListener('change', async () => {
+          if (dirty && !window.confirm('Перейти к другому списку без сохранения?')) {
+            chooser.value = String(sid);
+            return;
+          }
+          setDirty(false);
+          sid = Number(chooser.value);
+          state = null;
+          $('dutyTabs').hidden = true;
+          $('dutyContent').replaceChildren();
+          await refresh();
+        });
         $('dutyLists').replaceChildren(chooser);
       }
       if (sid) {
@@ -153,6 +183,7 @@
         state = data; $('dutyGroup').textContent = data.group;
       } else state = null;
       $('dutyTabs').hidden = !state;
+      $('dutyBack').href = sid ? '/?tab=duty&space=' + sid : '/?tab=duty';
       render();
     } finally {
       if (version === generation) {
@@ -162,69 +193,123 @@
     }
   }
   async function refresh() {
+    if (busy) return;
     if (dirty && !window.confirm('Есть несохранённые изменения. Обновить страницу?')) return;
-    dirty = false; status(state ? 'Обновляем…' : '');
+    setDirty(false); status(state ? 'Обновляем…' : '');
     try { await load(); status(''); } catch (error) {
       status(error.message, true);
       if (!state) $('dutyContent').replaceChildren(card('Не удалось загрузить дежурства', button('Попробовать ещё раз', refresh, 'duty-primary duty-wide')));
     }
   }
+  // Keep roster rows under the user's finger when a dialog saves a change.
+  const rowVersions = new WeakMap();
+  function rosterRow(key, version, row) {
+    row.dataset.rosterKey = key;
+    rowVersions.set(row, JSON.stringify(version));
+    return row;
+  }
+  function updateRoster(current, next) {
+    const oldRows = new Map([...current.children].map(node => [node.dataset.rosterKey, node]));
+    const desired = [...next.children].map(node => {
+      const key = node.dataset.rosterKey;
+      const old = oldRows.get(key);
+      return key && old && rowVersions.get(old) === rowVersions.get(node) ? old : node;
+    });
+    placeChildren(current, desired);
+  }
+  function placeChildren(parent, nodes) {
+    const keep = new Set(nodes);
+    for (const child of [...parent.children]) if (!keep.has(child)) child.remove();
+    nodes.forEach((node, i) => { if (parent.children[i] !== node) parent.insertBefore(node, parent.children[i] || null); });
+  }
   function render() {
-    document.querySelectorAll('[data-tab]').forEach(b => {
+    if (state && !admin() && tab === 'assignments') tab = 'members';
+    const nav = $('dutyTabs');
+    nav.querySelector('[data-tab=assignments]').hidden = !admin();
+    nav.querySelector('[data-tab=settings] span').textContent = admin() ? 'Настройки' : 'Уведомления';
+    nav.querySelectorAll('[data-tab]').forEach(b => {
       if (b.dataset.tab === tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
     });
-    const content = $('dutyContent'); content.replaceChildren();
+    const content = $('dutyContent');
     if (!state) {
-      content.append(card('Дежурства вашей группы', p('Добавьте пары и запасных.'),
-        button('Настроить дежурства', () => perform(async () => { await fetchPeople(null); setupStep = 1; showSetup(); }, '', 'Загружаем список группы…'), 'duty-primary duty-wide')));
+      content.replaceChildren();
+      content.append(canCreate ? card('Дежурства вашей группы', p('Добавьте пары и запасных.'),
+        button('Настроить дежурства', () => perform(async () => { await fetchPeople(null); setupStep = 1; showSetup(); }, '', 'Загружаем список группы…'), 'duty-primary duty-wide')) :
+        card('Дежурства уже настроены', p('Попросите старосту добавить вас в список.')));
       return;
     }
-    if (state.status === 'paused' && tab !== 'today') content.append(card('Дежурства на паузе', admin() ? button('Возобновить', () => mutate({ action: 'resume' }), 'duty-primary') : null));
-    ({ today: renderToday, calendar: renderCalendar, members: renderMembers, settings: renderSettings })[tab](content);
+    const url = new URL(location.href);
+    url.searchParams.set('space', String(sid));
+    url.searchParams.set('view', tab);
+    history.replaceState(null, '', url);
+    const sameView = content.dataset.view === tab && content.dataset.space === String(sid);
+    const expanded = new Set(sameView ? [...content.querySelectorAll('details[open] > summary')].map(el => el.textContent) : []);
+    const scroll = window.scrollY;
+    const next = document.createDocumentFragment();
+    if (state.status === 'paused') next.append(card('Дежурства на паузе'));
+    ({ assignments: renderAssignments, members: renderMembers, settings: renderSettings })[tab](next);
+    const sections = [...next.children].map(section => {
+      const roster = section.dataset.roster;
+      const old = sameView && roster && content.querySelector('[data-roster="' + roster + '"]');
+      if (!old) return section;
+      updateRoster(old.querySelector(':scope > .duty-details-body') || old, section.querySelector(':scope > .duty-details-body') || section);
+      return old;
+    });
+    for (const details of next.querySelectorAll('details')) {
+      if (expanded.has(details.querySelector('summary')?.textContent)) details.open = true;
+    }
+    placeChildren(content, sections);
+    content.dataset.view = tab;
+    content.dataset.space = String(sid);
+    if (sameView && window.scrollY !== scroll) window.scrollTo(0, scroll);
   }
-  function renderToday(content) {
-    const day = state.days.find(d => d.date === today());
-    const projected = state.forecast.find(d => d.date === today());
-    const active = day?.people.filter(m => ['assigned', 'reported', 'done'].includes(m.state)) || [];
-    const mine = day?.people.find(m => m.mine);
-    const off = window.kkepikCalendar.isHoliday(today()) || day?.status === 'no_duty' || projected?.status === 'no_duty' || (!day && !state.options.days.includes((new Date(today() + 'T12:00:00+03:00').getUTCDay() + 6) % 7));
-    let title, message, symbol = 'clipboard';
-    if (state.status === 'paused') { title = 'Дежурства на паузе'; symbol = 'pause'; }
-    else if (off) { title = 'Сегодня без дежурства'; symbol = 'coffee'; }
-    else if (mine?.state === 'assigned') { title = 'Ты сегодня дежуришь'; message = 'С тобой — ' + (active.find(m => !m.mine)?.name || 'напарник уточняется'); }
-    else if (mine?.state === 'reported') { title = 'Дежурство отмечено'; message = 'Ждём подтверждения старосты.'; symbol = 'check'; }
-    else if (mine?.state === 'declined' || mine?.state === 'released') { title = 'Твоё дежурство перенесено'; symbol = 'calendar'; }
-    else if (day?.status === 'searching') { title = 'Подбираем замену'; symbol = 'swap'; }
-    else if (day?.status === 'unfilled') { title = 'Дежурные пока не назначены'; symbol = 'alert'; }
-    else if (day?.status === 'cancelled') { title = 'Дежурство отменено'; symbol = 'coffee'; }
-    else if (day?.status === 'closed') { title = 'Сегодня отдежурили'; symbol = 'check'; }
-    else if (!day) { title = 'Дежурные ещё не назначены'; }
-    else { title = 'Сегодня дежурят'; }
-    const hero = el('section', { className: 'duty-card duty-hero' }, [
-      el('div', { className: 'duty-hero-icon' }, [icon(symbol)]), el('h2', { text: title }), message ? p(message) : null]);
-    if (active.length && !mine?.mine) hero.append(el('div', { className: 'duty-names' }, active.map(m => p(m.name))));
-    if (mine?.state === 'assigned') {
-      if (state.options.place) hero.append(p(state.options.place, 'duty-help'));
-      if (state.options.tasks) hero.append(p(state.options.tasks));
-      if (Date.now() / 1000 >= day.cutoff) hero.append(button('Я отдежурил(а)', () => mutate({ action: 'done', day: day.id }), 'duty-primary duty-wide'));
-      hero.append(button('Сегодня не могу', () => confirmAction('Перенести дежурство?', 'Подберём замену на сегодня.', () => mutate({ action: 'decline', day: day.id }), 'Сегодня не могу'), 'duty-danger duty-wide'));
+  function renderAssignments(content) {
+    const currentDate = today();
+    const day = state.days.find(d => d.date === currentDate);
+    const planned = !day && state.forecast?.find(d => d.date === currentDate);
+    const now = Date.now() / 1000;
+    const requests = day && now < day.cutoff ? (day.requests || []).filter(r => !r.mine) : [];
+    if (requests.length) content.append(card('Запросы на перенос', ...requests.map(r => el('div', { className: 'duty-flow-row' }, [
+      p(r.name), r.reason ? p(r.reason, 'duty-help') : null,
+      actions(button('Одобрить перенос', () => mutate({ action: 'approve_decline', day: day.id, member: r.member }), 'duty-primary'),
+        button('Оставить дежурство', () => mutate({ action: 'reject_decline', day: day.id, member: r.member }))) ]))));
+    const active = day?.people.filter(m => ['assigned', 'reported', 'waiting', 'done'].includes(m.state)) || [];
+    let statusText = { no_duty: 'Сегодня без дежурства', searching: 'Подбираем замену', unfilled: 'Сегодня нужна замена',
+      cancelled: 'Дежурство отменено', closed: 'Итоги сохранены' }[day?.status];
+    if (!day && state.status !== 'paused') {
+      if (state.first_date > currentDate) statusText = 'Дежурства начнутся ' + dateLabel(state.first_date);
+      else if (planned?.status === 'no_duty') statusText = 'Сегодня без дежурства';
+      else if (planned?.people.length) statusText = 'По графику сегодня дежурят';
+      else statusText = 'Сегодня нужна замена';
     }
-    if (day && mine?.state === 'declined' && Date.now() / 1000 < day.cutoff) hero.append(button('Всё-таки могу', () => mutate({ action: 'reconsider', day: day.id })));
-    if (admin() && day && !['no_duty', 'cancelled', 'closed'].includes(day.status)) {
-      if (Date.now() / 1000 >= day.cutoff && active.some(m => ['assigned', 'reported'].includes(m.state))) hero.append(button('Подтвердить дежурство', () => markDialog(day), 'duty-primary duty-wide'));
-      hero.append(button('Другие действия', () => dayActions(day), 'duty-quiet duty-wide'));
+    const canAssign = day && !['no_duty', 'closed'].includes(day.status) && !day.people.some(m => ['done', 'reported', 'missed', 'excused'].includes(m.state));
+    const canMark = day && day.status !== 'no_duty' && now >= day.cutoff;
+    content.append(card('Назначение на сегодня',
+      statusText ? p(statusText, 'duty-help') : null,
+      ...active.map(m => p(m.name + ' — ' + labels[m.state])),
+      ...(planned?.people || []).map(m => p(m.name)),
+      canMark ? button(day.status === 'closed' ? 'Открыть итоги' : 'Записать итоги', () => markDialog(day), 'duty-primary duty-wide') : null,
+      canAssign ? button('Изменить назначение', () => dayActions(day), 'duty-wide') : null));
+    if (day?.offer_declines?.length) content.append(details('Отказы от подмены', ...day.offer_declines.map(r =>
+      el('div', { className: 'duty-flow-row' }, [p(r.name), p(r.reason, 'duty-help')]))));
+    const past = state.days.filter(d => d.date < currentDate && d.status !== 'no_duty');
+    const needsResult = d => d.people.some(m => ['assigned', 'reported'].includes(m.state));
+    const open = past.filter(needsResult);
+    if (open.length) {
+      const pending = card('Нужно отметить', ...open.map(d => rosterRow('d' + d.id, d,
+        button(dateLabel(d.date), () => markDialog(d), 'duty-wide'))));
+      pending.dataset.roster = 'pending';
+      content.append(pending);
     }
-    content.append(hero);
-    for (const offer of day?.offers || []) content.append(card('Нужна подмена', p(offer.host + ' + ' + offer.guest),
-      p(offer.answered ? 'Ждём ответа напарника.' : 'Сможешь продежурить в этой паре?'),
-      p('Ответ до ' + new Date(offer.expires * 1000).toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit' }) + ' МСК', 'duty-help'),
-      offer.answered ? null : actions(button('Смогу', () => mutate({ action: 'offer_yes', offer: offer.id }), 'duty-primary'), button('Не могу', () => mutate({ action: 'offer_no', offer: offer.id }), 'duty-danger'))));
-    const next = state.forecast.find(d => d.date > today() && d.status !== 'no_duty' && d.people.length && (admin() || d.people.some(m => m.mine)));
-    if (next) content.append(card(admin() ? 'Следующее дежурство' : 'Твоя следующая очередь', p(dateLabel(next.date), 'duty-next-date'),
-      ...next.people.map(m => p(m.name)), p('Предварительно', 'duty-help')));
-    if (admin()) {
-      const unresolved = state.days.filter(d => d.date < today() && d.people.some(m => ['assigned', 'reported'].includes(m.state)));
-      if (unresolved.length) content.append(card('Незакрытые дежурства', ...unresolved.map(d => button(dateLabel(d.date), () => markDialog(d), 'duty-wide'))));
+    const old = past.filter(d => !needsResult(d));
+    if (old.length) {
+      const history = details('Итоги прошлых дежурств', ...old.map(d => rosterRow('d' + d.id, d,
+        el('div', { className: 'duty-row' }, [
+          el('div', { className: 'duty-row-copy' }, [el('strong', { text: dateLabel(d.date) }),
+            ...d.people.filter(m => ['done', 'missed', 'excused'].includes(m.state)).map(m => el('small', { text: m.name + ' — ' + labels[m.state] }))]),
+          button('Итоги', () => markDialog(d)) ]))));
+      history.dataset.roster = 'history';
+      content.append(history);
     }
   }
   function markDialog(day) {
@@ -237,33 +322,51 @@
           button('Применить', () => mutate({ action: ['done', 'missed', 'excused'].includes(m.state) ? 'correct' : 'finish', day: day.id, member: m.member, outcome: outcome.value }), 'duty-wide')]);
       }));
     if (!pending.length) individual.open = true;
-    dialog('Итоги · ' + dateLabel(day.date), ...pending.map(m => p(m.name)),
-      pending.length ? button('Все отдежурили', () => mutate({ action: 'finish', day: day.id }), 'duty-primary duty-wide') : null, individual);
+    dialog('Итоги · ' + dateLabel(day.date), ...candidates.map(m => p(m.name + ' — ' + labels[m.state])),
+      pending.length ? button('Все назначенные отдежурили', () => mutate({ action: 'finish', day: day.id }), 'duty-primary duty-wide') : null,
+      button('Указать, кто отдежурил фактически', () => recordResultsDialog(day), pending.length ? 'duty-wide' : 'duty-primary duty-wide'),
+      candidates.length ? individual : null);
+  }
+  function recordResultsDialog(day) {
+    const current = day.people.filter(m => ['assigned', 'reported', 'done'].includes(m.state));
+    const roster = state.members.filter(m => m.active || day.people.some(p => p.member === m.id));
+    const choices = [['', 'Выберите участника'], ...roster.map(m => [m.id, m.name + (m.pair ? '' : ' · запасной')])];
+    const first = select(choices, current[0]?.member || '');
+    const second = select(choices, current[1]?.member || '');
+    const save = button('Записать итоги', () => mutate({ action: 'record_results', day: day.id,
+      member: Number(first.value), other: Number(second.value), revision: day.revision }), 'duty-primary duty-wide');
+    const update = () => {
+      for (const [node, other] of [[first, second], [second, first]]) {
+        for (const option of node.options) option.disabled = Boolean(option.value && option.value === other.value);
+      }
+      save.disabled = !(first.value && second.value && first.value !== second.value);
+    };
+    first.addEventListener('change', update); second.addEventListener('change', update); update();
+    dialog('Кто отдежурил?', p('Дежурство зачтётся выбранным участникам. График обновится.'),
+      field('Первый участник', first), field('Второй участник', second),
+      actions(button('Назад', () => markDialog(day)), save));
   }
   function manualDialog(day) {
     const pairs = [...new Set(state.members.filter(m => m.active && m.pair).map(m => m.pair))];
-    const choices = select(pairs.map(pid => { const members = state.members.filter(m => m.active && m.pair === pid); return [members[0].id, members.map(m => m.name).join(' + ')]; }), '');
-    const host = select(state.members.filter(m => m.active && m.pair).map(m => [m.id, m.name]), '');
-    const reserve = select(state.members.filter(m => m.active && !m.pair).map(m => [m.id, m.name]), '');
+    const available = state.members.filter(m => m.active && !m.credit && !day.people.some(p => p.member === m.id && p.state === 'declined')
+      && (!m.exempt_until || m.exempt_until < day.date));
+    const pairOptions = pairs.map(pid => available.filter(m => m.pair === pid)).filter(members => members.length === 2)
+      .map(members => [members[0].id, members.map(m => m.name).join(' + ')]);
+    const choices = select([['', 'Выберите пару'], ...pairOptions], '');
+    const host = select([['', 'Выберите дежурного'], ...available.filter(m => m.pair).map(m => [m.id, m.name])], '');
+    const reserve = select([['', 'Выберите запасного'], ...available.filter(m => !m.pair).map(m => [m.id, m.name])], '');
+    const assign = button('Назначить пару', () => mutate({ action: 'manual_pair', day: day.id, member: Number(choices.value) }), 'duty-primary duty-wide');
+    const substitute = button('Назначить с запасным', () => mutate({ action: 'manual_reserve', day: day.id, member: Number(host.value), other: Number(reserve.value) }), 'duty-wide');
+    const update = () => { assign.disabled = !choices.value; substitute.disabled = !host.value || !reserve.value; };
+    for (const node of [choices, host, reserve]) node.addEventListener('change', update);
+    update();
     dialog('Назначить вручную', p('Сначала договоритесь с участниками. Это назначение действует только на сегодня.', 'duty-help'),
-      field('Целая пара', choices), button('Назначить пару', () => mutate({ action: 'manual_pair', day: day.id, member: Number(choices.value) }), 'duty-primary duty-wide'),
-      field('Дежурный', host), field('Запасной', reserve), button('Назначить с запасным', () => mutate({ action: 'manual_reserve', day: day.id, member: Number(host.value), other: Number(reserve.value) }), 'duty-wide'));
-  }
-  function renderCalendar(content) {
-    const list = card('Ближайшие четыре недели', p('График предварительный.', 'duty-help'));
-    for (const d of state.forecast) {
-      const date = new Date(d.date + 'T12:00:00+03:00');
-      list.append(el('div', { className: 'duty-row' + (d.people.some(m => m.mine) ? ' duty-mine' : '') }, [
-        el('div', { className: 'duty-date', text: date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) }, [el('small', { text: date.toLocaleDateString('ru-RU', { weekday: 'short' }) })]),
-        el('div', { className: 'duty-row-copy' }, [el('strong', { text: d.status === 'no_duty' ? 'Без дежурства' : d.people.map(m => m.name).join(' + ') || 'Пока не назначено' }),
-          el('small', { text: d.people.some(m => m.mine) ? 'Твоя очередь' : '' })]) ]));
-    }
-    content.append(list);
-    const past = state.days.filter(d => d.date <= today() && d.status !== 'no_duty');
-    if (past.length) content.append(card('Прошлые дежурства', ...past.map(d => el('div', { className: 'duty-row' }, [
-      el('div', { className: 'duty-row-copy' }, [el('strong', { text: dateLabel(d.date) }),
-        ...d.people.filter(m => !['released', 'declined', 'waiting', 'cancelled'].includes(m.state)).map(m => el('small', { text: m.name + ' — ' + (labels[m.state] || m.state) }))]),
-      admin() ? button('Итоги', () => markDialog(d)) : null ]))));
+      pairOptions.length ? field('Целая пара', choices) : null, pairOptions.length ? assign : null,
+      reserve.options.length > 1 && host.options.length > 1
+        ? details('Назначить с запасным', field('Дежурный', host), field('Запасной', reserve), substitute)
+        : null,
+      !pairOptions.length && (reserve.options.length <= 1 || host.options.length <= 1)
+        ? p('Нет доступной пары или запасного. Проверьте предыдущие итоги и состав.', 'duty-help') : null);
   }
   function memberRow(m) {
     const label = m.name + (m.mine ? ' · ты' : '');
@@ -275,16 +378,22 @@
     const active = state.members.filter(m => m.active);
     const pairIds = [...new Set(active.filter(m => m.pair).map(m => m.pair))];
     const pairs = card('Пары');
+    pairs.dataset.roster = 'pairs';
     pairIds.forEach((id, index) => {
       const members = active.filter(m => m.pair === id);
       const row = el('section', { className: 'duty-pair-view' }, [el('h3', { text: 'Пара ' + (index + 1) }),
-        el('div', { className: 'duty-pair-names' }, members.map(m => p(m.name + (m.mine ? ' · ты' : ''))))]);
+        el('div', { className: 'duty-pair-names' }, [
+          ...members.map(m => p(m.name + (m.mine ? ' · ты' : ''))),
+          members.length === 1 ? p('Без напарника', 'duty-help') : null])]);
       if (admin()) row.append(button('Изменить', () => dialog('Пара ' + (index + 1), ...members.map(memberRow)), 'duty-quiet'));
-      pairs.append(row);
+      pairs.append(rosterRow('p' + id, [index,state.role,members], row));
     });
     content.append(pairs);
     const reserves = active.filter(m => !m.pair);
-    content.append(card('Запасные', ...reserves.map(memberRow), reserves.length ? null : p('Запасных пока нет.', 'duty-help')));
+    const reserveCard = card('Запасные', ...reserves.map(m => rosterRow('m' + m.id, [state.role,m], memberRow(m))),
+      reserves.length ? null : p('Запасных пока нет.', 'duty-help'));
+    reserveCard.dataset.roster = 'reserves';
+    content.append(reserveCard);
     if (!admin()) return;
     content.append(actions(button('Добавить пару', () => appendDialog(false), 'duty-primary'), button('Добавить запасного', () => appendDialog(true))));
     const missing = active.filter(m => !m.linked);
@@ -302,16 +411,72 @@
   function memberDialog(m) {
     const mate = partner(m);
     const name = input(m.name, { maxLength: 80, 'aria-label': 'Имя участника' });
-    const exempt = input(m.exempt_until, { type: 'date', 'aria-label': 'Освободить до даты' });
-    dialog(m.name, p(mate ? 'Напарник — ' + mate.name : m.pair ? 'Напарник пока не участвует.' : 'В запасных.', 'duty-help'),
-      button('Поменять местами', () => swapDialog(m), 'duty-primary duty-wide'),
-      details('Освобождение', field('До какой даты включительно', exempt), button('Сохранить', () => mutate({ action: 'exempt', member: m.id, value: exempt.value || null }), 'duty-wide'),
+    const earliest = today();
+    const exempt = input(m.exempt_until, { type: 'date', min: earliest, required: true, 'aria-label': 'Освободить до даты' });
+    const saveExemption = button('Сохранить освобождение', () => mutate({ action: 'exempt', member: m.id, value: exempt.value }), 'duty-wide');
+    const updateExemption = () => { saveExemption.disabled = !exempt.validity.valid; };
+    exempt.addEventListener('input', updateExemption);
+    exempt.addEventListener('change', updateExemption);
+    updateExemption();
+    const exemption = m.exempt_until && m.exempt_until >= earliest
+      ? 'Освобождение действует до ' + m.exempt_until.split('-').reverse().join('.') + ' включительно.'
+      : null;
+    dialog(m.name, p(mate ? 'Напарник — ' + mate.name : m.pair ? 'Без напарника.' : 'В запасных.', 'duty-help'),
+      m.active ? button('Поменять местами', () => swapDialog(m), 'duty-primary duty-wide') : null,
+      details('Освобождение', field('Последний день освобождения', exempt, exemption), saveExemption,
         m.exempt_until ? button('Снять освобождение', () => mutate({ action: 'exempt', member: m.id, value: null }), 'duty-wide') : null),
       !m.linked ? button('Подключить уведомления', () => inviteDialog(m.id), 'duty-wide') : null,
-      details('Другие действия', field('Имя в списке', name), button('Сохранить имя', () => mutate({ action: 'rename', member: m.id, value: name.value }), 'duty-wide'),
-        owner() && m.role && !m.mine ? button(m.role === 'manager' ? 'Убрать заместителя' : 'Назначить заместителем', () => mutate({ action: 'manager', member: m.id }), 'duty-wide') : null,
+      details('Другие действия',
+        m.active ? (m.pair ? button('Перевести в запасные', () => moveToReserveDialog(m), 'duty-wide')
+          : button('Добавить в пару', () => pairReserveDialog(m), 'duty-wide')) : null,
+        field('Имя в списке', name), button('Сохранить имя', () => mutate({ action: 'rename', member: m.id, value: name.value }), 'duty-wide'),
         owner() && m.role && !m.mine ? button('Передать управление', () => confirmAction('Передать управление?', m.name + ' станет админом дежурств.', () => mutate({ action: 'transfer', member: m.id }), 'Передать'), 'duty-wide') : null,
         button(m.active ? 'Временно убрать из очереди' : 'Вернуть в очередь', () => confirmAction(m.active ? 'Убрать из очереди?' : 'Вернуть в очередь?', 'История дежурств сохранится.', () => mutate({ action: 'active', member: m.id, value: !m.active }), m.active ? 'Убрать' : 'Вернуть'), 'duty-wide')));
+  }
+  function moveToReserveDialog(m) {
+    const mate = partner(m);
+    dialog('Перевести в запасные?', p(m.name + ' будет в списке запасных.' + (mate ? ' ' + mate.name + ' останется без напарника.' : '')),
+      actions(button('Назад', () => memberDialog(m)),
+        button('Перевести в запасные', () => mutate({ action: 'move_to_reserve', member: m.id }), 'duty-primary')));
+  }
+  function pairReserveDialog(m) {
+    const active = state.members.filter(other => other.id !== m.id && other.active);
+    const available = active.filter(other => other.pair && !partner(other));
+    const replace = active.filter(other => partner(other));
+    const reserves = active.filter(other => !other.pair);
+    const groups = [
+      ['Свободное место', 'join_pair', available, 'В пару к '],
+      ['Замена в паре', 'swap', replace, 'Вместо '],
+      ['Новая пара', 'pair_reserves', reserves, 'В пару с '],
+    ].filter(([, , people]) => people.length);
+    if (!groups.length) {
+      dialog('Добавить в пару', p('Пока нет свободного места или участника для новой пары.'), button('Назад', () => memberDialog(m), 'duty-wide'));
+      return;
+    }
+    const chooser = el('select', {}, [el('option', { value: '', text: 'Выберите участника' }),
+      ...groups.map(([label, action, people, prefix]) => el('optgroup', { label }, people.map(other =>
+        el('option', { value: action + ':' + other.id, text: prefix + other.name }))))]);
+    const preview = p('', 'duty-help');
+    const save = button('Сохранить пару', () => {
+      const [action, id] = chooser.value.split(':');
+      mutate({ action, member: m.id, other: Number(id) });
+    }, 'duty-primary');
+    save.disabled = true;
+    chooser.addEventListener('change', () => {
+      const [action, id] = chooser.value.split(':');
+      const other = person(Number(id));
+      save.disabled = !other;
+      if (!other) preview.textContent = '';
+      else if (action === 'swap') preview.textContent = m.name + ' будет дежурить с ' + partner(other).name + '. ' + other.name + ' будет в запасных.';
+      else {
+        preview.textContent = m.name + ' и ' + other.name + ' будут дежурить вместе.';
+        if (action === 'join_pair' && state.members.some(peer => peer.pair === other.pair && !peer.active)) {
+          preview.textContent += ' Прежний напарник останется вне очереди.';
+        }
+      }
+    });
+    dialog('Добавить в пару', field('Напарник или место в паре', chooser), preview,
+      actions(button('Назад', () => memberDialog(m)), save));
   }
   function swapDialog(m) {
     const candidates = state.members.filter(x => x.active && x.pair !== m.pair);
@@ -345,7 +510,7 @@
     peopleCatalog = response.people; peopleContext = space; peopleExpires = response.expires_at * 1000;
     return peopleCatalog;
   }
-  function rosterEditor(model, reservesOnly = false) {
+  function rosterEditor(model, mode = 'all') {
     const root = el('div', { className: 'duty-roster-editor' });
     const selected = () => [...model.pairs.flat(), ...model.reserves].filter(Boolean);
     function updateOptions() {
@@ -357,30 +522,34 @@
     function chooser(value, set, label) {
       const node = select([['', 'Выберите участника'], ...peopleCatalog.map(person => [person.ref, person.name])], value);
       node.setAttribute('aria-label', label);
-      node.addEventListener('change', () => { set(node.value); if (model === draft) dirty = true; updateOptions(); });
+      node.addEventListener('change', () => { set(node.value); if (model === draft) setDirty(true); updateOptions(); });
       return node;
     }
     function renderEditor() {
       root.replaceChildren();
       if (!peopleCatalog.length) root.append(p('Пока нет доступных участников. Обновите список или проверьте, что у них выбрана ваша группа в боте.', 'duty-help'));
-      if (!reservesOnly) {
+      if (mode !== 'reserves') {
         const pairs = card('Пары');
+    pairs.dataset.roster = 'pairs';
         model.pairs.forEach((pair, index) => {
           const row = el('div', { className: 'duty-pair-editor' }, [
             el('div', { className: 'duty-pair-heading' }, [el('h3', { text: 'Пара ' + (index + 1) }), button('Удалить пару', () => { model.pairs.splice(index, 1); renderEditor(); }, 'duty-remove')]),
             el('div', { className: 'duty-fields' }, [field('Дежурный', chooser(pair[0], value => { pair[0] = value; }, 'Пара ' + (index + 1) + ': дежурный')),
               field('Напарник', chooser(pair[1], value => { pair[1] = value; }, 'Пара ' + (index + 1) + ': напарник'))])]);
-          pairs.append(row);
+          pairs.append(rosterRow('p' + id, [index,state.role,members], row));
         });
         pairs.append(button('Добавить пару', () => { model.pairs.push(['', '']); renderEditor(); }, 'duty-wide'));
         root.append(pairs);
       }
-      const reserves = card('Запасные');
-      model.reserves.forEach((value, index) => reserves.append(el('div', { className: 'duty-reserve-editor' }, [
-        chooser(value, next => { model.reserves[index] = next; }, 'Запасной ' + (index + 1)),
-        button('Убрать', () => { model.reserves.splice(index, 1); renderEditor(); }, 'duty-remove')])));
-      reserves.append(button('Добавить запасного', () => { model.reserves.push(''); renderEditor(); }, 'duty-wide'));
-      root.append(reserves); updateOptions();
+      if (mode !== 'pairs') {
+        const reserves = card('Запасные');
+        model.reserves.forEach((value, index) => reserves.append(el('div', { className: 'duty-reserve-editor' }, [
+          chooser(value, next => { model.reserves[index] = next; }, 'Запасной ' + (index + 1)),
+          button('Убрать', () => { model.reserves.splice(index, 1); renderEditor(); }, 'duty-remove')])));
+        reserves.append(button('Добавить запасного', () => { model.reserves.push(''); renderEditor(); }, 'duty-wide'));
+        root.append(reserves);
+      }
+      updateOptions();
     }
     root.getSelection = () => {
       const pairs = model.pairs.filter(pair => pair.some(Boolean));
@@ -393,64 +562,79 @@
     perform(async () => {
       await fetchPeople(sid);
       const model = { pairs: reserves ? [] : [['', '']], reserves: reserves ? [''] : [] };
-      const editor = rosterEditor(model, reserves);
+      const editor = rosterEditor(model, reserves ? 'reserves' : 'pairs');
       dialog(reserves ? 'Добавить запасных' : 'Добавить участников', editor,
         button('Добавить в дежурства', () => perform(async () => {
           await request('/' + sid + '/roster', 'POST', editor.getSelection());
-          peopleExpires = 0; dirty = false; closeDialog(); await load();
+          peopleExpires = 0; setDirty(false); closeDialog(); await load();
         }), 'duty-primary duty-wide'));
     }, '', 'Загружаем список группы…');
   }
   function settingsForm(values, setup = false) {
     const opts = structuredClone(values), form = el('form', { className: 'duty-form' });
     form.addEventListener('submit', event => event.preventDefault());
-    const control = (key, type, props = {}) => input(opts[key], { type, ...props, oninput: event => { opts[key] = type === 'number' ? Number(event.target.value) : event.target.value; dirty = true; } });
+    const control = (key, type, props = {}) => input(opts[key], { type, ...props, oninput: event => { opts[key] = type === 'number' ? Number(event.target.value) : event.target.value; setDirty(true); } });
     const audience = select([['all', 'Всем участникам'], ['assigned', 'Только дежурным'], ['off', 'Не отправлять']], opts.audience);
-    audience.addEventListener('change', () => { opts.audience = audience.value; dirty = true; });
+    audience.addEventListener('change', () => { opts.audience = audience.value; setDirty(true); });
     const notify = card('Уведомления',
       field('Кому сообщать о дежурных', audience),
-      check('Писать мне, кто дежурит', opts.owner_daily, value => { opts.owner_daily = value; dirty = true; }),
-      check('Спрашивать о подменах в личке', opts.requests, value => { opts.requests = value; dirty = true; }),
-      check('Сообщать мне об отказах и итогах', opts.owner_events, value => { opts.owner_events = value; dirty = true; }));
+      check('Писать мне, кто дежурит', opts.owner_daily, value => { opts.owner_daily = value; setDirty(true); }),
+      check('Спрашивать о подменах в личке', opts.requests, value => { opts.requests = value; setDirty(true); }),
+      check('Сообщать мне об отказах и итогах', opts.owner_events, value => { opts.owner_events = value; setDirty(true); }));
     form.append(notify);
     const days = el('div', { className: 'duty-days' });
     ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].forEach((name, index) => days.append(el('label', {}, [
-      input('', { type: 'checkbox', checked: opts.days.includes(index), 'aria-label': name, onchange: event => { opts.days = event.target.checked ? [...opts.days, index].sort() : opts.days.filter(d => d !== index); dirty = true; } }),
+      input('', { type: 'checkbox', checked: opts.days.includes(index), 'aria-label': name, onchange: event => { opts.days = event.target.checked ? [...opts.days, index].sort() : opts.days.filter(d => d !== index); setDirty(true); } }),
       el('span', { text: name })])));
     const times = card('Дни и время', field('Напоминание, МСК', control('time', 'time', { required: true })), days);
     const mode = select([['reserve', 'Сначала запасной'], ['pair', 'Следующая пара']], opts.mode);
-    mode.addEventListener('change', () => { opts.mode = mode.value; dirty = true; });
+    mode.addEventListener('change', () => { opts.mode = mode.value; setDirty(true); });
     const replacements = details('Подбор замен и итоги',
       field('При отказе дежурного', mode), field('Искать замену до, МСК', control('cutoff', 'time', { required: true })),
       field('Ждать ответа, минут', control('wait_minutes', 'number', { min: 2, max: 30 })),
       field('Напоминать об итогах в, МСК', control('report', 'time', { required: true })));
     const place = details('Место и обязанности', field('Где дежурят', control('place', 'text', { maxLength: 120, placeholder: 'Например, кабинет 48' })),
-      field('Что нужно сделать', el('textarea', { value: opts.tasks, maxLength: 500, rows: 3, oninput: event => { opts.tasks = event.target.value; dirty = true; } })));
+      field('Что нужно сделать', el('textarea', { value: opts.tasks, maxLength: 500, rows: 3, oninput: event => { opts.tasks = event.target.value; setDirty(true); } })));
     if (setup) form.append(details('Изменить время и другие настройки', times, replacements, place));
     else form.append(times, replacements, place);
     form.getOptions = () => opts; return form;
   }
   function renderSettings(content) {
-    const daily = check('Кто сегодня дежурит', state.daily_notifications, value => mutate({ action: 'daily_notifications', value }));
-    daily.querySelector('input').disabled = state.muted;
-    content.append(card('Личные уведомления', check('Получать сообщения', !state.muted, () => mutate({ action: 'mute' })), daily));
     if (!admin()) {
-      content.append(details('Другие действия', button('Выйти из дежурств', () => confirmAction('Выйти из дежурств?', 'Личные уведомления прекратятся.', () => mutate({ action: 'leave' }), 'Выйти'), 'duty-danger duty-wide')));
+      content.append(card('Сообщения в Telegram', check('Получать уведомления о дежурствах', !state.muted, () => mutate({ action: 'mute' })),
+        p('Рассылку о том, кто дежурит, можно выключить на главной странице дежурств.', 'duty-help')));
       return;
+    }
+    if (owner()) {
+      const deputies = state.deputies || [];
+      const candidates = state.members.filter(m => m.linked && m.role === 'member');
+      content.append(card('Заместители',
+        ...(deputies.length ? deputies.map(m => el('div', { className: 'duty-flow-row' }, [
+          p(m.name), button('Снять права', () => confirmAction('Снять права заместителя?', m.name + ' останется в списке участников.',
+            () => mutate({ action: 'manager', deputy: m.id, value: false }), 'Снять права'), 'duty-wide')])) : [p('Пока нет заместителей.', 'duty-help')]),
+        candidates.length ? button('Назначить заместителя', () => deputyDialog(candidates), 'duty-wide') : null));
     }
     const form = settingsForm(state.options), original = JSON.stringify(state.options);
     const save = button('Сохранить изменения', () => perform(async () => {
-      await request('/' + sid + '/settings', 'PUT', form.getOptions()); dirty = false; await load();
+      await request('/' + sid + '/settings', 'PUT', form.getOptions()); setDirty(false); await load();
     }), 'duty-primary duty-wide');
     const bar = el('div', { className: 'duty-savebar', hidden: true }, [save]);
-    const updateSave = () => { dirty = JSON.stringify(form.getOptions()) !== original; bar.hidden = !dirty; save.disabled = !dirty; };
+    const updateSave = () => { setDirty(JSON.stringify(form.getOptions()) !== original); bar.hidden = !dirty; save.disabled = !dirty; };
     form.addEventListener('input', updateSave); form.addEventListener('change', updateSave);
     content.append(form, details('Управление списком',
       button(state.status === 'paused' ? 'Возобновить' : 'Поставить на паузу', () => confirmAction(state.status === 'paused' ? 'Возобновить дежурства?' : 'Поставить на паузу?', state.status === 'paused' ? 'Возобновим назначения и напоминания.' : 'Приостановим назначения и напоминания.', () => mutate({ action: state.status === 'paused' ? 'resume' : 'pause' })), 'duty-wide'),
       button('История изменений', () => dialog('История изменений', ...state.events.slice(0, 12).map(e => p(
         new Date(e.created * 1000).toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow', day: 'numeric', month: 'short' }) + ' · ' +
         ({ settings: 'Настройки обновлены', partners_changed: 'Участников поменяли местами', notification_migration: 'Обновлены уведомления', done: 'Дежурство подтверждено', missed: 'Отмечен пропуск', day_created: 'Назначены дежурные', created: 'Дежурства настроены', result_corrected: 'Результат исправлен', pause: 'Пауза', resume: 'Дежурства возобновлены' }[e.action] || 'Список обновлён'), 'duty-help'))), 'duty-wide'),
-      button('Архивировать дежурства', () => confirmAction('Архивировать дежурства?', 'Назначения прекратятся. История сохранится.', () => mutate({ action: 'archive' }), 'Архивировать'), 'duty-danger duty-wide')), bar);
+      owner() ? button('Архивировать дежурства', () => confirmAction('Архивировать дежурства?', 'Назначения прекратятся. История сохранится.', () => mutate({ action: 'archive' }), 'Архивировать'), 'duty-danger duty-wide') : null), bar);
+  }
+  function deputyDialog(candidates) {
+    const chooser = select([['', 'Выберите участника'], ...candidates.map(m => [m.id, m.name])], '');
+    const save = button('Назначить', () => mutate({ action: 'manager', member: Number(chooser.value), value: true }), 'duty-primary duty-wide');
+    save.disabled = true;
+    chooser.addEventListener('change', () => { save.disabled = !chooser.value; });
+    dialog('Назначить заместителя', p('Заместитель сможет менять назначения, отвечать на запросы и отмечать итоги.'),
+      field('Участник', chooser), save);
   }
   function showSetup() {
     const content = $('dutyContent'); content.replaceChildren();
@@ -472,7 +656,7 @@
         button('Проверить список', () => perform(async () => {
           draft.options = form.getOptions();
           preview = await request('/preview', 'POST', { pairs: draft.pairs.filter(pair => pair.every(Boolean)), reserves: draft.reserves.filter(Boolean), options: draft.options });
-          setupStep = 3; dirty = true; showSetup();
+          setupStep = 3; setDirty(true); showSetup();
         }, '', 'Проверяем участников…'), 'duty-primary')));
     } else {
       content.append(card('Проверьте состав', ...preview.pairs.map((pair, index) => el('div', { className: 'duty-preview-pair' }, [
@@ -481,7 +665,7 @@
         p('После запуска участникам придёт уведомление.', 'duty-help')),
         actions(button('Изменить состав', () => { setupStep = 1; showSetup(); }), button('Запустить дежурства', () => perform(async () => {
           const result = await request('', 'POST', { pairs: draft.pairs.filter(pair => pair.every(Boolean)), reserves: draft.reserves.filter(Boolean), options: draft.options, preview_token: preview.preview_token });
-          sid = result.id; dirty = false; peopleExpires = 0; await load();
+          sid = result.id; setDirty(false); peopleExpires = 0; await load();
         }), 'duty-primary')));
     }
   }
@@ -491,16 +675,26 @@
   }
   $('dutyRefresh').addEventListener('click', refresh);
   $('dutyDialogClose').addEventListener('click', closeDialog);
+  $('dutyDialog').addEventListener('cancel', event => { event.preventDefault(); closeDialog(); });
   $('dutyDialog').addEventListener('click', event => { if (event.target === $('dutyDialog')) { const rect = event.target.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closeDialog(); } });
   document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => {
     if (dirty && !window.confirm('Есть несохранённые изменения. Перейти без сохранения?')) return;
-    dirty = false; tab = b.dataset.tab; status(''); render();
+    if (b.dataset.tab !== tab) feedback('selection');
+    setDirty(false); tab = b.dataset.tab; status(''); render();
   }));
   window.addEventListener('beforeunload', event => { if (dirty) { event.preventDefault(); event.returnValue = ''; } });
   if (tg) {
     const theme = () => { document.documentElement.dataset.theme = tg.colorScheme || 'light'; Object.entries(tg.themeParams || {}).forEach(([key, value]) => document.documentElement.style.setProperty('--tg-theme-' + key.replaceAll('_', '-'), value)); };
     theme(); tg.ready(); tg.expand(); tg.onEvent('themeChanged', theme);
-    if (tg.BackButton) { tg.BackButton.show(); tg.BackButton.onClick(() => { if (!dirty || window.confirm('Выйти без сохранения изменений?')) location.href = '/'; }); }
+    if (initData && tg.isVersionAtLeast?.('7.7')) tg.disableVerticalSwipes?.();
+    if (initData && tg.isVersionAtLeast?.('6.2')) {
+      window.addEventListener('pagehide', () => { if (dirty) tg.disableClosingConfirmation?.(); });
+      window.addEventListener('pageshow', () => { if (dirty) tg.enableClosingConfirmation?.(); });
+    }
+    if (tg.BackButton) {
+      tg.BackButton.show();
+      tg.BackButton.onClick(() => { if ($('dutyDialog').open) closeDialog(); else location.href = $('dutyBack').href; });
+    }
   }
   if (!initData) {
     $('dutySkeleton').hidden = true;

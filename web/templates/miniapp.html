@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="HandheldFriendly" content="true">
+    <meta name="MobileOptimized" content="width">
+    <title>Кэпик — расписание колледжа</title>
+    <meta name="description" content="Кэпик — расписание Краснодарского колледжа электронного приборостроения. Telegram-бот и навык Алисы от rub1kub.">
+    <link rel="canonical" href="https://kkepik.rub1kub.ru/">
+    <meta name="google-site-verification" content="a3gtxkoD1rsE2XaMDRNpxkUhISqzRl0GT5RsJbNt14Q" />
+    <script data-kepik-prepaint>
+/* Hide the public landing before first paint when Telegram launch data is present.
+   These are the same hash/session sources used by the bundled Telegram SDK.
+   This selects a screen only; API authentication is unchanged. */
+(function () {
+    'use strict';
+    function loadBanner(initData) {
+        const controller = new AbortController();
+        const started = performance.now();
+        const startedAt = Date.now();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        const pending = fetch('/api/campaign/owner-preview', {
+            headers: { 'X-Telegram-Init-Data': initData },
+            cache: 'no-store', credentials: 'omit', signal: controller.signal
+        }).then(async response => response.ok ? {
+            html: await response.text(),
+            duration: Number(response.headers.get('X-Campaign-Remaining-Ms'))
+        } : null).catch(() => null).finally(() => clearTimeout(timeout));
+        return { initData, started, startedAt, pending };
+    }
+
+    window.kkepikBannerLoader = { load: loadBanner };
+    try {
+        let hash = window.location.hash.replace(/^#/, '');
+        const question = hash.indexOf('?');
+        if (question >= 0) hash = hash.slice(question + 1);
+        const params = new URLSearchParams(hash);
+        let data;
+        if (params.has('tgWebAppData')) {
+            data = params.getAll('tgWebAppData').pop();
+        } else {
+            const cached = JSON.parse(window.sessionStorage.getItem('__telegram__initParams') || 'null');
+            data = cached && cached.tgWebAppData;
+        }
+        if (typeof data === 'string' && data.trim()) {
+            document.documentElement.classList.add('kepik-telegram-pending');
+            const tab = new URLSearchParams(window.location.search).get('tab');
+            if (tab === 'search' || tab === 'duty') document.documentElement.classList.add('kepik-secondary-startup');
+            const iso = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Moscow' }).format(new Date());
+            if (tab !== 'duty' && navigator.onLine && data.length <= 16384) {
+                const requested = iso.split('-').reverse().join('.');
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 12000);
+                const bootstrap = fetch('/api/bootstrap?date=' + encodeURIComponent(requested) + '&adjacent=0', {
+                    headers: { 'X-Telegram-Init-Data': data }, signal: controller.signal,
+                    cache: 'no-store', credentials: 'same-origin',
+                }).then(response => response.ok ? response.json() : null)
+                  .catch(() => null).finally(() => clearTimeout(timeout));
+                window.kkepikLaunch = { initData: data, iso, bootstrap };
+            }
+            {% if champion_banner_live %}
+            if (tab !== 'duty' && tab !== 'search' && navigator.onLine && data.length <= 16384) {
+                window.kkepikBannerLoader.prefetch = loadBanner(data);
+            }
+            {% endif %}
+        }
+    } catch (error) {
+        // Blocked storage or malformed cache must not hide the ordinary website.
+    }
+}());
+</script>
+    <style>
+        html:is(.kepik-telegram-pending,.kepik-miniapp) {
+            --home-gutter:clamp(12px, calc((100vw - 234px) / 2), 43px);
+            --page-gutter:clamp(16px,5vw,24px);
+        }
+        #miniapp-startup {
+            --startup-gutter:var(--home-gutter);
+            display:none; position:fixed; inset:0; z-index:20; overflow:auto; touch-action:manipulation;
+            padding:calc(20px + env(safe-area-inset-top)) var(--startup-gutter);
+            background:var(--tg-theme-bg-color,#212121); color:var(--tg-theme-text-color,#eee);
+            font:15px/1.45 system-ui,sans-serif;
+        }
+        .kepik-secondary-startup #miniapp-startup { --startup-gutter:var(--page-gutter); }
+        @media (prefers-color-scheme:light) {
+            #miniapp-startup { background:var(--tg-theme-bg-color,#fff); color:var(--tg-theme-text-color,#222); }
+        }
+        .kepik-telegram-pending #miniapp-startup,.kepik-miniapp:not(.kepik-shell-ready) #miniapp-startup { display:block; }
+        .kepik-miniapp:not(.kepik-shell-ready) #miniapp-root { display:none; }
+        .startup-content,.startup-error { max-width:calc(620px - 2 * var(--startup-gutter)); margin:0 auto; }
+        .startup-content i { display:block; background:currentColor; opacity:.09; height:76px; margin-top:8px; border-radius:17px; animation:startup-pulse 1.15s ease-in-out infinite alternate; }
+        .startup-content i:first-child { width:42%; height:22px; margin:16px 0 16px auto; }
+        .startup-content i:nth-child(3) { width:35%; height:16px; margin:24px 0 12px; }
+        .startup-caption { margin-top:16px; opacity:.75; text-align:center; font-size:13px; }
+        .startup-error { display:none; padding-top:14vh; text-align:center; }
+        .startup-error button { border:0; padding:12px 18px; border-radius:14px; background:var(--tg-theme-secondary-bg-color,#7773); color:inherit; font:inherit; }
+        .kepik-shell-failed .startup-content { display:none; }
+        .kepik-shell-failed .startup-error { display:block; }
+        @keyframes startup-pulse { to { opacity:.18; } }
+        @media (prefers-reduced-motion:reduce) { .startup-content i { animation:none; } }
+    </style>
+    <link rel="icon" href="data:,">
+    <link id="kepik-miniapp-style" media="not all" rel="stylesheet" href="{{ url_for('static', filename='miniapp/main.css') }}?v={{ STATIC_VERSION }}">
+    <script>
+        (function () {
+            const root = document.documentElement;
+            const css = document.getElementById('kepik-miniapp-style');
+            if (root.classList.contains('kepik-telegram-pending')) css.fetchPriority = 'high';
+            const styles = new Promise(resolve => {
+                if (css.sheet) { resolve(true); return; }
+                css.addEventListener('load', () => resolve(true), { once:true });
+                css.addEventListener('error', () => resolve(false), { once:true });
+            });
+            const timeout = setTimeout(() => {
+                if (root.matches('.kepik-telegram-pending,.kepik-miniapp')) root.classList.add('kepik-shell-failed');
+            }, 15000);
+            window.kkepikMiniappStartup = {
+                styles,
+                finish() {
+                    clearTimeout(timeout);
+                    root.classList.remove('kepik-shell-failed');
+                    root.classList.add('kepik-shell-ready');
+                },
+                fail() {
+                    clearTimeout(timeout);
+                    root.classList.add('kepik-shell-failed');
+                }
+            };
+        }());
+    </script>
+    <script defer src="{{ url_for('static', filename='js/vendor/telegram-web-app.63.js') }}"></script>
+    <script defer src="{{ url_for('static', filename='js/kepik-entry.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script defer src="{{ url_for('static', filename='js/college_calendar.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script defer src="{{ url_for('static', filename='js/activity.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script defer src="{{ url_for('static', filename='js/effects.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script defer src="{{ url_for('static', filename='miniapp/main.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script defer src="{{ url_for('static', filename='js/miniapp_presence.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script defer src="{{ url_for('static', filename='js/schedule_download.js') }}?v={{ STATIC_VERSION }}"></script>
+    <script defer src="{{ url_for('static', filename='js/campaign_banner.js') }}?v={{ STATIC_VERSION }}"></script>
+</head>
+<body>
+    {% include 'kepik_landing.html' %}
+    <div id="miniapp-startup">
+        <div class="startup-content" role="status">
+            <i aria-hidden="true"></i><i aria-hidden="true"></i><i aria-hidden="true"></i><i aria-hidden="true"></i><i aria-hidden="true"></i>
+            <div class="startup-caption">Загрузка…</div>
+        </div>
+        <div class="startup-error" role="alert">
+            <p>Не удалось открыть приложение</p>
+            <button type="button" onclick="location.reload()">Попробовать ещё раз</button>
+        </div>
+    </div>
+    <div id="kepik-miniapp">
+        <div id="auth-error" style="display:none" role="alert"></div>
+        <div id="miniapp-campaign-source" hidden>
+            {% include 'championship_banner.html' %}
+            <div id="ownerCampaignBanner" hidden></div>
+        </div>
+        <div id="miniapp-root"></div>
+    </div>
+</body>
+</html>

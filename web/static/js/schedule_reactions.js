@@ -480,7 +480,7 @@ async function toggleReaction(reaction) {
     const optimisticReactions = buildOptimisticReactions(reaction, wasSelected);
     const optimisticUserReactions = wasSelected ? [] : [reaction];
 
-    tg_test.HapticFeedback?.impactOccurred?.('soft');
+    window.kkepikHaptics?.play('soft');
     updateReactionsUI(optimisticReactions, optimisticUserReactions);
     setReactionControlsBusy(reaction, true);
 
@@ -513,7 +513,7 @@ async function toggleReaction(reaction) {
         console.error('Ошибка при переключении реакции:', error);
         updateReactionsUI(previousReactions, previousUserReactions);
         showReactionFeedback('Не удалось поставить реакцию');
-        tg_test.HapticFeedback?.notificationOccurred?.('error');
+        window.kkepikHaptics?.play('error');
         loadReactions(currentDate);
     } finally {
         reactionRequestInFlight = false;
@@ -605,7 +605,7 @@ function showReactionPicker(event) {
     ];
     const allowAnimatedImages = !(window.kkepikApp && window.kkepikApp.lowData);
     const customFallbacks = { 'AAA.webm': '✨', 'mirbi.gif': '🙂', 'smeshno.gif': '😂' };
-    tg_test.HapticFeedback?.impactOccurred?.('soft');
+    window.kkepikHaptics?.play('soft');
 
     // Создаем модальное окно
     const modal = document.createElement('div');

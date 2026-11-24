@@ -7,7 +7,9 @@ import hashlib
 import json
 import logging
 import os
+import re
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from aiogram import BaseMiddleware, types
 
@@ -77,10 +79,20 @@ async def send_saved_post(bot, chat_id, post):
 
 
 class AdminPostCapture(BaseMiddleware):
-    def __init__(self, directory):
+    def __init__(self, directory, *, campaign_id=CAMPAIGN_ID):
         self.directory = Path(directory)
+        self.campaign_id = campaign_id
         self.lock = asyncio.Lock()
         self.task = None
+
+    @classmethod
+    def active(cls, base_directory):
+        base = Path(base_directory)
+        pointer = base / 'active.json'
+        campaign_id = json.loads(pointer.read_text()).get('id') if pointer.exists() else CAMPAIGN_ID
+        if not isinstance(campaign_id, str) or not re.fullmatch(r'ad-[a-z0-9-]{1,64}', campaign_id):
+            raise ValueError('Invalid active advertising campaign')
+        return cls(base / campaign_id, campaign_id=campaign_id)
 
     @property
     def campaign_path(self):
@@ -90,7 +102,7 @@ class AdminPostCapture(BaseMiddleware):
         if not self.campaign_path.exists():
             return None
         value = json.loads(self.campaign_path.read_text())
-        if value.get('id') != CAMPAIGN_ID or value.get('owner') != OWNER:
+        if value.get('id') != self.campaign_id or value.get('owner') != OWNER:
             raise ValueError('Unexpected campaign identity')
         return value
 
@@ -109,10 +121,11 @@ class AdminPostCapture(BaseMiddleware):
                 and event.reply_to_message.message_id == campaign['prompt_message_id'])
             # Forwarding a photo can clear Telegram's ForceReply selection.
             # Only this explicitly awaited owner's private media is accepted.
-            awaited_media = (phase == 'awaiting_post' and campaign.get('prompt_message_id')
-                and (event.photo or event.document) and campaign.get('prompt_attempted_at')
+            capture_after = campaign.get('capture_armed_at') or campaign.get('prompt_attempted_at')
+            awaited_media = (phase == 'awaiting_post' and (campaign.get('prompt_message_id') or campaign.get('capture_armed_at'))
+                and (event.photo or event.document or event.text and not event.text.startswith('/')) and capture_after
                 and event.date.timestamp() >= int(datetime.fromisoformat(
-                    campaign['prompt_attempted_at']).timestamp()))
+                    capture_after).timestamp()))
             if not (same_album or reply_matches or awaited_media):
                 return await handler(event, data)
             if not (event.photo or event.document or event.text and not event.text.startswith('/')):
@@ -161,9 +174,16 @@ class AdminPostCapture(BaseMiddleware):
                                 saved_at=datetime.now(timezone.utc).isoformat())
                 write_private_json(self.campaign_path, campaign)
                 # A separate confirmation never alters the actual advertising post.
+                if campaign.get('trigger', {}).get('type') == 'schedule_complete':
+                    date = campaign['trigger']['schedule_date']
+                    timing = f'Рассылка всем студентам и преподавателям — после основной рассылки расписания на {date}.'
+                elif campaign.get('send_at'):
+                    send_at = datetime.fromisoformat(campaign['send_at']).astimezone(ZoneInfo('Europe/Moscow'))
+                    timing = f'Рассылка всем студентам и преподавателям: {send_at:%d.%m.%Y, %H:%M} МСК.'
+                else:
+                    timing = 'Время рассылки пока не назначено.'
                 await bot.send_message(chat_id=OWNER, parse_mode=None,
-                    text='Пост сохранён. Выше — тестовая копия для проверки.\n\n'
-                         'Рассылка всем студентам и преподавателям: 29 октября, 09:00 МСК.')
+                    text='Пост сохранён. Выше — тестовая копия для проверки.\n\n' + timing)
                 backups = []
                 for index, message in enumerate(messages):
                     item = types.Message.model_validate(message)

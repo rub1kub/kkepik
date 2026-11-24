@@ -4,6 +4,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from duties.store import Store, DutyError, AmbiguousPerson, MSK, parse_people, validate_roster, settings, person
 
@@ -41,6 +42,10 @@ class DutyStoreTest(unittest.TestCase):
         rows = self.query("SELECT * FROM offers WHERE day=? AND state='pending'", (did,))
         self.assertEqual(len(rows), 1)
         return rows[0]
+
+    def approve_absence(self, did, uid, now):
+        self.store.decline(did, uid, now, reason='Не успеваю после занятия')
+        self.store.resolve_decline(did, self.ids[uid - 11], 99, True, now)
 
     def test_three_step_roster_parser_preserves_explicit_pairs_and_nicks(self):
         pairs = parse_people('1. Иван @first_user + Анна @second_user\n2. Пётр | Мария')
@@ -81,7 +86,7 @@ class DutyStoreTest(unittest.TestCase):
     def test_target_id_stays_separate_from_verified_membership(self):
         self.store.observe(123456789,'-',None,'116-КД9-3ССА')
         pairs,_ = self.store.fill_profile_names('116-КД9-3ССА',parse_people('123456789 + @first_user'),[])
-        sid = self.store.create(100,'116-КД9-3ССА',pairs,[],now=self.now)
+        sid = self.store.create(100,'103-Д9-3ИНС',pairs,[],now=self.now)
         member = next(m for m in self.store.view(sid,100)['members'] if m['telegram_id'])
         self.assertEqual(member['name'],'- (ID 123456789)')
         self.assertIsNone(member['uid'])
@@ -98,7 +103,7 @@ class DutyStoreTest(unittest.TestCase):
         self.store.observe(123456789,'-',None,'116-КД9-3ССА')
         pairs,_ = self.store.fill_profile_names('116-КД9-3ССА',parse_people('123456789 + @first_user'),[])
         pairs[0][0]['name'] = '-'
-        sid = self.store.create(100,'116-КД9-3ССА',pairs,[],now=self.now)
+        sid = self.store.create(100,'103-Д9-3ИНС',pairs,[],now=self.now)
         member = next(m for m in self.store.view(sid,100)['members'] if m['telegram_id'])
         token = self.store.invite(sid,100,now=self.now)
         cid = self.store.claim(token,777,'-',now=self.now)
@@ -111,7 +116,7 @@ class DutyStoreTest(unittest.TestCase):
         pairs,_ = self.store.fill_profile_names('116-КД9-3ССА',parse_people('@first_user + 123456789'),[])
         with self.assertRaises(DutyError):
             validate_roster(pairs,[])
-        sid = self.store.create(100,'116-КД9-3ССА',parse_people('123456789 + Анна'),[],now=self.now)
+        sid = self.store.create(100,'103-Д9-3ИНС',parse_people('123456789 + Анна'),[],now=self.now)
         with self.assertRaises(DutyError):
             self.store.append_roster(sid,100,reserves=parse_people('ID:123456789',reserves=True))
         # Existing legacy verified accounts also prevent an ID alias duplicate.
@@ -172,7 +177,7 @@ class DutyStoreTest(unittest.TestCase):
         self.assertEqual(pairs[1][1]['name'], '@stale_user')
         self.assertEqual(reserves[0]['name'], 'Подписанное имя')
         validate_roster(pairs, [])
-        sid = self.store.create(100, '116-КД9-3ССА', pairs, [])
+        sid = self.store.create(100, '103-Д9-3ИНС', pairs, [])
         self.assertTrue(all(m['uid'] is None for m in self.store.view(sid,100)['members']))
 
     def test_username_reassignment_does_not_leak_other_groups_profile(self):
@@ -196,7 +201,7 @@ class DutyStoreTest(unittest.TestCase):
 
     def test_reserve_needs_both_consents_and_never_changes_permanent_pairs(self):
         did = self.day()
-        self.store.decline(did, 11, self.time(8, 1))
+        self.approve_absence(did, 11, self.time(8, 1))
         offer = self.offer(did)
         self.assertEqual((offer['host'], offer['guest']), (self.ids[1], self.ids[4]))
         self.store.reply_offer(offer['id'], 12, True, self.time(8, 2))
@@ -210,7 +215,7 @@ class DutyStoreTest(unittest.TestCase):
 
     def test_completed_partner_is_spared_next_day_and_reserve_gets_credit(self):
         did = self.day()
-        self.store.decline(did, 11, self.time(8, 1))
+        self.approve_absence(did, 11, self.time(8, 1))
         offer = self.offer(did)
         self.store.reply_offer(offer['id'], 12, True, self.time(8, 2))
         self.store.reply_offer(offer['id'], 15, True, self.time(8, 3))
@@ -230,61 +235,67 @@ class DutyStoreTest(unittest.TestCase):
         assigned = self.query("SELECT member FROM assignments WHERE day=? AND state='assigned'", (later,))
         self.assertEqual({r['member'] for r in assigned}, set(self.ids[2:4]))
 
-    def test_partner_rejects_reserve_pair_is_postponed_and_next_pair_asked(self):
+    def test_partner_rejects_reserve_and_next_intact_pair_is_assigned(self):
         did = self.day()
-        self.store.decline(did, 11, self.time(8,1))
-        self.store.reply_offer(self.offer(did)['id'], 12, False, self.time(8,2))
-        next_offer = self.offer(did)
-        self.assertEqual(next_offer['kind'], 'pair')
-        self.assertEqual({next_offer['host'],next_offer['guest']}, set(self.ids[2:4]))
+        self.approve_absence(did, 11, self.time(8, 1))
+        self.store.reply_offer(self.offer(did)['id'], 12, False, self.time(8,2), reason='В это время занят')
+        view = self.store.day_view(did, 99)
+        self.assertFalse(view['offers'])
+        self.assertEqual({a['member'] for a in view['assignments'] if a['state'] == 'assigned'}, set(self.ids[2:4]))
         self.assertEqual(self.query('SELECT pending_since FROM members WHERE id=?', (self.ids[1],))[0]['pending_since'], '2026-10-19')
 
     def test_reserve_rejection_requires_new_named_consent(self):
         did = self.day()
-        self.store.decline(did, 11, self.time(8,1))
+        self.approve_absence(did, 11, self.time(8, 1))
         first = self.offer(did)
         self.store.reply_offer(first['id'], 12, True, self.time(8,2))
-        self.store.reply_offer(first['id'], 15, False, self.time(8,3))
+        self.store.reply_offer(first['id'], 15, False, self.time(8,3), reason='В это время занят')
         second = self.offer(did)
         self.assertEqual(second['guest'], self.ids[5])
         self.assertEqual(second['host_yes'], 0)
         with self.assertRaises(DutyError):
             self.store.reply_offer(first['id'], 15, True, self.time(8,4))
 
-    def test_no_reply_reminded_once_then_timeout_and_no_forced_assignment(self):
+    def test_no_reply_reminded_once_then_intact_pair_takes_turn(self):
         did = self.day()
-        self.store.decline(did, 11, self.time(8,1))
-        self.store.tick(self.time(8,6))
-        self.store.tick(self.time(8,7))
+        self.approve_absence(did, 11, self.time(8, 1))
+        self.store.tick(self.time(8, 6))
+        self.store.tick(self.time(8, 7))
         self.assertEqual(len(self.query("SELECT * FROM outbox WHERE kind='offer_reminder'")), 2)
-        self.store.tick(self.time(8,12))
-        self.assertEqual(self.offer(did)['kind'], 'pair')
-        self.store.tick(self.time(8,31))
-        self.assertEqual(self.query('SELECT status FROM days WHERE id=?', (did,))[0]['status'], 'unfilled')
-        self.assertFalse(self.query("SELECT * FROM offers WHERE day=? AND state='pending'", (did,)))
-        self.assertFalse(self.query("SELECT * FROM assignments WHERE day=? AND state='assigned'", (did,)))
+        self.store.tick(self.time(8, 12))
+        self.store.tick(self.time(8, 31))
+        view = self.store.day_view(did, 99)
+        self.assertFalse(view['offers'])
+        self.assertEqual({a['member'] for a in view['assignments'] if a['state'] == 'assigned'}, set(self.ids[2:4]))
 
     def test_guest_silence_after_host_consent_tries_next_reserve(self):
         did = self.day()
-        self.store.decline(did,11,self.time(8,1))
+        self.approve_absence(did, 11, self.time(8, 1))
         self.store.reply_offer(self.offer(did)['id'],12,True,self.time(8,2))
         self.store.tick(self.time(8,12))
         self.assertEqual(self.offer(did)['guest'],self.ids[5])
 
-    def test_double_click_and_two_declines_cannot_create_two_open_offers(self):
+    def test_request_cannot_change_assignment_or_be_approved_by_participant(self):
         did = self.day()
-        self.store.decline(did,11,self.time(8,1))
+        moment = self.time(8, 1)
+        self.store.decline(did, 11, moment, reason='Не успеваю после занятия')
+        self.assertFalse(self.store.day_view(did, 99)['offers'])
+        self.assertEqual([a['state'] for a in self.store.day_view(did, 99)['assignments']], ['assigned', 'assigned'])
         with self.assertRaises(DutyError):
-            self.store.decline(did,11,self.time(8,1))
-        self.store.decline(did,12,self.time(8,2))
-        self.assertEqual(self.offer(did)['kind'],'pair')
-        self.assertEqual(len(self.query("SELECT * FROM assignments WHERE day=? AND state='declined'", (did,))),2)
+            self.store.decline(did, 11, moment, reason='Не успеваю после занятия')
+        with self.assertRaises(DutyError):
+            self.store.resolve_decline(did, self.ids[0], 11, True, moment)
+        self.store.resolve_decline(did, self.ids[0], 99, False, moment)
+        self.assertFalse(self.store.day_view(did, 99)['offers'])
+        self.assertEqual(self.store.day_view(did, 11)['requests'][0]['status'], 'rejected')
 
     def test_pair_mode_skips_without_reserve_offer(self):
         self.store.update_settings(self.sid,99,{'mode':'pair'})
         did = self.day()
-        self.store.decline(did,11,self.time(8,1))
-        self.assertEqual(self.offer(did)['kind'],'pair')
+        self.approve_absence(did, 11, self.time(8, 1))
+        view = self.store.day_view(did, 99)
+        self.assertFalse(view['offers'])
+        self.assertEqual({a['member'] for a in view['assignments'] if a['state'] == 'assigned'}, set(self.ids[2:4]))
 
     def test_stale_buttons_unauthorized_user_and_outsider_completion_denied(self):
         did = self.day()
@@ -311,7 +322,7 @@ class DutyStoreTest(unittest.TestCase):
     def test_notifications_can_all_be_disabled_without_disabling_queue(self):
         self.store.update_settings(self.sid,99,dict(owner_daily=False,audience='off',requests=False,owner_events=False))
         did = self.day()
-        self.store.decline(did,11,self.time(8,1))
+        self.approve_absence(did, 11, self.time(8, 1))
         self.store.tick(self.time(16))
         self.assertFalse(self.query('SELECT * FROM outbox'))
         self.assertTrue(self.query('SELECT * FROM days WHERE id=?',(did,)))
@@ -350,14 +361,15 @@ class DutyStoreTest(unittest.TestCase):
 
     def test_late_refusal_does_not_cancel_partner_who_may_be_working(self):
         did = self.day()
-        self.store.decline(did,11,self.time(10))
+        with self.assertRaises(DutyError):
+            self.store.decline(did,11,self.time(10))
         remaining = self.query("SELECT * FROM assignments WHERE day=? AND member=?",(did,self.ids[1]))[0]
         self.assertEqual(remaining['state'],'assigned')
         self.store.finish(did,99,self.ids[1],now=self.time(16))
         self.assertEqual(self.query('SELECT credit FROM members WHERE id=?',(self.ids[1],))[0]['credit'],1)
 
     def test_personal_invitation_needs_both_confirmations_and_cannot_be_reused(self):
-        sid = self.store.create(100,'116-КД9-3ССА',parse_people('Тёзка + Другой'),[],now=self.now)
+        sid = self.store.create(100,'103-Д9-3ИНС',parse_people('Тёзка + Другой'),[],now=self.now)
         mid = self.store.view(sid,100)['members'][0]['id']
         token = self.store.invite(sid,100,mid,self.now)
         cid = self.store.claim(token,200,'',self.now)
@@ -371,7 +383,7 @@ class DutyStoreTest(unittest.TestCase):
         self.assertEqual(self.store.view(sid,200)['access']['role'],'member')
 
     def test_general_invitation_cannot_bind_a_different_person(self):
-        sid = self.store.create(100,'116-КД9-3ССА',parse_people('Иван + Анна'),[],now=self.now)
+        sid = self.store.create(100,'103-Д9-3ИНС',parse_people('Иван + Анна'),[],now=self.now)
         token = self.store.invite(sid,100,now=self.now)
         cid = self.store.claim(token,200,'Иван',self.now)
         members = self.store.view(sid,100)['members']
@@ -432,8 +444,10 @@ class DutyStoreTest(unittest.TestCase):
         self.store.manage(self.sid, 99, 'transfer', 11)
         self.assertEqual(self.store.view(self.sid, 11)['access']['role'], 'owner')
 
-    def test_same_group_can_have_independent_lists_and_cross_access_is_denied(self):
-        sid2 = self.store.create(200,'116-КД9-3ССА',self.pairs,[],now=self.now)
+    def test_duplicate_group_is_rejected_and_cross_group_access_is_denied(self):
+        with self.assertRaisesRegex(DutyError, 'группы уже есть'):
+            self.store.create(200, '116-КД9-3ССА', self.pairs, [], now=self.now)
+        sid2 = self.store.create(200,'103-Д9-3ИНС',self.pairs,[],now=self.now)
         with self.assertRaises(DutyError):
             self.store.update_settings(sid2,99,{'owner_daily':False})
         self.assertEqual(len(self.store.lists(200)),1)
@@ -446,17 +460,19 @@ class DutyStoreTest(unittest.TestCase):
         self.store.manage(self.sid,99,'transfer',11)
         self.assertEqual(self.store.view(self.sid,11)['access']['role'],'owner')
 
-    def test_participant_can_leave_and_queued_messages_are_cancelled(self):
+    def test_participant_cannot_leave_to_bypass_today_but_can_mute(self):
         self.day()
         job = self.query("SELECT * FROM outbox WHERE kind='daily' AND uid=11")[0]
-        self.store.manage(self.sid,11,'leave')
+        with self.assertRaises(DutyError):
+            self.store.manage(self.sid,11,'leave')
+        self.store.manage(self.sid,11,'mute')
         self.assertIsNone(self.store.begin_delivery(job['id'],self.time()))
-        self.assertFalse(self.store.lists(11))
+        self.assertTrue(self.store.lists(11))
 
     def test_draft_and_pending_offer_survive_restart(self):
         self.store.set_session(99,'setup_reserves',{'pairs':self.pairs})
         did = self.day()
-        self.store.decline(did,11,self.time(8,1))
+        self.approve_absence(did, 11, self.time(8, 1))
         other = Store(self.path)
         self.assertEqual(other.session(99)[0],'setup_reserves')
         other.reply_offer(self.offer(did)['id'],12,True,self.time(8,2))
@@ -470,14 +486,48 @@ class DutyStoreTest(unittest.TestCase):
 
     def test_reconsider_does_not_revert_an_already_confirmed_replacement(self):
         did = self.day()
-        self.store.decline(did,11,self.time(8,1))
+        self.approve_absence(did, 11, self.time(8, 1))
         offer = self.offer(did)
         self.store.reply_offer(offer['id'],12,True,self.time(8,2))
         self.store.reply_offer(offer['id'],15,True,self.time(8,3))
-        self.store.reconsider(did,11,self.time(8,4))
+        with self.assertRaises(DutyError):
+            self.store.reconsider(did,11,self.time(8,4))
         active = self.query("SELECT member FROM assignments WHERE day=? AND state='assigned'",(did,))
         self.assertEqual({a['member'] for a in active},{self.ids[1],self.ids[4]})
-        self.assertNotIn(self.ids[0],json_load(self.query('SELECT excluded FROM days WHERE id=?',(did,))[0]['excluded']))
+        self.assertIn(self.ids[0],json_load(self.query('SELECT excluded FROM days WHERE id=?',(did,))[0]['excluded']))
+
+    def test_two_pending_requests_can_be_approved_without_orphan_offer(self):
+        did = self.day()
+        moment = self.time(8, 1)
+        self.store.decline(did, 11, moment, reason='Не успеваю после занятия')
+        self.store.decline(did, 12, moment, reason='Не успеваю после занятия')
+        self.store.resolve_decline(did, self.ids[0], 99, True, moment)
+        self.assertEqual(self.offer(did)['host'], self.ids[1])
+        self.store.resolve_decline(did, self.ids[1], 99, True, moment)
+        view = self.store.day_view(did, 99)
+        self.assertFalse(view['offers'])
+        self.assertEqual({a['member'] for a in view['assignments'] if a['state'] == 'assigned'}, set(self.ids[2:4]))
+
+    def test_reserve_timeout_at_cutoff_still_notifies_next_pair(self):
+        did = self.day()
+        self.approve_absence(did, 11, self.time(8, 25))
+        self.store.tick(self.time(8, 30))
+        view = self.store.day_view(did, 99)
+        self.assertFalse(view['offers'])
+        self.assertEqual({a['member'] for a in view['assignments'] if a['state'] == 'assigned'}, set(self.ids[2:4]))
+
+    def test_swap_does_not_turn_old_completed_shifts_into_new_pair_credit(self):
+        did = self.day()
+        self.store.finish(did, 99, now=self.time(16))
+        self.store.swap_partners(self.ids[0], self.ids[4], 99)
+        data = self.store.view(self.sid, 99)
+        self.assertEqual(sum(m['completed'] for m in data['members']), 2)
+        self.assertFalse(any(m['credit'] for m in data['members']))
+        tomorrow = self.store.ensure_day(self.sid, self.time(days=1), source_state='available')
+        self.store.finish(tomorrow, 99, now=self.time(16, days=1))
+        following = self.store.ensure_day(self.sid, self.time(days=2), source_state='available')
+        active = self.query("SELECT member FROM assignments WHERE day=? AND state='assigned'", (following,))
+        self.assertEqual({a['member'] for a in active}, {self.ids[1], self.ids[4]})
 
     def test_manual_offline_replacement_preserves_pairs_and_records_actor(self):
         did = self.day()
@@ -494,7 +544,7 @@ class DutyStoreTest(unittest.TestCase):
 
     def test_pending_reserve_identity_cannot_be_swapped_under_consent(self):
         did = self.day()
-        self.store.decline(did,11,self.time(8,1))
+        self.approve_absence(did, 11, self.time(8, 1))
         offer = self.offer(did)
         self.store.reply_offer(offer['id'],15,True,self.time(8,2))
         with self.assertRaises(DutyError):
@@ -524,7 +574,7 @@ class DutyStoreTest(unittest.TestCase):
 
     def test_exemption_and_cross_list_double_booking_are_respected(self):
         did = self.day()
-        sid2 = self.store.create(200,'116-КД9-3ССА',parse_people('Другой Иван + Другая Анна'),[],dict(time='08:00',cutoff='08:30',audience='assigned'),now=self.now)
+        sid2 = self.store.create(200,'103-Д9-3ИНС',parse_people('Другой Иван + Другая Анна'),[],dict(time='08:00',cutoff='08:30',audience='assigned'),now=self.now)
         with self.store.connect(True) as db:
             people = db.execute('SELECT * FROM members WHERE space=? ORDER BY id',(sid2,)).fetchall()
             for uid,m in zip((11,12),people):
@@ -533,6 +583,21 @@ class DutyStoreTest(unittest.TestCase):
         other = self.store.ensure_day(sid2,self.time(),source_state='available')
         self.assertEqual(self.query('SELECT status FROM days WHERE id=?',(other,))[0]['status'],'unfilled')
         self.assertEqual(self.query('SELECT status FROM days WHERE id=?',(did,))[0]['status'],'assigned')
+
+    def test_exemption_rejects_previous_year_and_includes_last_day(self):
+        november = datetime(2026, 11, 22, 12, tzinfo=MSK)
+        with patch('duties.store.clock', return_value=november):
+            for mid in self.ids[:2]:
+                with self.assertRaisesRegex(DutyError, 'Проверьте год'):
+                    self.store.edit_member(mid, 99, 'exempt_until', '2026-01-21')
+                self.store.edit_member(mid, 99, 'exempt_until', '2027-01-21')
+
+        last_day = datetime(2027, 1, 21, 8, tzinfo=MSK)
+        did = self.store.ensure_day(self.sid, last_day, source_state='available')
+        self.assertEqual([a['member'] for a in self.store.day_view(did,99)['assignments']], self.ids[2:4])
+        self.store.finish(did, 99, now=last_day.replace(hour=16))
+        resumed = self.store.ensure_day(self.sid, last_day + timedelta(days=1), source_state='available')
+        self.assertEqual([a['member'] for a in self.store.day_view(resumed,99)['assignments']], self.ids[:2])
 
 
     def test_sundays_and_confirmed_days_off_never_queue_announcements(self):
@@ -581,7 +646,7 @@ class DutyStoreTest(unittest.TestCase):
         self.assertIsNone(self.store.begin_delivery(job['id'],self.time()))
         self.store.manage(self.sid,13,'daily_notifications',True)
         self.store.manage(self.sid,15,'daily_notifications',False)
-        self.store.decline(did,11,self.time(8,2))
+        self.approve_absence(did, 11, self.time(8, 2))
         offer = self.offer(did)
         self.assertEqual(offer['guest'],self.ids[4])
         request = self.query("SELECT * FROM outbox WHERE kind='offer' AND uid=15")[0]
@@ -596,7 +661,7 @@ class DutyStoreTest(unittest.TestCase):
         self.store.manage(self.sid,13,'daily_notifications',False)
         did = self.day()
         self.store.manage(self.sid,13,'daily_notifications',True)
-        self.store.decline(did,11,self.time(8,2))
+        self.approve_absence(did, 11, self.time(8, 2))
         self.assertFalse(self.query("SELECT * FROM outbox WHERE uid=13 AND kind IN ('daily','update')"))
 
     def test_reserve_and_paired_member_can_exchange_places_in_both_directions(self):
@@ -620,6 +685,48 @@ class DutyStoreTest(unittest.TestCase):
             self.store.swap_partners(self.ids[4], self.ids[0], 99)
         self.assertEqual(self.store.view(self.sid,99)['members'], before)
 
+    def test_move_to_end_of_reserves_and_fill_the_vacancy_preserves_results(self):
+        did = self.day()
+        self.store.finish(did, 99, now=self.time(16))
+        moved, partner, _, _, replacement, reserve = self.ids
+        self.store.move_to_reserve(moved, 99)
+        members = self.store.view(self.sid, 99)['members']
+        self.assertEqual([m['id'] for m in members if m['pair'] is None], [replacement, reserve, moved])
+        self.store.pair_reserve(replacement, partner, 99)
+        with self.assertRaises(DutyError):
+            self.store.pair_reserve(reserve, partner, 99)
+        members = {m['id']: m for m in self.store.view(self.sid, 99)['members']}
+        self.assertEqual(members[partner]['pair'], members[replacement]['pair'])
+        self.assertEqual((members[moved]['completed'], members[partner]['completed']), (1, 1))
+        self.assertIsNone(members[moved]['pair'])
+
+    def test_two_reserves_can_form_a_pair_but_not_during_a_pending_offer(self):
+        did = self.day()
+        self.approve_absence(did, 11, self.time(8, 1))
+        with self.assertRaises(DutyError):
+            self.store.pair_reserve(self.ids[4], self.ids[5], 99, new_pair=True)
+        with self.assertRaises(DutyError):
+            self.store.move_to_reserve(self.ids[0], 99)
+        self.store.cancel_day(did, 99, self.time(8, 2))
+        self.store.pair_reserve(self.ids[4], self.ids[5], 99, new_pair=True)
+        members = {m['id']: m for m in self.store.view(self.sid, 99)['members']}
+        self.assertEqual(members[self.ids[4]]['pair'], members[self.ids[5]]['pair'])
+        self.assertIsNotNone(members[self.ids[4]]['pair'])
+
+    def test_reserve_can_join_an_active_partner_when_previous_partner_is_inactive(self):
+        did = self.day()
+        self.store.finish(did, 99, now=self.time(16))
+        host, inactive, reserve = self.ids[0], self.ids[1], self.ids[4]
+        self.store.edit_member(inactive, 99, 'active', False)
+        self.store.pair_reserve(reserve, host, 99)
+        with self.store.connect() as db:
+            former = self.store._member(db, inactive)
+            self.assertFalse(former['active'])
+            self.assertIsNone(former['pair'])
+            new = self.store._member(db, reserve)
+            self.assertEqual(new['pair'], self.people[0]['pair'])
+            self.assertEqual(db.execute("SELECT count(*) FROM assignments WHERE day=? AND state='done'", (did,)).fetchone()[0], 2)
+
     def test_forecast_uses_queue_without_changing_real_assignments_or_notifications(self):
         from duties.views import forecast
         self.day()
@@ -631,6 +738,17 @@ class DutyStoreTest(unittest.TestCase):
         self.assertEqual(days[6]['status'], 'no_duty')
         with self.store.connect() as db:
             self.assertEqual('\n'.join(db.iterdump()), before)
+
+    def test_today_preview_matches_worker_while_previous_results_are_open(self):
+        from duties.views import forecast
+        self.day()
+        early = self.time(7, 30, days=1)
+        preview = forecast(self.store, self.sid, 99, now=early, count=1)[0]
+        self.assertTrue(preview['tentative'])
+        self.assertEqual([p['id'] for p in preview['people']], self.ids[2:4])
+        self.assertFalse(self.query('SELECT id FROM days WHERE date=?', (preview['date'],)))
+        did = self.store.ensure_day(self.sid, self.time(days=1), source_state='available')
+        self.assertEqual([a['member'] for a in self.store.day_view(did, 99)['assignments']], self.ids[2:4])
 
 
 def json_load(value):

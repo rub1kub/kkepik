@@ -107,7 +107,7 @@ class DutyApiTest(unittest.TestCase):
     def test_signed_outsider_and_regular_member_cannot_manage_list(self):
         self.assertEqual(self.client.get(f'/duties/{self.sid}',headers=self.auth(100)).status_code,403)
         self.assertEqual(self.client.put(f'/duties/{self.sid}/settings',json={},headers=self.auth(11)).status_code,403)
-        self.assertEqual(self.action({'action':'swap','member':1,'other':5},11).status_code,400)
+        self.assertEqual(self.action({'action':'swap','member':1,'other':5},11).status_code,403)
 
     def test_detail_includes_forecast_and_hides_account_ids_from_members(self):
         before=self.client.get(f'/duties/{self.sid}',headers=self.auth())
@@ -126,6 +126,18 @@ class DutyApiTest(unittest.TestCase):
         self.assertEqual(members[5]['pair'],1)
         self.assertIsNone(members[1]['pair'])
         self.assertEqual(members[1]['uid'],11)
+
+    def test_move_participant_to_reserve_and_fill_vacancy_requires_management_access(self):
+        move = {'action':'move_to_reserve','member':1}
+        join = {'action':'join_pair','member':5,'other':2}
+        for payload in (move, join, {'action':'pair_reserves','member':1,'other':5}):
+            self.assertEqual(self.action(payload,11).status_code,403)
+        self.assertEqual(self.action(move).status_code,200)
+        self.assertEqual(self.action(join).status_code,200)
+        self.assertEqual(self.action({'action':'join_pair','member':1,'other':2}).status_code,400)
+        members = {m['id']:m for m in self.store.view(self.sid,99)['members']}
+        self.assertEqual(members[5]['pair'],members[2]['pair'])
+        self.assertIsNone(members[1]['pair'])
 
     def test_foreign_reference_is_rejected_even_for_list_owner(self):
         other=self.store.create(100,'116-КД9-3ССА',parse_people('Чужой + Другой'),[],now=self.now)
@@ -155,13 +167,32 @@ class DutyApiTest(unittest.TestCase):
         self.assertEqual(self.action({'action':'daily_notifications','value':False},100).status_code,403)
         self.assertEqual(self.client.put(f'/duties/{self.sid}/settings',json={'audience':'all'},headers=self.auth()).status_code,200)
 
-    def test_person_can_decline_only_their_own_assignment(self):
+    def test_person_requests_own_absence_and_manager_decides(self):
         did=self.store.ensure_day(self.sid,self.now,'available')
         self.assertEqual(self.action({'action':'decline','day':did},13).status_code,400)
-        self.assertEqual(self.action({'action':'decline','day':did},11).status_code,200)
-        self.assertEqual(self.store.day_view(did,99)['offers'][0]['kind'],'reserve')
+        request = {'action':'decline','day':did,'reason':'  Не успеваю после занятия  '}
+        self.assertEqual(self.action({**request, 'reason':'  '},11).status_code,400)
+        self.assertEqual(self.action(request,11).status_code,200)
+        self.assertFalse(self.store.day_view(did,99)['offers'])
+        owner_day = self.client.get(f'/duties/{self.sid}', headers=self.auth()).json()['days'][0]
+        self.assertEqual(owner_day['requests'][0]['reason'],'Не успеваю после занятия')
+        other = self.client.get(f'/duties/{self.sid}', headers=self.auth(12)).json()['days'][0]
+        self.assertEqual(other['requests'],[])
+        payload = {'action':'approve_decline','day':did,'member':1}
+        self.assertEqual(self.action(payload,11).status_code,403)
+        self.assertEqual(self.action(payload).status_code,200)
+        offer = self.store.day_view(did,99)['offers'][0]
+        self.assertEqual(offer['kind'],'reserve')
+        self.assertEqual(self.action({'action':'offer_no','offer':offer['id']},15).status_code,400)
+        self.assertEqual(self.store.day_view(did,99)['offers'][0]['id'],offer['id'])
+        self.assertEqual(self.action({'action':'offer_no','offer':offer['id'],'reason':'Договорился с преподавателем'},15).status_code,200)
+        owner_day = self.client.get(f'/duties/{self.sid}', headers=self.auth()).json()['days'][0]
+        self.assertEqual(owner_day['offer_declines'][0]['reason'],'Договорился с преподавателем')
+        member_day = self.client.get(f'/duties/{self.sid}', headers=self.auth(12)).json()['days'][0]
+        self.assertEqual(member_day['offer_declines'],[])
 
     def test_preview_is_read_only_and_create_checks_same_group_before_linking(self):
+        self.store.manage(self.sid,99,'archive')
         refs=self.choice_refs(100)
         body={'pairs':[[refs['Иван'],refs['Анна']]],'reserves':[refs['Пётр']]}
         response=self.client.post('/duties/preview',json=body,headers=self.auth(100))
@@ -173,6 +204,28 @@ class DutyApiTest(unittest.TestCase):
         self.assertEqual(self.client.post('/duties',json=body,headers=self.auth(100)).status_code,200)
         created=self.store.lists(100)[0]['id']
         self.assertEqual({m['uid'] for m in self.store.view(created,100)['members']},{11,12,13})
+
+    def test_deputy_grant_is_explicit_idempotent_and_only_owner_can_remove(self):
+        grant = {'action':'manager','member':1,'value':True}
+        self.assertEqual(self.action(grant,11).status_code,403)
+        for _ in range(2):
+            self.assertEqual(self.action(grant).status_code,200)
+        self.assertEqual(self.store.view(self.sid,11)['access']['role'],'manager')
+        self.assertEqual(self.action({'action':'archive'},11).status_code,400)
+        self.assertEqual(self.action({**grant,'value':False}).status_code,200)
+        self.assertEqual(self.store.view(self.sid,11)['access']['role'],'member')
+
+    def test_correct_actual_pair_through_api_and_reject_stale_revision(self):
+        did = self.store.ensure_day(self.sid,self.now,'available')
+        self.now = self.now.replace(hour=16)
+        self.assertEqual(self.action({'action':'finish','day':did}).status_code,200)
+        day = self.store.day_view(did,99)['day']
+        payload = {'action':'record_results','day':did,'member':1,'other':5,'revision':day['revision']}
+        self.assertEqual(self.action(payload,11).status_code,403)
+        self.assertEqual(self.action(payload).status_code,200)
+        self.assertEqual(self.action({**payload,'other':2}).status_code,400)
+        result = self.store.day_view(did,99)
+        self.assertEqual({a['member'] for a in result['assignments'] if a['state']=='done'}, {1,5})
 
     def test_people_return_only_display_names_and_opaque_requester_scoped_choices(self):
         with sqlite3.connect(self.profiles) as db:

@@ -107,7 +107,7 @@
     }
 
     function haptic() {
-        try { tg.HapticFeedback.impactOccurred('light'); } catch (_error) { /* Optional. */ }
+        try { window.kkepikHaptics?.play('light'); } catch (_error) { /* Optional. */ }
     }
 
     function minimumCell() {

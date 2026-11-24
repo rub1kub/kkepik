@@ -15,6 +15,22 @@
    This selects a screen only; API authentication is unchanged. */
 (function () {
     'use strict';
+    function loadBanner(initData) {
+        const controller = new AbortController();
+        const started = performance.now();
+        const startedAt = Date.now();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        const pending = fetch('/api/campaign/owner-preview', {
+            headers: { 'X-Telegram-Init-Data': initData },
+            cache: 'no-store', credentials: 'omit', signal: controller.signal
+        }).then(async response => response.ok ? {
+            html: await response.text(),
+            duration: Number(response.headers.get('X-Campaign-Remaining-Ms'))
+        } : null).catch(() => null).finally(() => clearTimeout(timeout));
+        return { initData, started, startedAt, pending };
+    }
+
+    window.kkepikBannerLoader = { load: loadBanner };
     try {
         let hash = window.location.hash.replace(/^#/, '');
         const question = hash.indexOf('?');
@@ -29,6 +45,11 @@
         }
         if (typeof data === 'string' && data.trim()) {
             document.documentElement.classList.add('kepik-telegram-pending');
+            {% if champion_banner_live %}
+            if (navigator.onLine && data.length <= 16384) {
+                window.kkepikBannerLoader.prefetch = loadBanner(data);
+            }
+            {% endif %}
         }
     } catch (error) {
         // Blocked storage or malformed cache must not hide the ordinary website.
@@ -89,6 +110,7 @@
     <div class="menu-container" id="main-content" style="display:none;">
         <div id="connection-status" class="connection-status" role="status" hidden></div>
         {% include "championship_banner.html" %}
+        <div id="ownerCampaignBanner" hidden></div>
         <!-- Выбор группы/ФИО -->
         <div id="groupSelectorContainer" class="group-selector-container">
             <button id="groupSelectorToggle" class="group-selector-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="groupSelectorDropdown" disabled>
@@ -260,6 +282,9 @@
                     <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M9 3v18M9 15h12M15 9v12" /></svg>
                     <span id="canvasBannerTitle">Итоги пиксель-батла</span>
                 </button>
+                <button id="archivePixel" class="archive-pixel" type="button" aria-label="Фрагмент финального полотна" aria-expanded="false">
+                    <img width="64" height="64" data-src="{{ url_for('static', filename='img/pixel-battle-souvenir.png') }}" alt="Фрагмент пиксель-батла">
+                </button>
             </details>
         </div>
     </div>
@@ -347,9 +372,7 @@
             if (congratulatorCTA) {
                 congratulatorCTA.addEventListener('click', function(e) {
                     // Добавляем тактильную обратную связь если доступно
-                    if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
-                        Telegram.WebApp.HapticFeedback.impactOccurred('light');
-                    }
+                    window.kkepikHaptics?.play('light');
                 });
             }
         });

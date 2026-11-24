@@ -856,6 +856,11 @@ def check_init_data(init_data):
 
 @app.route('/')
 def index():
+    return render_template('miniapp.html', STATIC_VERSION=STATIC_VERSION)
+
+
+@app.route('/mini/classic')
+def classic_miniapp():
     return render_template('index.html', STATIC_VERSION=STATIC_VERSION)
 
 
@@ -944,30 +949,20 @@ def api_bootstrap():
     except ValueError:
         return jsonify({'success': False, 'error': 'Неверный формат даты'}), 400
 
-    previous_date = _adjacent_study_date(parsed_date, -1)
-    next_date = _adjacent_study_date(parsed_date, 1)
-
+    adjacent = {}
     with ThreadPoolExecutor(max_workers=4) as executor:
         user_future = executor.submit(_fetch_bootstrap_user, telegram_user['id'])
-        schedule_future = executor.submit(
-            _fetch_bootstrap_schedule,
-            telegram_user['id'],
-            schedule_date,
-        )
-        previous_future = executor.submit(
-            _fetch_bootstrap_schedule,
-            telegram_user['id'],
-            previous_date.strftime('%d.%m.%Y'),
-        )
-        next_future = executor.submit(
-            _fetch_bootstrap_schedule,
-            telegram_user['id'],
-            next_date.strftime('%d.%m.%Y'),
-        )
+        schedule_future = executor.submit(_fetch_bootstrap_schedule, telegram_user['id'], schedule_date)
+        neighbors = {}
+        if request.args.get('adjacent') != '0':
+            for name, delta in (('previous', -1), ('next', 1)):
+                day = _adjacent_study_date(parsed_date, delta)
+                future = executor.submit(_fetch_bootstrap_schedule, telegram_user['id'], day.strftime('%d.%m.%Y'))
+                neighbors[name] = (day, future)
         user_status, user_payload = user_future.result()
         schedule_status, schedule_payload = schedule_future.result()
-        previous_status, previous_payload = previous_future.result()
-        next_status, next_payload = next_future.result()
+        for name, (day, future) in neighbors.items():
+            adjacent[name] = _adjacent_bootstrap_payload(day, *future.result())
 
     if isinstance(user_payload, dict):
         role = user_payload.get('role')
@@ -1018,18 +1013,7 @@ def api_bootstrap():
         'user_status': user_status,
         'schedule': schedule_payload if schedule_status == 200 else None,
         'schedule_status': schedule_status,
-        'adjacent': {
-            'previous': _adjacent_bootstrap_payload(
-                previous_date,
-                previous_status,
-                previous_payload,
-            ),
-            'next': _adjacent_bootstrap_payload(
-                next_date,
-                next_status,
-                next_payload,
-            ),
-        },
+        'adjacent': adjacent,
         'favorites': favorites,
         'reactions': reactions,
         'user_reactions': user_reactions,
@@ -3695,9 +3679,8 @@ def schedule_reaction_counts(db, date):
 
 @app.route('/api/schedule/reactions', methods=['GET'])
 def get_schedule_reactions():
-    init_data = request.args.get('tgWebAppData')
+    init_data = request.headers.get('X-Telegram-Init-Data') or request.args.get('tgWebAppData')
     date = request.args.get('date')
-    
     if not init_data or not check_init_data(init_data):
         return jsonify({'success': False, 'error': 'Ошибка авторизации'})
     
@@ -3705,14 +3688,11 @@ def get_schedule_reactions():
         return jsonify({'success': False, 'error': 'Не указана дата'})
     
     try:
-        # Получаем данные пользователя
         params = parse_init_data_params(init_data)
         user_data = json.loads(params.get('user', '{}'))
         tg_id = user_data.get('id')
-        
         if not tg_id:
             return jsonify({'success': False, 'error': 'Ошибка авторизации'})
-        
         # Получаем ID пользователя из базы
         db = get_db()
         user_id = get_or_create_user(tg_id, user_data.get('username'), user_data.get('first_name'))

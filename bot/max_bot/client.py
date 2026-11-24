@@ -104,13 +104,19 @@ async def start_max_client() -> None:
         return
 
     from pyromax import Dispatcher, MaxApi
+    from pyromax.mapping.envelope.v11.translate.ToDTO import FileTranslate
 
     token = await _read_saved_token()
     if not token:
         raise RuntimeError("MAX token is missing in tokens.json")
 
+    # pyromax 0.8 prints FileAttachment objects, including download tokens.
+    FileTranslate.print = lambda *args, **kwargs: None
     print(f"[MAX] Подключение; разрешённые чаты: {MAX_WATCH_CHAT_IDS}")
-    api = await asyncio.wait_for(MaxApi(token=token), timeout=30)
+    api = await asyncio.wait_for(
+        MaxApi(token=token, transport="socket_envelope", interactive=False),
+        timeout=30,
+    )
     dispatcher = Dispatcher()
 
     from max_bot.handlers import register_handlers

@@ -117,7 +117,7 @@ if (tg.initData && typeof tg.ready === 'function') {
 window.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('.game-card, .compact-game-link').forEach(card => {
         card.addEventListener('click', () => {
-            tg.HapticFeedback.impactOccurred('soft');
+            window.kkepikHaptics?.play('soft');
         });
     });
 
@@ -132,11 +132,11 @@ window.addEventListener('DOMContentLoaded', function() {
     const progressBar = document.getElementById('progress_bar');
     if (progressBar) {
         progressBar.addEventListener('click', function() {
-            tg.HapticFeedback.impactOccurred('medium');
+            window.kkepikHaptics?.play('medium');
             if (window.cycleProgressTimeMode) {
                 window.cycleProgressTimeMode();
             }
-            launchSideConfetti({ forceForInteraction: true });
+            window.launchSideConfetti?.({ forceForInteraction: true });
         });
         progressBar.addEventListener('keydown', function(event) {
             if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -145,39 +145,6 @@ window.addEventListener('DOMContentLoaded', function() {
         });
     }
 });
-
-const SUBJECT_SHORTCUTS = {
-    'физическая культура': 'Физ-ра',
-    'иностранный язык': 'Ин. яз',
-    'русский язык': 'Рус. яз',
-    'информационные технологии': 'Инф. тех',
-    'основы безопасности и защиты родины': 'ОБЖ',
-    'математика': 'Математика',
-    'литература': 'Лит-ра',
-    'история': 'История',
-    'обществознание': 'Общество',
-    'ндивидуальный проект': 'Инд. проект',
-    'разговор о важном': 'Разговоры',
-    'проектирование и разработка веб-приложений': 'Веб-разработка',
-    'разработка кода информационных систем': 'Разраб. ИС'
-};
-
-function shortenSubjectName(subject) {
-    if (!subject || subject === 'Нет пары') return subject;
-
-    const lowerSubject = subject.toLowerCase();
-    for (let [full, short] of Object.entries(SUBJECT_SHORTCUTS)) {
-        if (lowerSubject.includes(full)) {
-            return short;
-        }
-    }
-
-    if (subject.length > 12) {
-        return subject.slice(0, 12) + '...';
-    }
-
-    return subject;
-}
 
 document.addEventListener('DOMContentLoaded', async function() {
     const WEEKDAY_SCHEDULE = [
@@ -199,7 +166,6 @@ document.addEventListener('DOMContentLoaded', async function() {
     ];
 
     let currentDate = new Date();
-    let scheduleCache = new Map();
     let hasPrevDay = false;
     let hasNextDay = false;
     let lastSwipeDirection = null;
@@ -209,11 +175,6 @@ document.addEventListener('DOMContentLoaded', async function() {
     let isInitialLoad = true;
 
     console.log('[init] currentDate:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
-
-    const months = [
-        'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
-        'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'
-    ];
 
     window.scheduleState = {
         displayedDate: new Date(),
@@ -587,10 +548,6 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Перемещаю функцию updateScheduleDisplay в глобальную область видимости
     window.updateScheduleDisplay = function() {
         console.log('[updateScheduleDisplay] START, currentDate:', currentDate, 'displayedDate:', displayedDate, 'window.scheduleState.displayedDate:', window.scheduleState.displayedDate);
-        // Проверка на сокращённый день (11 июня 2025)
-        const isSpecialShortDay = currentDate.getFullYear() === 2025 && currentDate.getMonth() === 5 && currentDate.getDate() === 11;
-        const isSaturday = window.kkepikCalendar.isSaturday(currentDate) || isSpecialShortDay;
-        const schedule = isSaturday ? SATURDAY_SCHEDULE : WEEKDAY_SCHEDULE;
 
         const scheduleTitle = document.querySelector('.schedule-title');
         const scheduleTitleText = document.getElementById('scheduleTitleText');
@@ -843,7 +800,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             window.scheduleState.currentScheduleData = targetSchedule;
             lastSwipeDirection = direction;
             console.log(`[schedule.navigation] ${source}:`, currentDate);
-            tg.HapticFeedback?.impactOccurred('light');
+            window.kkepikHaptics?.play('light');
             updateScheduleDisplay();
             checkAdjacentDays().catch(error => {
                 console.error('Не удалось проверить соседние расписания:', error);
@@ -887,10 +844,10 @@ document.addEventListener('DOMContentLoaded', async function() {
 
         if (horizontalMagnitude < 24) return;
         if (swipeDistance > 0 && !hasPrevDay) {
-            tg.HapticFeedback.notificationOccurred('warning');
+            window.kkepikHaptics?.play('warning');
             resetScheduleSwipe();
         } else if (swipeDistance < 0 && !hasNextDay) {
-            tg.HapticFeedback.notificationOccurred('warning');
+            window.kkepikHaptics?.play('warning');
             resetScheduleSwipe();
         }
     }, { passive: false });
@@ -913,7 +870,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
         e.preventDefault();
         if ((swipeDistance > 0 && !hasPrevDay) || (swipeDistance < 0 && !hasNextDay)) {
-            tg.HapticFeedback.notificationOccurred('warning');
+            window.kkepikHaptics?.play('warning');
             resetScheduleSwipe();
             return;
         }
@@ -945,36 +902,6 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     if (tg.initData) initialLoad();
 });
-
-function displaySchedule(schedule) {
-    const scheduleContainer = document.getElementById('schedule');
-    scheduleContainer.innerHTML = '';
-
-    const mainSchedule = [];
-    const combinedSchedule = [];
-
-    schedule.forEach(item => {
-        if (item.is_combined) {
-            combinedSchedule.push(item);
-        } else {
-            mainSchedule.push(item);
-        }
-    });
-
-    mainSchedule.sort((a, b) => a.pair_number - b.pair_number);
-    combinedSchedule.sort((a, b) => a.pair_number - b.pair_number);
-
-    displayScheduleItems(mainSchedule, scheduleContainer, currentDate);
-
-    if (combinedSchedule.length > 0) {
-        const divider = document.createElement('div');
-        divider.className = 'schedule-divider';
-        divider.textContent = 'Совмещенные пары';
-        scheduleContainer.appendChild(divider);
-
-        displayScheduleItems(combinedSchedule, scheduleContainer, currentDate);
-    }
-}
 
 function getCourseNumber(groupName) {
     const value = String(groupName || '').toUpperCase();
@@ -1176,8 +1103,6 @@ function displayScheduleItems(items, container, date) {
                     const fullRoom = item.classroom || '-';
                     const timeRange = `${scheduleTime.start} – ${scheduleTime.end}`;
 
-                    const entity = (window.scheduleState && window.scheduleState.currentEntity) ? window.scheduleState.currentEntity : null;
-                    const entityKey = entity ? `${entity.entity_type}:${entity.entity_id}` : 'user';
                     // Используем одинаковый формат ключа для сохранения и загрузки
                     const hoursKey = `${fullSubject}::${fullTeacher}::${item.group_name || ''}`;
 
@@ -1263,9 +1188,6 @@ function displayScheduleItems(items, container, date) {
                      function loadHours() {
                          try { const raw = localStorage.getItem('subject_hours'); return raw ? JSON.parse(raw) : {}; } catch (e) { return {}; }
                      }
-                     function saveHours(map) {
-                         try { localStorage.setItem('subject_hours', JSON.stringify(map)); } catch (e) {}
-                     }
                      function getState() {
                          const map = loadHours();
                          // Используем тот же ключ, что и для API
@@ -1288,26 +1210,6 @@ function displayScheduleItems(items, container, date) {
                          }
                      }
 
-                    function createTooltipButton(text) {
-                        const btn = document.createElement('button');
-                        btn.type = 'button';
-                        btn.textContent = '？';
-                        btn.style.cssText = 'margin-left:6px;width:22px;height:22px;border-radius:50%;border:1px solid var(--tg-theme-hint-color);background:transparent;color:var(--tg-theme-text-color);font-size:12px;line-height:1;display:flex;align-items:center;justify-content:center;';
-                        const tip = document.createElement('div');
-                        tip.textContent = text;
-                        tip.style.cssText = 'position:absolute;bottom:125%;left:50%;transform:translateX(-50%);background:var(--tg-theme-secondary-bg-color);color:var(--tg-theme-text-color);border:1px solid var(--tg-theme-hint-color);padding:8px 10px;border-radius:10px;white-space:normal;min-width:160px;max-width:240px;font-size:12px;box-shadow:0 4px 12px rgba(0,0,0,.15);display:none;z-index:10001;';
-                        const wrap = document.createElement('span');
-                        wrap.style.cssText = 'position:relative;display:inline-flex;align-items:center;';
-                        wrap.appendChild(btn);
-                        wrap.appendChild(tip);
-                        btn.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            tip.style.display = (tip.style.display === 'none' || !tip.style.display) ? 'block' : 'none';
-                            setTimeout(() => { tip.style.display = 'none'; }, 2500);
-                        });
-                        return wrap;
-                    }
-
                     async function showLessonModal() {
                         // Загружаем актуальные данные из API
                         let state = { plan: '0', done: '0' };
@@ -1324,7 +1226,6 @@ function displayScheduleItems(items, container, date) {
                         
                         const planVal = state.plan;
                         const doneVal = state.done;
-                        const remaining = (Number(planVal) || 0) - (Number(doneVal) || 0);
 
                         // Создаём модальное окно с новыми классами
                         const modal = document.createElement('div');
@@ -1608,9 +1509,7 @@ function displayScheduleItems(items, container, date) {
                                     }, 2000);
                                     
                                     // Тактильная обратная связь
-                                    if (window.Telegram?.WebApp?.HapticFeedback) {
-                                        window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
-                                    }
+                                    window.kkepikHaptics?.play('success');
                                 } else {
                                     throw new Error(result.error || 'Ошибка списания');
                                 }
@@ -1623,9 +1522,7 @@ function displayScheduleItems(items, container, date) {
                                 }, 2000);
                                 
                                 // Тактильная обратная связь об ошибке
-                                if (window.Telegram?.WebApp?.HapticFeedback) {
-                                    window.Telegram.WebApp.HapticFeedback.notificationOccurred('error');
-                                }
+                                window.kkepikHaptics?.play('error');
                             }
                         });
                         
@@ -1868,46 +1765,6 @@ function displayScheduleItems(items, container, date) {
     }
 }
 
-// === Конфетти из границ страницы ===
-function emitSideConfetti(confettiFunction) {
-    if (typeof confettiFunction !== 'function') return;
-    const colors = ['#2ecc71', '#3498db', '#e74c3c']; // зелёный, синий, красный (новые оттенки)
-    // Левая сторона
-    confettiFunction({
-        particleCount: 40,
-        angle: 60,
-        spread: 55,
-        origin: { x: 0, y: 1 },
-        colors: colors,
-        gravity: 1.1,
-        scalar: 1.1,
-        ticks: 250
-    });
-    // Правая сторона
-    confettiFunction({
-        particleCount: 40,
-        angle: 120,
-        spread: 55,
-        origin: { x: 1, y: 1 },
-        colors: colors,
-        gravity: 1.1,
-        scalar: 1.1,
-        ticks: 250
-    });
-}
-
-function launchSideConfetti(options = {}) {
-    if (options.forceForInteraction && window.kkepikLoadConfetti) {
-        return window.kkepikLoadConfetti({ forceForInteraction: true })
-            .then(emitSideConfetti);
-    }
-    emitSideConfetti(window.confetti);
-    return Promise.resolve();
-}
-
-// Делаем функцию доступной глобально
-window.launchSideConfetti = launchSideConfetti;
-
 // === Оценка приложения ===
 document.addEventListener('DOMContentLoaded', function() {
     const reviewCard = document.getElementById('reviewCard');
@@ -1927,7 +1784,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (reviewCard && modal && closeBtn && sendBtn && marks && reviewText && status) {
         reviewCard.onclick = function(e) {
             e.preventDefault();
-            if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+            window.kkepikHaptics?.play('light');
             modal.style.display = 'block';
             document.body.style.overflow = 'hidden';
             status.textContent = '';
@@ -1940,13 +1797,13 @@ document.addEventListener('DOMContentLoaded', function() {
             document.body.style.overflow = 'auto';
         }
         closeBtn.onclick = function() {
-            if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+            window.kkepikHaptics?.play('light');
             closeReviewModal();
         };
         // Закрытие модалки по клику на оверлей (вне .modal-content)
         modal.addEventListener('mousedown', function(event) {
             if (event.target === modal) {
-                if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+                window.kkepikHaptics?.play('light');
                 closeReviewModal();
             }
         });
@@ -1960,22 +1817,22 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         marks.querySelectorAll('.mark-btn').forEach(btn => {
             btn.onclick = function() {
-                if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('soft');
+                window.kkepikHaptics?.play('soft');
                 marks.querySelectorAll('.mark-btn').forEach(b => b.classList.remove('selected'));
                 btn.classList.add('selected');
                 selectedMark = parseInt(btn.dataset.mark);
             };
         });
         sendBtn.onclick = async function() {
-            if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+            window.kkepikHaptics?.play('medium');
             if (!selectedMark) {
                 status.textContent = 'Пожалуйста, выберите оценку.';
-                if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+                window.kkepikHaptics?.play('error');
                 return;
             }
             if (!reviewText.value.trim()) {
                 status.textContent = 'Пожалуйста, напишите отзыв.';
-                if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+                window.kkepikHaptics?.play('error');
                 return;
             }
             sendBtn.disabled = true;
@@ -1990,7 +1847,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (data.success) {
                     status.textContent = 'Спасибо за ваш отзыв!';
                     status.style.color = 'green';
-                    if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                    window.kkepikHaptics?.play('success');
                     localStorage.setItem('review_submitted', '1');
                     setTimeout(() => {
                         closeReviewModal();
@@ -1998,11 +1855,11 @@ document.addEventListener('DOMContentLoaded', function() {
                     }, 1200);
                 } else {
                     status.textContent = data.error || 'Ошибка отправки.';
-                    if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+                    window.kkepikHaptics?.play('error');
                 }
             } catch (e) {
                 status.textContent = 'Ошибка соединения.';
-                if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+                window.kkepikHaptics?.play('error');
             }
             sendBtn.disabled = false;
         };

@@ -76,6 +76,18 @@
     root.KepikReplayEngine = ReplayEngine;
     if (typeof module !== 'undefined' && module.exports) module.exports = ReplayEngine;
     if (!root.document) return;
+    const souvenir = document.getElementById('archivePixel');
+    if (souvenir) {
+        let hide;
+        souvenir.addEventListener('click', () => {
+            root.kkepikHaptics?.play('light');
+            const image = souvenir.querySelector('img');
+            if (!image.hasAttribute('src')) image.src = image.dataset.src;
+            souvenir.setAttribute('aria-expanded', 'true');
+            clearTimeout(hide);
+            hide = setTimeout(() => souvenir.setAttribute('aria-expanded', 'false'), 2600);
+        });
+    }
 
     root.KepikCanvasReplay = {
         create({ onChange, onFit }) {

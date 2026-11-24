@@ -1,7 +1,9 @@
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from html import unescape
+from datetime import date
+from pathlib import Path
 import sqlite3
 import config
 import pandas as pd
@@ -13,6 +15,7 @@ import re
 from pydantic import BaseModel
 import json
 from schedules.schedule_dates import current_college_date, is_current_schedule
+from schedules.schedule_prediction import schedule_prediction
 from schedules.schedule_catalog import extract_catalog_entries, get_catalog_values
 from college_calendar import calendar_date, day_rule, is_holiday
 
@@ -292,6 +295,10 @@ async def get_group_schedule(request: GroupScheduleRequest):
         "date": schedule_date,
         "schedule": plain_schedule_lines(lines),
     }
+
+@app.get("/schedule/prediction")
+def get_schedule_prediction(group: str = Query(min_length=1, max_length=150), target: date = Query(...)):
+    return schedule_prediction(Path(config.DATA_DIR) / 'knowledge.db', group, target, current_college_date())
 
 
 @app.post("/schedule/teacher")

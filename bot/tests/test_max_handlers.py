@@ -1,4 +1,6 @@
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from pyromax.mapping.envelope.v11.payloads.models import FileMappingModel
@@ -9,6 +11,7 @@ from max_bot.handlers import (
     _has_valid_signature,
     _hydrate_file_attachments,
     _handle_message,
+    _process_schedule_bytes,
     _is_schedule_file,
     _seen_message_ids,
     _safe_file_name,
@@ -63,6 +66,21 @@ class MaxHandlersTest(unittest.TestCase):
 
 
 class MaxHandlerRetryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_identical_published_file_is_recorded_without_notifications(self):
+        filename = "Расписание на 21.11.2026_ГРУППЫ.pdf"
+        original = b"%PDF-1.7 fixture"
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / filename).write_bytes(original)
+            with (patch("config.DATA_DIR", directory),
+                  patch("max_bot.handlers.record_message") as record,
+                  patch("max_bot.client.get_telegram_bot") as bot):
+                processed = await _process_schedule_bytes(
+                    original, filename, source_chat_id=-100, source_message_id=456)
+        self.assertTrue(processed)
+        bot.assert_not_called()
+        record.assert_called_once()
+        self.assertEqual(record.call_args.kwargs["message_kind"], "schedule_duplicate")
+
     async def test_retryable_failure_is_not_persistently_deduplicated(self):
         attachment = FileMappingModel(
             type="FILE",

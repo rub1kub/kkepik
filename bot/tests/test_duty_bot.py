@@ -157,7 +157,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         for uid in (99, 11):
             await self.update('/duty', uid=uid)
             message = self.session.calls[-1]
-            self.assertIn('дежурные', message.text)
+            self.assertIn('По графику сегодня дежурят', message.text)
             self.assertNotIn('Напоминаю', message.text)
             self.assertLessEqual(sum(len(row) for row in message.reply_markup.inline_keyboard),4)
             self.assertNotIn('список ' + str(sid), message.text)
@@ -168,7 +168,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         await self.update(callback='du:create')
         self.assertIsNone(self.store.session(99))
         self.assertEqual(len(self.store.lists(99)), 1)
-        self.assertIn('дежурные', self.session.calls[-1].text)
+        self.assertIn('По графику сегодня дежурят', self.session.calls[-1].text)
         self.store.manage(sid, 99, 'pause')
         await self.update(callback='du:create')
         self.assertIn('на паузе', self.session.calls[-1].text)
@@ -644,6 +644,8 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         await self.update(callback=f'du:silence:{sid}', uid=11)
         await self.update(callback=f'du:silence:{sid}', uid=11)
         self.assertEqual(self.store.view(sid, 11)['access']['muted'], 1)
+        mid = next(m['id'] for m in self.store.view(sid,99)['members'] if m['uid'] == 12)
+        self.store.edit_member(mid, 99, 'active', False)
         await self.update(callback=f'du:leave:{sid}', uid=12)
         for job in self.store.pending_jobs(NOW):
             await worker.deliver(job['id'], NOW)
@@ -651,7 +653,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([m.chat_id for m in notices], [13])
         self.assertNotIn('Утренняя рассылка', notices[0].text)
         self.assertEqual(self.store.lists(12), [])
-        self.assertIsNone(next(m for m in self.store.view(sid, 99)['members'] if m['telegram_id'] == 12)['uid'])
+        self.assertIsNone(self.row('SELECT uid FROM members WHERE id=?', (mid,))['uid'])
 
     async def test_added_notice_delivery_failure_alerts_creator_without_unbinding(self):
         await self.auto_preview()
@@ -760,7 +762,9 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         first_count = len([m for m in self.session.calls if isinstance(m,SendMessage)])
         await worker.deliver(job['id'],NOW)
         self.assertEqual(len([m for m in self.session.calls if isinstance(m,SendMessage)]),first_count)
-        self.store.decline(did,11,NOW+timedelta(minutes=1))
+        self.store.decline(did,11,NOW+timedelta(minutes=1), reason='В это время занят')
+        mid = self.row('SELECT id FROM members WHERE space=? AND uid=11', (sid,))['id']
+        self.store.resolve_decline(did,mid,99,True,NOW+timedelta(minutes=1))
         update = self.row("SELECT * FROM outbox WHERE kind='update' AND uid=99 ORDER BY id DESC LIMIT 1")
         await worker.deliver(update['id'],NOW+timedelta(minutes=1))
         self.assertIsInstance(self.session.calls[-1],EditMessageText)
@@ -779,7 +783,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(int(message.chat_id), uid)
                 self.assertEqual(message.text, f'🧹 Ты сегодня дежуришь.\n👥 С тобой в паре — {partner}.\n\n'
                     'Отвечать на это сообщение не нужно. '
-                    'Если не можешь отдежурить — нажми «Сегодня не могу».')
+                    'Если не можешь, нажми «Сегодня не могу» — запрос уйдёт старосте.')
                 self.assertEqual(message.reply_markup, keyboard([[('❌ Сегодня не могу', f'decline:{did}')]]))
         # The detailed card stays available explicitly through /duty.
         text, rows = self.app.day_panel(did, 11)
@@ -887,12 +891,25 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         did = self.store.ensure_day(sid, NOW, 'available')
         worker = DutyWorker(self.app, self.bot)
         daily = self.row("SELECT * FROM outbox WHERE kind='daily' AND uid=11")
+        partner_daily = self.row("SELECT * FROM outbox WHERE kind='daily' AND uid=12")
+        await worker.deliver(partner_daily['id'], NOW)
         await worker.deliver(daily['id'], NOW)
         callback = self.session.calls[-1].reply_markup.inline_keyboard[0][0].callback_data
         with patch('duties.store.clock', return_value=NOW):
             await self.update(callback=callback, uid=11)
-        self.assertEqual(self.row('SELECT state FROM assignments WHERE day=? AND member=(SELECT id FROM members WHERE uid=11)',
-                                 (did,))['state'], 'declined')
+            self.assertIn('Напиши причину', self.session.calls[-1].text)
+            self.assertEqual(self.row('SELECT count(*) n FROM decline_requests')['n'], 0)
+            await self.update('Не успеваю после <занятия>', uid=11)
+        mid = self.row('SELECT id FROM members WHERE space=? AND uid=11', (sid,))['id']
+        self.assertEqual(self.row('SELECT state FROM assignments WHERE day=? AND member=?', (did, mid))['state'], 'assigned')
+        self.assertEqual(self.row('SELECT status FROM decline_requests WHERE day=? AND member=?', (did, mid))['status'], 'pending')
+        request_job = self.row("SELECT * FROM outbox WHERE kind='decline_request' AND uid=99")
+        await worker.deliver(request_job['id'], NOW)
+        self.assertIn('Не успеваю после &lt;занятия&gt;', self.session.calls[-1].text)
+        approval = self.session.calls[-1].reply_markup.inline_keyboard[0][0].callback_data
+        with patch('duties.store.clock', return_value=NOW):
+            await self.update(callback=approval, uid=99)
+        self.assertEqual(self.row('SELECT state FROM assignments WHERE day=? AND member=?', (did, mid))['state'], 'declined')
         for uid in (11, 12):
             job = self.row("SELECT * FROM outbox WHERE kind='update' AND uid=? ORDER BY id DESC LIMIT 1", (uid,))
             text, rows = worker.render(job)
@@ -916,30 +933,16 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         pairs_before = {m['uid']: m['pair'] for m in self.store.view(sid, 99)['members']}
         did = self.store.ensure_day(sid, NOW, 'available')
         worker = DutyWorker(self.app, self.bot)
-        self.store.decline(did, 11, NOW)
+        self.store.decline(did, 11, NOW, reason='В это время занят')
+        mid = self.row('SELECT id FROM members WHERE space=? AND uid=11', (sid,))['id']
+        self.store.resolve_decline(did, mid, 99, True, NOW)
         data = self.store.day_view(did, 99)
         self.assertEqual({a['uid']: a['state'] for a in data['assignments']},
-                         {11: 'declined', 12: 'released', 13: 'waiting', 14: 'waiting'})
-        self.assertEqual(len(data['offers']), 1)
-        offer = data['offers'][0]
-        self.assertEqual(offer['kind'], 'pair')
-        self.assertEqual({offer['host_uid'], offer['guest_uid']}, {13, 14})
-        with self.store.connect() as db:
-            jobs = [dict(r) for r in db.execute("SELECT * FROM outbox WHERE kind='offer' AND ref=?", (offer['id'],))]
-        self.assertEqual({job['uid'] for job in jobs}, {13, 14})
-        for job in jobs:
-            text, rows = worker.render(job)
-            self.assertIn('Предыдущая пара сегодня не дежурит', text)
-            self.assertIn('со своим напарником', text)
-            self.assertIn('Да, могу', str(rows))
-            self.assertNotIn('Отвечать на это сообщение не нужно', text)
-        for uid in (11, 12, 13, 14):
-            text, _ = self.app.day_panel(did, uid, notification=True)
-            self.assertNotIn('Ты сегодня дежуришь', text)
-        self.store.reply_offer(offer['id'], 13, True, NOW)
-        self.store.reply_offer(offer['id'], 14, True, NOW)
+                         {11: 'declined', 12: 'released', 13: 'assigned', 14: 'assigned'})
+        self.assertFalse(data['offers'])
         for uid, partner in ((13, 'Мария'), (14, 'Пётр')):
-            text, rows = self.app.day_panel(did, uid, notification=True)
+            job = self.row("SELECT * FROM outbox WHERE kind='update' AND uid=?", (uid,))
+            text, rows = worker.render(job)
             self.assertTrue(text.startswith(f'🧹 Ты сегодня дежуришь.\n👥 С тобой в паре — {partner}.'))
             self.assertEqual(rows, [[('❌ Сегодня не могу', f'decline:{did}')]])
         self.assertEqual({m['uid']: m['pair'] for m in self.store.view(sid, 99)['members']}, pairs_before)
@@ -968,7 +971,7 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
     async def test_completed_duty_keeps_results_and_actions_instead_of_morning_copy(self):
         sid = self.fixture()
         did = self.store.ensure_day(sid, NOW, 'available')
-        later = NOW + timedelta(hours=1)
+        later = NOW.replace(hour=16)
         with patch('commands.duty.clock', return_value=later):
             self.store.report_done(did, 11, later)
             text, rows = self.app.day_panel(did, 11, notification=True)
@@ -1065,7 +1068,9 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
     async def test_offer_copy_keeps_deadline_two_consents_and_pair_rules(self):
         sid = self.fixture()
         did = self.store.ensure_day(sid,NOW,'available')
-        self.store.decline(did,11,NOW)
+        self.store.decline(did,11,NOW, reason='В это время занят')
+        mid = self.row('SELECT id FROM members WHERE space=? AND uid=11', (sid,))['id']
+        self.store.resolve_decline(did,mid,99,True,NOW)
         offer = self.row("SELECT * FROM offers WHERE day=? AND state='pending'",(did,))
         text, rows = self.app.offer_panel(offer['id'],12)
         self.assertIn('Ответь до 08:10 МСК',text)
@@ -1076,6 +1081,22 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         text, rows = self.app.offer_panel(offer['id'],12)
         self.assertIn('Твой ответ принят',text)
         self.assertNotIn('Да, могу',str(rows))
+
+    async def test_offer_refusal_waits_for_a_reason_and_shows_it_to_management(self):
+        sid = self.fixture()
+        did = self.store.ensure_day(sid, NOW, 'available')
+        self.store.decline(did, 11, NOW, reason='Не успеваю после занятия')
+        mid = self.row('SELECT id FROM members WHERE space=? AND uid=11', (sid,))['id']
+        self.store.resolve_decline(did, mid, 99, True, NOW)
+        oid = self.row("SELECT id FROM offers WHERE day=? AND state='pending'", (did,))['id']
+        with patch('duties.store.clock', return_value=NOW):
+            await self.update(callback=f'du:no:{oid}', uid=15)
+            self.assertIn('Почему не можешь подменить?',self.session.calls[-1].text)
+            self.assertEqual(self.row('SELECT state FROM offers WHERE id=?', (oid,))['state'],'pending')
+            await self.update('В это время занят', uid=15)
+        self.assertEqual(self.row('SELECT state FROM offers WHERE id=?', (oid,))['state'],'declined')
+        self.assertIn('В это время занят',self.app.day_info_panel(did,99)[0])
+        self.assertFalse(self.store.day_view(did,12)['offer_declines'])
 
     async def test_settings_copy_has_time_note_only_for_clock_settings(self):
         sid = self.fixture()
@@ -1133,6 +1154,32 @@ class DutyBotTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('rename:',str(rows))
         self.assertIn('membermore:',str(rows))
         self.assertIn('rename:',str(self.app.member_more_panel(mid,99)[1]))
+
+    async def test_other_actions_can_move_to_reserve_and_return_someone_to_the_pair(self):
+        sid = self.fixture()
+        members = self.store.view(sid,99)['members']
+        first, mate = [m['id'] for m in members if m['uid'] in (11,12)]
+        reserve = next(m['id'] for m in members if m['uid'] == 15)
+        await self.update(callback=f'du:membermore:{first}')
+        self.assertIn('Перевести в запасные', str(self.session.calls[-1].reply_markup))
+        await self.update(callback=f'du:reserveset:{first}')
+        self.assertIn('В запасных', self.session.calls[-1].text)
+        await self.update(callback=f'du:pairchoose:{reserve}')
+        self.assertIn(f'du:pairfillask:{reserve}:{mate}', str(self.session.calls[-1].reply_markup))
+        await self.update(callback=f'du:pairfill:{reserve}:{mate}')
+        self.assertIn('Напарник', self.session.calls[-1].text)
+        self.assertEqual(self.row('SELECT pair FROM members WHERE id=?',(reserve,))['pair'],
+                         self.row('SELECT pair FROM members WHERE id=?',(mate,))['pair'])
+
+    async def test_pair_chooser_offers_active_partner_next_to_inactive_member(self):
+        sid = self.fixture()
+        members = {m['uid']: m['id'] for m in self.store.view(sid,99)['members']}
+        host, inactive, reserve = (members[uid] for uid in (11,12,15))
+        self.store.edit_member(inactive, 99, 'active', False)
+        await self.update(callback=f'du:pairchoose:{reserve}')
+        self.assertIn(f'du:pairfillask:{reserve}:{host}', str(self.session.calls[-1].reply_markup))
+        await self.update(callback=f'du:pairfillask:{reserve}:{host}')
+        self.assertIn('Прежний напарник останется вне очереди.', self.session.calls[-1].text)
 
     async def test_real_dispatcher_private_scope_rejects_foreign_callback(self):
         sid = self.fixture()

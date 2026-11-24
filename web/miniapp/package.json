@@ -1,0 +1,16 @@
+{
+  "name": "kkepik-miniapp",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/main.jsx --bundle --minify --jsx=automatic --jsx-import-source=preact --target=safari15,chrome91,firefox89 --outdir=../static/miniapp --legal-comments=eof --external:/static/*",
+    "test": "node --test src/*.test.js"
+  },
+  "dependencies": {
+    "lucide-preact": "0.468.0",
+    "preact": "10.29.8"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}

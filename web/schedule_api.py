@@ -289,6 +289,21 @@ def get_group_schedule():
     return _schedule_response('/schedule/group', _schedule_parameters('group'))
 
 
+@schedule_bp.route('/api/schedule/prediction')
+@limiter.limit('30 per minute', key_func=lambda: str(_get_authenticated_user_id()))
+def get_schedule_prediction():
+    _get_authenticated_user_id()
+    parameters = _schedule_parameters('group')
+    if 'date' not in parameters:
+        raise ApiError(400, 'Укажите дату')
+    target = datetime.strptime(parameters['date'], '%d.%m.%Y').date().isoformat()
+    response = _upstream('get', '/schedule/prediction', params={'group': parameters['group'], 'target': target})
+    try:
+        return jsonify(_checked_payload(response))
+    finally:
+        response.close()
+
+
 @schedule_bp.route('/api/schedule/teacher', methods=['GET', 'POST'])
 @limiter.limit('10 per second')
 def get_teacher_schedule():

@@ -229,7 +229,7 @@
     try {
       const result = await request('', 'PUT', submitted);
       preferences = result.preferences; saved = clone(preferences); renderControls(); status('Сохранено. Следующие сообщения придут в выбранном виде.');
-      tg?.HapticFeedback?.notificationOccurred('success');
+      window.kkepikHaptics?.play('success');
     } catch (error) { status(error.message, true); }
     finally { saving = false; $('constructorControls').disabled = false; $('constructorReset').disabled = false; updateSave(); }
   });

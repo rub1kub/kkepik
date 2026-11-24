@@ -80,6 +80,25 @@ class PdfPageContinuationTest(unittest.TestCase):
         self.assertIn("1 пара – Предмет 1", "\n".join(get_schedule_for_group(df, GROUP_A)))
         self.assertEqual(sum(value == GROUP_A for value in df[2]), 1)
 
+    def test_repeated_pair_number_joins_teacher_line_across_pages(self):
+        page1 = FakePage(1, [(GROUP_A, 100, 88)], lesson(1, 104)[:-1])
+        page2 = FakePage(2, [(GROUP_B, 100, 49)],
+                         [char('1', 40, 2), char('Искандарян К.С.', 100, 12)]
+                         + lesson(2, 27) + lesson(1, 69))
+        df = parse_pages([page1, page2])
+        _, lessons = extract_lessons(df, "2026-11-21")
+        rows = [row for row in lessons if row["group"] == GROUP_A]
+        self.assertEqual([row["pair_number"] for row in rows], [1, 2])
+        self.assertEqual(rows[0]["teacher"], "Искандарян К.С.")
+        self.assertEqual(rows[0]["audiences"], ["58"])
+        self.assertNotIn("2 пара", "\n".join(get_schedule_for_group(df, GROUP_B)))
+
+    def test_duplicate_pair_with_two_subject_lines_still_fails(self):
+        pages = [FakePage(1, [(GROUP_A, 100, 88)], lesson(1, 104)[:-1]),
+                 FakePage(2, [(GROUP_B, 100, 49)], lesson(1, 2) + lesson(2, 27))]
+        with self.assertRaisesRegex(ValueError, "неоднозначное продолжение"):
+            parse_pages(pages)
+
     def test_multiple_headerless_pages_continue_the_same_block(self):
         df = parse_pages([FakePage(1, [(GROUP_A, 100, 90)], lesson(1, 100)),
                           FakePage(2, chars=lesson(2, 0) + lesson(3, 100)),
